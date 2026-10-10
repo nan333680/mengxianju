@@ -4,7 +4,9 @@ from PIL import Image, ImageDraw
 
 # 输入是仓库里的图标原图，输出到 icon_out/（那个目录不进版本库）
 _HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(_HERE, "assets", "icon-source.png")
+# 仓库根 = tools/ 的上一级
+_ROOT = os.path.dirname(_HERE)
+SRC = os.path.join(_ROOT, "assets", "icon-source.png")
 OUT = os.path.join(_HERE, "icon_out")
 
 img = Image.open(SRC).convert("RGBA")

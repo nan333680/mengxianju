@@ -1,4 +1,9 @@
 import puppeteer from 'puppeteer-core';
+import path from 'node:path';
+import fs from 'node:fs';
+// 输出到 _shots/（该目录不进版本库）
+const OUT = path.join(import.meta.dirname, '..', '_shots');
+fs.mkdirSync(OUT, { recursive: true });
 const CHROME='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const browser=await puppeteer.launch({executablePath:CHROME,headless:true,args:['--no-sandbox','--disable-gpu']});
 const page=await browser.newPage();
@@ -14,7 +19,7 @@ const html = '<body style="margin:0;display:flex;gap:10px;background:#fff">' +
   '</body>';
 await page.setContent(html);
 await new Promise(r=>setTimeout(r,600));
-await (await page.$('#a')).screenshot({ path: 'C:/A-DSH-Tool/tmp/meme1.png' });
-await (await page.$('#b')).screenshot({ path: 'C:/A-DSH-Tool/tmp/meme2.png' });
-console.log('生成完成');
+await (await page.$('#a')).screenshot({ path: path.join(OUT, 'meme1.png') });
+await (await page.$('#b')).screenshot({ path: path.join(OUT, 'meme2.png') });
+console.log('生成完成:', OUT);
 await browser.close();

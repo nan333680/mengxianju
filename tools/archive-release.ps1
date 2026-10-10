@@ -56,12 +56,9 @@ Copy-Tree (Join-Path $root 'android') (Join-Path $dest 'src\android') @('build',
 Copy-Tree (Join-Path $root 'e2e')     (Join-Path $dest 'src\e2e')     $null
 Copy-Tree (Join-Path $root 'assets')  (Join-Path $dest 'src\assets')  $null
 
-# ---- 顶层测试脚本 ----
-#  v0.3.0 起 e2e-*.mjs 全部移进了 e2e\ 子目录，上面那句 Copy-Tree 已经带上，
-#  不再需要单独扫根目录。
-Get-ChildItem -Path $root -Filter '*.mjs' -File | Where-Object { $_.Name -eq 'genmeme.mjs' } | ForEach-Object {
-  Copy-Item $_.FullName (Join-Path $dest ('src\' + $_.Name)) -Force
-}
+# ---- 顶层脚本 ----
+#  v0.3.0 起 e2e-*.mjs 移进 e2e\（上面那句 Copy-Tree 已带上），genmeme.mjs 移进 tools\（下面的 Copy-Tree tools 已带上），
+#  根目录不再有需要单独扫描的脚本。
 
 # ---- 工具与依赖清单 ----
 Copy-Tree (Join-Path $root 'tools') (Join-Path $dest 'tools') $null

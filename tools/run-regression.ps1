@@ -31,7 +31,7 @@ if (Test-Path $keyFile) {
 taskkill /F /IM chrome.exe 2>$null | Out-Null
 Start-Sleep -Milliseconds 800
 
-$files = Get-ChildItem -Path $root -Filter 'e2e-*.mjs' -File |
+$files = Get-ChildItem -Path (Join-Path $root 'e2e') -Filter 'e2e-*.mjs' -File |
          Where-Object { $_.Name -ne 'e2e-helper.mjs' } | Sort-Object Name
 if ($Only) { $files = $files | Where-Object { $_.Name -like $Only } }
 

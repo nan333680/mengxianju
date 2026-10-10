@@ -613,7 +613,7 @@ input + .hint-text{ margin-top:8px; }
 }
 .day-input input:focus{ border-color:var(--pri); outline:none; }
 /* v1.21.46：原来这里还有一行「= 第 N 天」的换算提示（.clock-year-row / .clock-year-hint），
-   用户要求删掉，DOM 与样式一并移除。 */.clock-hint{ font-size:12px !important; margin-bottom:14px !important; }
+   需求删掉，DOM 与样式一并移除。 */.clock-hint{ font-size:12px !important; margin-bottom:14px !important; }
 /* 具体时间：时 : 分 + 一个"用当前时段"的快捷按钮 */
 .clock-time{ display:flex; align-items:center; gap:8px; }
 .clock-time input{
@@ -941,7 +941,7 @@ input + .hint-text{ margin-top:8px; }
 
 /* 「时间跟现实走」模式下的时间条（v1.20.21）：
    保留位置让人看得见现在几点，但视觉上收进去、不再是可点的大按钮。
-   用户要求「像抽屉那样缩进上面的聊天栏」。 */
+   需求「像抽屉那样缩进上面的聊天栏」。 */
 .clock-bar.readonly{
   cursor:default;
   font-size:11px;
@@ -1027,7 +1027,7 @@ input + .hint-text{ margin-top:8px; }
 #phase-modal .clock-range:last-child { margin-bottom: 4px; }
 
 /* ===== 滑杆防误触（v1.21.31） =====
-   起因（用户反馈）：在设置页上下滚动时，手指落到温度/最大长度/上下文轮数
+   起因（反馈）：在设置页上下滚动时，手指落到温度/最大长度/上下文轮数
    这几个 range 上就会被当成拖动，值被改掉。
    做法：touchstart 记起点，touchmove 判断主方向 ——
    垂直为主时给滑杆加 no-drag（pointer-events 不吃拖动），让页面正常滚。 */

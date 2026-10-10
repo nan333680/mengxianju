@@ -57,11 +57,8 @@ Copy-Tree (Join-Path $root 'e2e')     (Join-Path $dest 'src\e2e')     $null
 Copy-Tree (Join-Path $root 'assets')  (Join-Path $dest 'src\assets')  $null
 
 # ---- 顶层测试脚本 ----
-#  ⚠️ e2e-*.mjs 有 86 个躺在仓库根，不在 e2e\ 子目录里。
-#     只复制 e2e\ 会漏掉全部测试 —— 第一版就漏了。
-Get-ChildItem -Path $root -Filter 'e2e-*.mjs' -File | ForEach-Object {
-  Copy-Item $_.FullName (Join-Path $dest ('src\' + $_.Name)) -Force
-}
+#  v0.3.0 起 e2e-*.mjs 全部移进了 e2e\ 子目录，上面那句 Copy-Tree 已经带上，
+#  不再需要单独扫根目录。
 Get-ChildItem -Path $root -Filter '*.mjs' -File | Where-Object { $_.Name -eq 'genmeme.mjs' } | ForEach-Object {
   Copy-Item $_.FullName (Join-Path $dest ('src\' + $_.Name)) -Force
 }

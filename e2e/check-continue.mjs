@@ -4,7 +4,7 @@ import { seedChar } from './e2e-helper.mjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-const R = path.resolve(import.meta.dirname).split(path.sep).join('/');
+const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const sleep = ms => new Promise(r => setTimeout(r, ms));

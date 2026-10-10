@@ -79,3 +79,6 @@ unpacked/
 # ---- 图标生成产物（正式图标已进 android/.../res 和 assets/）----
 icon_out/
 icon_check/
+
+# ---- 路径拼接出 undefined 时误建的目录（做世界书素材的中间产物）----
+undefined/

@@ -8,7 +8,7 @@
 // ⚠️ 最要紧的两条：
 //   1) 不传常驻条目时，稳定前缀必须【逐字节不变】—— 否则老用户每轮白白全量重算。
 //   2) 常驻条目不能跟着命中集走。跟着走 = 每轮改一次前缀 = 前缀缓存全废。
-import { buildStablePrompt, buildTurnNote } from './www/js/persona.js';
+import { buildStablePrompt, buildTurnNote } from '../www/js/persona.js';
 
 let pass = 0, fail = 0;
 const t = (n, ok, ex = '') => { if (ok) { pass++; console.log('  OK   ' + n); } else { fail++; console.log('  FAIL ' + n + (ex ? '  -> ' + ex : '')); } };

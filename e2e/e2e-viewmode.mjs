@@ -7,7 +7,7 @@
 // 本套不外网：续写只验证「它不写用户消息、输入框不动」，不真的等模型回。
 import puppeteer from 'puppeteer-core';
 import { seedChar } from './e2e-helper.mjs';
-import { buildChatMarkdown, markdownFileName, dayText } from './www/js/exportmd.js';
+import { buildChatMarkdown, markdownFileName, dayText } from '../www/js/exportmd.js';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';

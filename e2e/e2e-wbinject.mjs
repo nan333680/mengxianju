@@ -1,4 +1,4 @@
-import { buildStablePrompt, buildTurnNote } from './www/js/persona.js';
+import { buildStablePrompt, buildTurnNote } from '../www/js/persona.js';
 let pass=0, fail=0;
 const t=(n,ok,ex='')=>{if(ok){pass++;console.log('  OK   '+n);}else{fail++;console.log('  FAIL '+n+(ex?'  -> '+ex:''));}};
 const char = { persona: '你是紫。', descLevel:'mid', verbosity:'medium' };

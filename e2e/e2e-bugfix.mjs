@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer-core';
 import { seedChar, seedChars } from './e2e-helper.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
-import { splitMessages } from './www/js/persona.js';
+import { splitMessages } from '../www/js/persona.js';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW=`${R}/www`;

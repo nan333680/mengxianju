@@ -13,9 +13,10 @@
        debug 包签名不同，装上去会【覆盖失败】或丢数据。
 #>
 
-# -KeepOld：桌面上已经有别的版本包时【保留】它们。
-# 默认行为是"桌面只留最新一个"（作者要的），但有时要留着旧版对比/回滚 —— 那时加这个开关。
-param([switch]$KeepOld)
+# -CleanOld：构建完把桌面上【别的版本】的包删掉，只留这一个。
+# 默认【保留】：本地迭代的四段版本号（0.3.0 -> 0.3.0.1 -> 0.3.0.2）要并排放着对比，
+# 每构建一次就删掉上一个会很碍事。想清干净时显式加这个开关。
+param([switch]$CleanOld)
 
 $ErrorActionPreference = 'Continue'
 
@@ -149,7 +150,7 @@ if (Test-Path $signer) {
   Write-Host ("   ⚠️ 找不到 apksigner（" + $signer + "），本次【没有做签名校验】") -ForegroundColor Yellow
 }
 
-# 复制到桌面并改名成带版本号的，同时保持桌面只有这一个包
+# 复制到桌面并改名成带版本号的（默认保留其它版本，-CleanOld 才清理）
 $desk = [Environment]::GetFolderPath("Desktop")
 $dest = Join-Path $desk ("梦弦居-v" + $vn + ".apk")
 # ⚠️ 顺序反了会出事（v1.21.54，审计发现）：原来是【先删旧包、再 Copy】——
@@ -163,13 +164,13 @@ try {
   Write-Host "桌面上的旧包一个都没动。" -ForegroundColor Red
   exit 1
 }
-if ($KeepOld) {
-  Write-Host "   （-KeepOld：桌面上的旧版本包保留不动）"
-} else {
+if ($CleanOld) {
   Get-ChildItem $desk -Filter "梦弦居-v*.apk" | Where-Object { $_.FullName -ne $dest -and $_.FullName -ne $tmpDest } | ForEach-Object {
     Write-Host ("   移除旧包 " + $_.Name)
     Remove-Item $_.FullName -Force
   }
+} else {
+  Write-Host "   （桌面保留其它版本的包；要只留最新一个就加 -CleanOld）"
 }
 Move-Item -LiteralPath $tmpDest -Destination $dest -Force
 Write-Host ""

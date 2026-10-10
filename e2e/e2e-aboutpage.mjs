@@ -43,7 +43,7 @@ for (const [k, s] of [['版权行', 'Copyright (C) 2026 DaRiko'], ['无担保', 
 // 不写死版本号（写死了每次升版都会假红）：和设置页那行动态比
 const ver = await page.$eval('#about-ver', el => el.textContent.trim());
 const setVer = await page.$eval('#app-ver', el => el.textContent.trim());
-t('关于页版本号和设置页那行一致', ver === setVer && /^v\d+\.\d+\.\d+$/.test(ver), ver + ' vs ' + setVer);
+t('关于页版本号和设置页那行一致', ver === setVer && /^v\d+\.\d+(\.\d+)*$/.test(ver), ver + ' vs ' + setVer);
 
 console.log('');
 console.log('=== 图标（这次改的就是它）===');

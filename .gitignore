@@ -1,0 +1,81 @@
+# ============================================================
+#  梦弦居 · 版本控制排除表
+#  密钥类文件的排除规则必须【早于】第一次提交就位 ——
+#  一旦进了历史，即使后来删除也仍留在 git 对象里。
+# ============================================================
+
+# ---- 依赖 / 构建产物 ----
+node_modules/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/src/main/assets/public/
+android/capacitor-cordova-android-plugins/
+.gradle/
+
+# ---- 密钥：绝不入库 ----
+*.keystore
+*.jks
+*.p12
+#  签名密码（build.gradle 引用它，值本身不在版本库里）
+keystore.properties
+android/keystore.properties
+
+# ---- 历史 APK（已归入 releases/<版本>/apk/）----
+dist/
+
+# ---- 本地快照 / 未审计的回收站恢复物 ----
+#  releases/ 是纯本地的东西，整目录不入库。
+#  _recovered/ 是从回收站捞回来的，未审计，可能含旧 Key。
+releases/
+_baseline/
+
+# ---- 本机构建路径（换机器自己填一份）----
+tools/local.env
+_recovered/
+_apk/
+_apk_extract/
+_mengxianju/
+_chars/
+_evidence_v26/
+_evidence_v27/
+_fixtures/
+_archive/
+tmp/
+
+# ---- 过程产物（调试脚本、临时输出）----
+_*.txt
+_*.json
+_*.ps1
+_*.mjs
+_*_out.txt
+probe-*.mjs
+_regress.log
+_recheck.log
+
+# ---- 测试截图（每跑一次回归就重截一遍，进版本库只是噪音）----
+#  图还在硬盘上，只是不再被 git 跟踪。历史版本仍在 git 里。
+e2e/*.png
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+_*.log
+_*.tmp
+
+# ---- 本地工作笔记（给 AI 接手用，含本机路径与内部过程，不进公开仓库）----
+续接摘要.md
+
+# ---- 探针产物（APK 解包 / 截图 / 反编译，不进库）----
+_extract/
+_extract53/
+_shots/
+unpacked/
+
+# ---- 图标生成产物（正式图标已进 android/.../res 和 assets/）----
+icon_out/
+icon_check/

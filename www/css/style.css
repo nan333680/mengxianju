@@ -1,0 +1,1060 @@
+/* ===== 基础 ===== */
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+:root{
+  --bg:#12131a; --bg2:#1a1c26; --bg3:#232635; --line:#2c3040;
+  --fg:#e8eaf2; --fg2:#9aa0b5; --fg3:#6b7288;
+  --pri:#8b7cf6; --pri2:#a99bff; --danger:#f2555a;
+  --bubble-me:#6d5ce0; --bubble-ai:#232635;
+  --fs:15px;
+  /* 系统栏占位。CSS 里能直接用 env()，但 JS 读不到 —— 长按菜单要靠它避让，
+     所以在这里落成变量给 JS 取（见 placeMenu）。 */
+  --sat:env(safe-area-inset-top, 0px);
+  --sab:env(safe-area-inset-bottom, 0px);
+}
+[data-theme="light"]{
+  --bg:#f5f6fa; --bg2:#ffffff; --bg3:#eef0f6; --line:#e0e3ec;
+  --fg:#1c1e26; --fg2:#5a6078; --fg3:#8b91a8;
+  --pri:#6d5ce0; --pri2:#8b7cf6;
+  --bubble-me:#6d5ce0; --bubble-ai:#ffffff;
+}
+
+html,body{ height:100%; overflow:hidden; }
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:var(--fs); line-height:1.55;
+  overscroll-behavior:none;
+}
+
+/* 页面转场：像 iOS / ColorOS 那样两页同时动
+   - 当前页在 0，栈里被压住的页停在左边 -28%（露出一点边）
+   - 不在栈里的页停在右边 100%（屏幕外）
+   于是前进 = 当前页左让 + 新页从右推入，返回 = 当前页右滑出 + 上一页归位 */
+.view{
+  position:fixed; inset:0; display:flex; flex-direction:column; background:var(--bg);
+  transform:translateX(100%); pointer-events:none; z-index:2;
+  /* 缓动曲线用对称的 ease-in-out。之前那版 .32,.72,0,1 是前段飞快、后段骤慢，
+     速度在中间突然掉下来，看着就像「流畅一半卡一下再流畅一半」——不是掉帧，是曲线形状。 */
+  transition:transform .34s cubic-bezier(.42,0,.58,1);
+  backface-visibility:hidden;
+  /* 提前给每页一个独立合成层：移动时只做合成，不用重画内容
+     （页面里那个左缘投影如果每次滑动都重新栅格化，就会掉帧） */
+  will-change:transform;
+}
+/* 所有在场页面 z-index 一律相同：谁盖谁完全由 DOM 顺序决定（后面的盖前面的）。
+   这样滑动过程中不需要改 z-index，也就不会逼浏览器重组合成层——改 z-index 正是
+   上一版「卡一下」的原因。DOM 顺序天然跟层级一致：chat < chars < edit < mem。 */
+.view.side-left{ transform:translateX(-100%); }
+.view.behind{ transform:translateX(-28%); }
+/* 抽屉推入时，下面那页留在原地被盖住，不要跟着动 */
+.view.stay{ transform:translateX(0); }
+.view.active{ transform:translateX(0); pointer-events:auto; }
+.view.active::after{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  box-shadow:-8px 0 24px rgba(0,0,0,.35);
+}
+/* 弹窗淡入 */
+.modal-box{ animation:modalIn .2s cubic-bezier(.22,.61,.36,1) both; }
+@keyframes modalIn{ from{ opacity:0; transform:scale(.94) translateY(6px); } to{ opacity:1; transform:none; } }
+/* 关掉系统动画时就不要动 */
+@media (prefers-reduced-motion: reduce){
+  .view{ transition:none; }
+  .modal-box{ animation:none; }
+  .msg-menu, .msg-menu.closing{ animation:none; }
+  .msg.fresh{ animation:none; }
+}
+.hidden{ display:none !important; }
+.gap{ height:60px; }
+
+/* ===== 顶栏 ===== */
+.topbar{
+  display:flex; align-items:center; gap:8px; padding:10px 12px;
+  padding-top:calc(10px + env(safe-area-inset-top));
+  background:var(--bg2); border-bottom:1px solid var(--line);
+  flex-shrink:0; z-index:10;
+}
+.icon-btn{
+  width:40px; height:40px; border:none; border-radius:12px; background:transparent;
+  color:var(--fg); font-size:19px; cursor:pointer; display:flex;
+  align-items:center; justify-content:center; flex-shrink:0;
+}
+.icon-btn:active{ background:var(--bg3); }
+.title{ flex:1; display:flex; align-items:center; gap:10px; min-width:0; }
+.title-txt{ display:flex; flex-direction:column; min-width:0; }
+.title-txt > span:first-child{
+  font-weight:600; font-size:16px; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;
+}
+.sub{ font-size:11.5px; color:var(--fg3); }
+.avatar-sm{
+  width:36px; height:36px; border-radius:50%; background:var(--bg3);
+  display:flex; align-items:center; justify-content:center; font-size:19px;
+  overflow:hidden; flex-shrink:0;
+}
+.avatar-sm img{ width:100%; height:100%; object-fit:cover; }
+
+/* ===== 消息区 ===== */
+.messages{
+  flex:1; overflow-y:auto; padding:14px 12px 6px;
+  display:flex; flex-direction:column; gap:12px;
+  -webkit-overflow-scrolling:touch;
+}
+.msg{ display:flex; gap:8px; align-items:flex-end; max-width:100%; }
+/* 新消息出场：轻微上滑淡入。只给刚追加的那条打 .fresh ——
+   全量重绘（切角色 / 重新生成）时不给，否则几十条会一起飞进来。 */
+.msg.fresh{ animation:msgIn .28s cubic-bezier(.22,1,.36,1) both; }
+@keyframes msgIn{
+  from{ opacity:0; transform:translateY(22px) scale(.94); }
+  to{ opacity:1; transform:none; }
+}
+.msg.me{ flex-direction:row-reverse; }
+.msg .av{
+  width:32px; height:32px; border-radius:50%; background:var(--bg3);
+  display:flex; align-items:center; justify-content:center; font-size:16px;
+  flex-shrink:0; overflow:hidden;
+}
+.msg .av img{ width:100%; height:100%; object-fit:cover; }
+.bub{
+  max-width:76%; padding:9px 13px; border-radius:16px;
+  background:var(--bubble-ai); border:1px solid var(--line);
+  word-break:break-word; white-space:pre-wrap; overflow-wrap:anywhere;
+}
+.msg.me .bub{
+  background:var(--bubble-me); border-color:transparent; color:#fff;
+  border-bottom-right-radius:5px;
+}
+.msg.ai .bub{ border-bottom-left-radius:5px; }
+.bub img.pic{ max-width:100%; border-radius:10px; display:block; margin-bottom:5px; }
+.bub .t{
+  font-size:10.5px; color:var(--fg3); margin-top:4px; text-align:right;
+  /* v1.21.46：改成 flex —— 日期和 token 各自是不可分割的一块。
+     够宽时并排一行；不够宽时【整块】换行，得到"上一行日期、下一行 token"，
+     而不是在中间把「第 1002 年 250 天」这种词组切断。 */
+  display:flex; flex-wrap:wrap; justify-content:flex-end;
+  align-items:baseline; column-gap:7px; row-gap:1px;
+}
+/* 剧情时间（不是真实时钟）：老消息没有就不显示 */
+.bub .t .story-time{ margin-right:0; white-space:nowrap; }
+.msg.me .bub .t{ color:rgba(255,255,255,.6); }
+.sys-line{ text-align:center; font-size:12px; color:var(--fg3); padding:4px 0; }
+
+/* 归档区：老对话收起来，原文还在库里，点开能回看 */
+.arch-bar{ margin-bottom:10px; }
+.arch-toggle{
+  width:100%; padding:9px 12px; background:var(--bg2); border:1px dashed var(--line);
+  border-radius:10px; color:var(--fg3); font-family:inherit; font-size:12px; cursor:pointer;
+}
+.arch-toggle:active{ background:var(--bg3); }
+.arch-list{ margin-top:10px; opacity:.72; }
+.arch-list.hidden{ display:none; }
+
+.dots::after{
+  content:'…'; animation:dots 1.2s steps(4,end) infinite;
+}
+@keyframes dots{ 0%{content:'.'} 33%{content:'..'} 66%{content:'...'} 100%{content:'.'} }
+
+/* 「正在输入」指示器：三个点依次起伏。
+   关掉「显示正在输入」时走 .no-dots —— 气泡还在（让人知道在等），但不闪。 */
+.typing-dots{ display:inline-flex; align-items:center; gap:4px; height:1.35em; }
+.typing-dots i{ width:6px; height:6px; border-radius:50%; background:var(--fg3); animation:typingBounce 1.4s ease-in-out infinite; }
+.typing-dots i:nth-child(2){ animation-delay:.16s; }
+.typing-dots i:nth-child(3){ animation-delay:.32s; }
+@keyframes typingBounce{ 0%,80%,100%{ transform:translateY(0); opacity:.45; } 40%{ transform:translateY(-4px); opacity:1; } }
+.bub.no-dots .typing-dots i{ animation:none; opacity:.5; }
+
+/* ===== 输入区 ===== */
+.composer{
+  padding:8px 10px; padding-bottom:calc(8px + env(safe-area-inset-bottom));
+  background:var(--bg2); border-top:1px solid var(--line); flex-shrink:0;
+}
+.composer-row{ display:flex; gap:8px; }
+#input{
+  flex:1; resize:none; max-height:var(--input-max,120px); min-height:42px;
+  background:var(--bg3); border:1px solid var(--line); border-radius:20px;
+  color:var(--fg); padding:10px 15px; font-size:var(--fs);
+  font-family:inherit; line-height:1.4; outline:none;
+}
+#input:focus{ border-color:var(--pri); }
+/* 字数（v1.21.48）：只在「回车换行」且真有内容时出现。
+   日常聊天一个字都不显示 —— 它会挤掉输入框的宽度，滑一下就换行。 */
+.input-meta{ display:flex; justify-content:flex-end; margin:2px 4px 0 0; }
+.input-meta.hidden{ display:none; }
+#input-count{ font-size:11.5px; color:var(--fg3); font-variant-numeric:tabular-nums; }
+#input-count:empty{ display:none; }
+.send-btn{
+  height:42px; padding:0 18px; border:none; border-radius:21px;
+  background:var(--pri); color:#fff; font-size:14.5px; font-weight:600;
+  cursor:pointer; flex-shrink:0;
+}
+.send-btn:active{ background:var(--pri2); }
+.send-btn.stop{ background:var(--danger); }
+
+.attach-preview{ display:flex; gap:8px; padding:6px 4px 8px; flex-wrap:wrap; }
+/* 一张图 = 缩略图 + 它自己的说明框 */
+.attach-preview .thumb{
+  position:relative; display:flex; flex-direction:column; gap:4px;
+}
+.attach-preview .thumb .pic{
+  position:relative; width:58px; height:58px; border-radius:10px; overflow:hidden;
+  border:1px solid var(--line);
+}
+.attach-preview .thumb .pic img{ width:100%; height:100%; object-fit:cover; }
+.attach-preview .x{
+  position:absolute; top:1px; right:1px; width:17px; height:17px; border-radius:50%;
+  background:rgba(0,0,0,.65); color:#fff; font-size:11px; border:none;
+  display:flex; align-items:center; justify-content:center; cursor:pointer;
+}
+.attach-preview .note{
+  width:100px; font-size:10.5px; padding:4px 6px;
+  background:var(--bg3); border:1px solid var(--line); border-radius:7px;
+  color:var(--fg); font-family:inherit; outline:none;
+}
+.attach-preview .note:focus{ border-color:var(--pri); }
+.msg .pic-note{ font-size:11px; color:var(--fg3); margin-top:3px; }
+
+/* ===== 通用滚动页 ===== */
+.scroll{
+  flex:1; overflow-y:auto; padding:14px 14px 30px;
+  -webkit-overflow-scrolling:touch;
+}
+
+/* ===== 表单 ===== */
+.field{ display:flex; flex-direction:column; gap:7px; margin-bottom:16px; }
+.field > span{ font-size:13px; color:var(--fg2); }
+.field.row{ flex-direction:row; align-items:center; justify-content:space-between; }
+.field.row > span{ flex:1; }
+.field b{ color:var(--pri2); font-weight:600; }
+
+input[type=text],input[type=password],textarea,select{
+  width:100%; background:var(--bg2); border:1px solid var(--line);
+  border-radius:11px; color:var(--fg); padding:11px 13px;
+  font-size:var(--fs); font-family:inherit; outline:none;
+}
+textarea{ resize:vertical; line-height:1.6; }
+input:focus,textarea:focus,select:focus{ border-color:var(--pri); }
+select{ appearance:none; background-image:none; }
+input[type=range]{
+  width:100%; height:4px; border-radius:2px; background:var(--bg3);
+  appearance:none; outline:none; padding:0; border:none;
+}
+input[type=range]::-webkit-slider-thumb{
+  appearance:none; width:20px; height:20px; border-radius:50%;
+  background:var(--pri); cursor:pointer;
+}
+input[type=checkbox]{
+  width:24px; height:24px; accent-color:var(--pri); cursor:pointer; flex-shrink:0;
+}
+
+.group{
+  background:var(--bg2); border-radius:15px; padding:16px 15px 4px;
+  margin-bottom:14px; border:1px solid var(--line);
+}
+.group h3{
+  font-size:13px; color:var(--pri2); font-weight:600; margin-bottom:13px;
+  letter-spacing:.4px;
+}
+
+.ghost-btn{
+  width:100%; padding:12px; border-radius:11px; background:var(--bg3);
+  border:1px solid var(--line); color:var(--fg); font-size:14px;
+  cursor:pointer; margin-bottom:10px; font-family:inherit;
+}
+.ghost-btn:active{ background:var(--line); }
+.ghost-btn.sm{ width:auto; padding:9px 16px; margin:0; font-size:13px; }
+.danger-btn{
+  width:100%; padding:12px; border-radius:11px; background:transparent;
+  border:1px solid var(--danger); color:var(--danger); font-size:14px;
+  cursor:pointer; margin-bottom:10px; font-family:inherit;
+}
+.ver{ text-align:center; font-size:11.5px; color:var(--fg3); padding:6px 0 2px; }
+
+/* ===== 分段选择器 ===== */
+.seg{ display:flex; gap:6px; flex-wrap:wrap; }
+.seg button{
+  flex:1; min-width:52px; padding:8px 4px; border-radius:9px;
+  background:var(--bg3); border:1px solid var(--line); color:var(--fg2);
+  font-size:12.5px; cursor:pointer; font-family:inherit;
+}
+.seg button.on{ background:var(--pri); border-color:var(--pri); color:#fff; font-weight:600; }
+
+/* ===== 角色列表 ===== */
+.char-list{ display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
+.char-card{
+  display:flex; align-items:center; gap:13px; padding:13px;
+  background:var(--bg2); border:1px solid var(--line); border-radius:14px; cursor:pointer;
+}
+.char-card:active{ background:var(--bg3); }
+.char-card.on{ border-color:var(--pri); }
+.char-card .avatar-lg{
+  width:50px; height:50px; font-size:24px; border-radius:14px;
+}
+.char-card .info{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.char-card .info b{ font-size:15.5px; font-weight:600; }
+.char-card .info small{ font-size:12px; color:var(--fg3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.badge{
+  font-size:10px; padding:2px 7px; border-radius:6px;
+  background:var(--bg3); color:var(--fg2); border:1px solid var(--line);
+}
+
+.avatar-lg{
+  width:64px; height:64px; border-radius:18px; background:var(--bg3);
+  display:flex; align-items:center; justify-content:center; font-size:30px;
+  overflow:hidden; flex-shrink:0;
+}
+.avatar-lg img{ width:100%; height:100%; object-fit:cover; }
+.avatar-pick{ display:flex; align-items:center; gap:14px; }
+
+/* ===== 记忆 ===== */
+.mem-item{
+  display:flex; gap:10px; align-items:flex-start; padding:12px;
+  background:var(--bg2); border:1px solid var(--line); border-radius:12px;
+  margin-bottom:9px;
+}
+/* 点内容区可以弹窗修改 */
+.mem-item.tap{ cursor:pointer; }
+.mem-item.tap:active{ background:var(--bg3); }
+/* 正文 + 标签装在左列里（竖排），✕ 在最右边 */
+.mem-item .mem-body{ flex:1; min-width:0; }
+.mem-item .txt{ font-size:14px; line-height:1.5; word-break:break-word; }
+/* 标签另起一行、左下角，从左往右排 */
+.mem-item .mem-foot{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+.mem-item .mem-foot .mem-tag{ margin-right:0; }
+.mem-item .del{
+  color:var(--danger); background:none; border:none; font-size:16px; cursor:pointer;
+}
+
+/* ===== 我的设定（全局一份）===== */
+.profile-box{
+  width:100%; box-sizing:border-box; resize:vertical; min-height:200px;
+  padding:11px 12px; border-radius:11px; font-size:13.5px; line-height:1.65;
+  background:var(--bg2); color:var(--fg); border:1px solid var(--line);
+  font-family:inherit; outline:none;
+}
+.profile-box:focus{ border-color:var(--pri); }
+.profile-foot{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:10px; margin-top:9px;
+}
+.profile-foot .cnt{ font-size:11.5px; color:var(--fg3); }
+.profile-foot .btns{ display:flex; gap:8px; flex-shrink:0; }
+.profile-foot .btns .ghost-btn{ margin:0; }
+.profile-tip{
+  margin:0 0 10px; padding:9px 11px; border-radius:9px;
+  background:var(--bg2); border-left:3px solid var(--pri);
+  font-size:11.5px; color:var(--fg3); line-height:1.6;
+}
+/* ===== 聊天栏：点头像/名字直接进她的编辑页 ===== */
+.tap-edit{ cursor:pointer; }
+.tap-edit:active{ opacity:.6; }
+
+/* ===== 外貌（她此刻的样子）===== */
+.look-switch{
+  display:flex; align-items:center; gap:9px; margin:10px 0 4px;
+  font-size:13px; color:var(--fg2); cursor:pointer; user-select:none;
+}
+.look-switch input{
+  width:18px; height:18px; flex-shrink:0; accent-color:var(--pri); cursor:pointer;
+}
+/* 外貌框比「我的设定」矮，因为本来就只有二三十字 */
+.look-box{ min-height:78px; }
+/* 「立即生效」是主操作，给它一点强调 */
+.ghost-btn.prim{
+  background:var(--pri); border-color:var(--pri); color:#fff;
+}
+.ghost-btn.prim:active{ background:var(--pri2); }
+.ghost-btn.prim:disabled{ opacity:.55; }
+/* 「立即生效/清除」下面那行提示的间距，见下方 .hint-text.look-live-tip
+   （必须定义在 .hint-text 之后 —— 同为单类时后定义者胜出，
+     写在前面会被 .hint-text 的 margin:-2px 覆盖，按钮和文字直接贴在一起） */
+/* 选图那行：左边提示文字，右边按钮，垂直居中对齐 */
+.look-pick{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:10px; margin-top:6px; padding-top:14px; border-top:1px solid var(--line);
+  padding-bottom:6px;
+}
+.look-pick .hint-text{ margin:0; flex:1; min-width:0; }
+.look-pick .ghost-btn{ flex-shrink:0; }
+
+/* ===== 发送失败提示（保留气泡，不凭空消失）===== */
+.err-bub{ display:flex; flex-direction:column; gap:5px; }
+.err-title{ font-size:14px; font-weight:600; }
+.err-detail{ font-size:11.5px; color:var(--fg3); line-height:1.5; word-break:break-word; }
+.retry-btn{
+  align-self:flex-start; margin-top:6px; padding:6px 14px; border-radius:8px;
+  background:var(--pri); color:#fff; border:none; font-size:12.5px;
+  cursor:pointer; font-family:inherit;
+}
+.retry-btn:active{ background:var(--pri2); }
+
+/* ===== 头像裁剪 ===== */
+.crop-main{
+  flex:1; display:flex; flex-direction:column; align-items:center;
+  /* safe center：放得下时居中，放不下时退回顶部对齐 —— 普通 center 会在
+     溢出时把顶部一起裁掉，配合下面的滚动仍然够不到最上面。 */
+  justify-content:center; justify-content:safe center; gap:22px; padding:20px;
+  overflow-y:auto; -webkit-overflow-scrolling:touch;
+}
+.crop-stage{
+  position:relative; border-radius:50%; overflow:hidden; background:#000;
+  touch-action:none; user-select:none; cursor:grab;
+  box-shadow:0 0 0 2px var(--line), 0 8px 30px rgba(0,0,0,.45);
+}
+.crop-stage:active{ cursor:grabbing; }
+.crop-stage canvas{ width:100%; height:100%; display:block; pointer-events:none; }
+.crop-ctrl{
+  display:flex; align-items:center; gap:12px; width:100%; max-width:340px;
+}
+.crop-label{ font-size:13px; color:var(--fg2); flex-shrink:0; }
+.crop-ctrl input[type=range]{ flex:1; }
+
+/* ===== 提示条 ===== */
+.hint-box{
+  background:var(--bg2); border-left:3px solid var(--pri);
+  border-radius:0 10px 10px 0; padding:11px 14px;
+  font-size:12.5px; color:var(--fg2); line-height:1.6; margin-bottom:14px;
+}
+.hint-text{
+  font-size:12px; color:var(--fg3); line-height:1.65;
+  margin:-2px 0 14px;
+}
+/* 紧跟按钮行下面的提示：不能用 .hint-text 的负上边距，否则和按钮叠在一起。
+   用复合选择器提高权重，保证不被上面的 .hint-text 覆盖。 */
+.hint-text.look-live-tip{ margin:10px 0 14px; }
+/* 外貌开关下面那句说明：默认负边距太贴，单独放开 */
+.look-switch + .hint-text{ margin-top:10px; }
+/* 设置页「自动归档」开关下面那句说明，同上 */
+#auto-arch-switch + .arch-auto-tip{ margin:10px 0 16px; }
+/* 紧跟在输入框下面的提示：负上边距是为了让文字贴近输入框，
+   但只对「输入框的下一个兄弟」生效，避免误伤别的排布 */
+textarea + .hint-text,
+input + .hint-text{ margin-top:8px; }
+
+/* ===== 长按菜单 ===== */
+/* 位置由 JS 按被长按的那条消息算（left/top 动态设置），不再写死在屏幕底部 */
+.msg-menu{
+  position:fixed; z-index:1000; min-width:170px; max-width:min(76vw, 260px);
+  background:var(--bg2); border:1px solid var(--line); border-radius:14px;
+  padding:6px;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);
+  display:flex; flex-direction:column; gap:2px;
+  animation:menuIn .18s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes menuIn{
+  from{ opacity:0; transform:translateY(10px) scale(.94); }
+  to{ opacity:1; transform:none; }
+}
+/* 收回：先播完再真正移除（JS 里 delay 150ms 才 remove） */
+.msg-menu.closing{
+  animation:menuOut .13s cubic-bezier(.4,0,1,1) both;
+  pointer-events:none;
+}
+@keyframes menuOut{
+  from{ opacity:1; transform:none; }
+  to{ opacity:0; transform:translateY(8px) scale(.96); }
+}
+.msg-menu button{
+  padding:12px 16px; background:none; border:none; color:var(--fg);
+  font-size:14.5px; text-align:left; border-radius:9px; cursor:pointer;
+  font-family:inherit;
+}
+.msg-menu button:active{ background:var(--bg3); }
+.msg-menu button.cancel{ color:var(--fg3); text-align:center; }
+
+/* 设置页里成对的数字输入 */
+.field.row input[type=number]{
+  width:78px; flex-shrink:0; text-align:center; padding:9px 6px;
+  background:var(--bg3); border:1px solid var(--line); border-radius:10px;
+  color:var(--fg); font-family:inherit; font-size:14px; outline:none;
+}
+.field.row input[type=number]:focus{ border-color:var(--pri); }
+/* 记忆条目上的小标签 */
+.mem-tag{
+  font-style:normal; font-size:11px; padding:1px 6px; border-radius:6px;
+  margin-right:7px; background:var(--bg3); color:var(--fg3); white-space:nowrap;
+}
+.mem-tag.ev{ color:var(--pri2); }
+/* 「自定义」= 你自己写进去的 */
+.mem-tag.mine{ color:var(--pri); border:1px solid var(--pri); background:transparent; }
+
+/* ===== 时段划分 ===== */
+.clock-range{ display:flex; align-items:center; gap:9px; margin-bottom:11px; }
+.clock-range > span{ width:42px; flex-shrink:0; font-size:13px; color:var(--fg2); }
+.clock-range input[type=number]{
+  width:62px; flex-shrink:0; text-align:center; padding:8px 4px;
+  background:var(--bg3); border:1px solid var(--line); border-radius:9px;
+  color:var(--fg); font-family:inherit; font-size:14px; outline:none;
+}
+.clock-range input[type=number]:focus{ border-color:var(--pri); }
+.clock-range > i{ font-style:normal; color:var(--fg3); }
+.clock-range > em{ font-style:normal; font-size:12px; color:var(--fg3); }
+
+/* ===== 消息上的 token 用量 ===== */
+.t .tk{ margin-left:0; color:var(--fg3); opacity:.75; font-size:10.5px; white-space:nowrap; }
+.t .tk i{ font-style:normal; color:var(--pri2); }
+
+/* ===== 联网搜索标记（打了 /搜 的那条消息）===== */
+.search-tag{
+  margin-top:6px; padding:3px 8px; display:inline-block;
+  font-size:11px; line-height:1.5; color:var(--pri2);
+  background:color-mix(in srgb, var(--pri2) 12%, transparent);
+  border:1px solid color-mix(in srgb, var(--pri2) 28%, transparent);
+  border-radius:999px; word-break:break-all;
+}
+
+/* ===== 联网搜索设置区 ===== */
+.search-box{ display:flex; flex-direction:column; gap:10px; }
+.search-tip{
+  font-size:12px; line-height:1.7; color:var(--fg3);
+  background:var(--bg2); border-radius:8px; padding:9px 11px;
+}
+.search-tip b{ color:var(--fg); font-weight:600; }
+.search-tip code{
+  background:var(--bg3); padding:1px 5px; border-radius:4px;
+  font-size:11.5px; color:var(--pri2);
+}
+.search-row{ display:flex; align-items:center; gap:9px; }
+.search-row > span{ flex:1; font-size:13px; }
+.search-state{
+  font-size:11.5px; padding:2px 8px; border-radius:999px;
+  background:var(--bg3); color:var(--fg3);
+}
+.search-state.on{ background:color-mix(in srgb, var(--pri2) 18%, transparent); color:var(--pri2); }
+
+/* ===== 折叠面板（展开动画和页面转场用同一条曲线、同一个时长）===== */
+.fold-head{
+  display:flex; align-items:center; gap:9px; width:100%;
+  padding:12px 14px; margin-bottom:14px;
+  background:var(--bg3); border:1px solid var(--line); border-radius:11px;
+  color:var(--fg); font-family:inherit; font-size:13.5px; text-align:left; cursor:pointer;
+}
+.fold-head:active{ background:var(--bg2); }
+.fold-head .fold-num{
+  margin-left:auto; font-style:normal; font-size:12px; color:var(--pri2);
+  /* v1.21.57：接口那个角标要显示「服务商 · 模型名」，模型名可能很长，
+     不加约束会把折叠头撑破。 */
+  min-width:0; max-width:52%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.fold-head .fold-arrow{
+  font-style:normal; color:var(--fg3); font-size:12px; flex-shrink:0;
+  transition:transform .34s cubic-bezier(.42,0,.58,1);
+}
+.fold-head.open .fold-arrow{ transform:rotate(180deg); }
+.fold-wrap{
+  display:grid; grid-template-rows:0fr; opacity:0;
+  transition:grid-template-rows .34s cubic-bezier(.42,0,.58,1), opacity .34s cubic-bezier(.42,0,.58,1);
+}
+.fold-wrap.open{ grid-template-rows:1fr; opacity:1; }
+.fold-inner{ min-height:0; overflow:hidden; }
+
+/* 记忆按人物分组：第二层折叠，比外层轻一点、缩进一点，看得出是从属关系 */
+.mem-group{ margin-bottom:10px; }
+.mem-group:last-child{ margin-bottom:0; }
+.fold-head.sub{
+  padding:10px 12px; margin-bottom:0; font-size:13px;
+  background:var(--bg2); color:var(--fg2);
+}
+.fold-head.sub.open{ margin-bottom:10px; border-bottom-left-radius:4px; border-bottom-right-radius:4px; }
+/* 子折叠之间要有间隔：上面那个收起或展开后，下面那个的头不能贴上来。
+   .fold-head.sub 默认 margin-bottom:0（给记忆分组用的紧凑版），
+   所以这里给「我的相关设定」里的子折叠单独补间距。 */
+#mine-wrap .fold-head.sub{ margin-bottom:8px; }
+#mine-wrap .fold-head.sub.open{ margin-bottom:10px; }
+#mine-wrap .fold-wrap{ margin-bottom:14px; }
+#mine-wrap .fold-wrap:last-child{ margin-bottom:0; }
+/* 子折叠内部：提示框和输入框之间别挤在一起 */
+#mine-wrap .profile-tip{ margin:10px 0 10px; }
+.mem-group .fold-inner{ padding-left:2px; }
+
+.mem-add-row{ display:flex; gap:8px; margin:10px 0 4px; }
+.mem-add-row input{ flex:1; }
+
+/* ===== 剧情时间条 ===== */
+.clock-bar{
+  display:block; width:100%; flex-shrink:0;
+  padding:6px 12px; border:none; border-bottom:1px solid var(--line);
+  background:var(--bg2); color:var(--fg3);
+  font-family:inherit; font-size:12px; letter-spacing:.3px; text-align:center;
+  cursor:pointer;
+}
+.clock-bar:active{ background:var(--bg3); color:var(--fg2); }
+/* v1.21.47：时间 + 场景两个入口共用这一条，不额外占一行高度 */
+.bar-row{ display:flex; align-items:stretch; flex-shrink:0; }
+.bar-row .clock-bar{ flex:1 1 auto; width:auto; min-width:0; }
+.scene-bar{
+  flex:0 0 auto; max-width:46%;
+  border-left:1px solid var(--line);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* 有场景时右边这段亮一点，一眼看出"现在不是没场景" */
+.scene-bar.on{ color:var(--pri2); }
+.clock-day{
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  /* ⚠️ v1.21.46：「− 第 N 年 N 天 ＋」在这一行放不下时，flex-wrap 会把 ＋ 单独
+     丢到第二行居中（截图实测 top 135 → 182）—— 看着像掉出来的。这一版把每个
+     环节都收窄（gap / 输入框 / 按钮内距），393px 与 360px 下都实测同一行。
+     wrap 只作为 320px 级的兜底，仍然保留。 */
+  margin:4px 0 16px; flex-wrap:wrap;
+}
+/* 「年」框比「天」框窄：年不会超过 5 位数（上限 27398） */
+.day-input input.yr{ width:50px; padding:7px 4px; }
+.clock-day b{ font-size:15px; color:var(--fg); min-width:76px; text-align:center; }
+/* 天数可以直接输入，不用点加减号点半天 */
+.day-input{ display:flex; align-items:center; gap:4px; font-size:15px; color:var(--fg); }
+/* 加减号别占太多横向空间：它们只是「−」「＋」两个字符 */
+.clock-day .ghost-btn.sm{ padding:9px 12px; }
+.day-input input{
+  /* 62px 只装得下 5 位数；天数上限放宽到 7 位之后必须加宽，否则显示不全。
+     v1.21.46：98px → 76px →（再收窄以让 ＋ 回到同一行）68px。
+     68px 减掉左右各 4px 内距还剩 60px，7 位数（9999999）实测仍显示得下。 */
+  width:68px; padding:7px 4px; text-align:center;
+  background:var(--bg3); border:1px solid var(--line); border-radius:9px;
+  color:var(--fg); font-size:15px; font-family:inherit;
+}
+.day-input input:focus{ border-color:var(--pri); outline:none; }
+/* v1.21.46：原来这里还有一行「= 第 N 天」的换算提示（.clock-year-row / .clock-year-hint），
+   用户要求删掉，DOM 与样式一并移除。 */.clock-hint{ font-size:12px !important; margin-bottom:14px !important; }
+/* 具体时间：时 : 分 + 一个"用当前时段"的快捷按钮 */
+.clock-time{ display:flex; align-items:center; gap:8px; }
+.clock-time input{
+  width:74px; padding:9px 10px; text-align:center;
+  background:var(--bg3); border:1px solid var(--line); border-radius:9px;
+  color:var(--fg); font-size:14px; font-family:inherit;
+}
+.clock-time input:focus{ border-color:var(--pri); outline:none; }
+.clock-time b{ color:var(--fg2); }
+
+/* ===== 确认弹窗 ===== */
+.modal{
+  position:fixed; inset:0; z-index:1200; padding:24px;
+  background:rgba(0,0,0,.55);
+  display:flex; align-items:center; justify-content:center;
+  /* 横屏 / 矮屏下弹窗内容会高于视口（剧情时间那个尤其长）。
+     不给滚动的话，align-items:center 会把上下一起裁掉，底部的
+     「取消 / 确定」既够不着也滚不出来。 */
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+}
+.modal-box{
+  width:100%; max-width:340px;
+  /* 配合上面的 overflow：内容超高时不贴边，由 margin:auto 兜住顶部，
+     既保留居中又保证能滚到。 */
+  margin:auto;
+  background:var(--bg2); border:1px solid var(--line); border-radius:16px;
+  padding:20px 20px 16px;
+  box-shadow:0 18px 50px rgba(0,0,0,.55);
+}
+.modal-box h4{
+  margin:0 0 10px; font-size:16px; color:var(--fg); font-weight:600;
+}
+.modal-box p{
+  margin:0 0 18px; font-size:13.5px; line-height:1.7; color:var(--fg3);
+}
+.modal-box b{ color:var(--fg); }
+.modal-btns{ display:flex; gap:10px; }
+.modal-btns button{ flex:1; }
+
+/* ===== 多选角色（把他的设定 / 他的居处覆盖给别人）===== */
+.pick-chars-bar{ display:flex; align-items:center; gap:8px; margin:10px 0 8px; }
+.pick-chars-bar .cnt{ margin-left:auto; font-size:12px; color:var(--fg3); }
+.pick-chars-list{
+  max-height:44vh; overflow-y:auto;
+  border:1px solid var(--line); border-radius:10px;
+  padding:2px 10px; background:rgba(255,255,255,.03);
+}
+.pick-chars-list label{
+  display:flex; align-items:center; gap:8px;
+  padding:9px 0; font-size:14px; color:var(--fg); cursor:pointer;
+  border-bottom:1px dashed var(--line);
+}
+.pick-chars-list label:last-child{ border-bottom:none; }
+.pick-chars-list input{ flex-shrink:0; }
+.pick-chars-list .nm{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pick-chars-list .sub{ font-size:11.5px; color:var(--fg3); flex-shrink:0; }
+/* 场景弹窗里那行"当前场景是什么"的小字 */
+.modal-box .scene-cur{ margin:8px 0 0; font-size:12px; color:var(--fg3); }
+
+/* ===== 导入：模式选择弹窗 ===== */
+/* 比普通确认弹窗宽一点、高一点 —— 里面是 5 个选项 + 一段文件预览。 */
+.imp-box{ max-width:420px; }
+.imp-box h4{ margin-bottom:12px; }
+
+/* 文件内容预览：两列表格，右对齐的数字更好扫 */
+.imp-grid{
+  display:grid; grid-template-columns:auto 1fr; gap:5px 10px;
+  font-size:12.5px; line-height:1.5; color:var(--fg3);
+  padding:10px 12px; border-radius:10px;
+  background:rgba(255,255,255,.04); border:1px solid var(--line);
+}
+.imp-grid b{ color:var(--fg); font-weight:500; }
+.imp-local{
+  margin-top:8px; opacity:.75;
+  /* 本机现状用虚线框 —— 和上面"备份里有什么"区分开，别看串行 */
+  border-style:dashed;
+}
+
+.imp-pick{
+  margin:14px 0 8px; font-size:12px; color:var(--fg3);
+  text-transform:none; letter-spacing:.02em;
+}
+
+#import-modes{ display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+
+/* 整行都能点：radio 本身藏起来，靠 label 包住整块 */
+.imp-mode{
+  display:block; padding:10px 12px; border-radius:10px; cursor:pointer;
+  border:1px solid var(--line); background:transparent;
+  transition:border-color .15s, background .15s;
+}
+.imp-mode input{ display:none; }
+.imp-mode-head{ display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+.imp-mode-head b{ font-size:14px; color:var(--fg); }
+.imp-tag{
+  font-size:11px; color:var(--fg3); padding:1px 6px;
+  border:1px solid var(--line); border-radius:20px;
+}
+.imp-mode-desc{ margin-top:5px; font-size:12px; line-height:1.6; color:var(--fg3); }
+.imp-mode-desc i{ opacity:.8; }
+
+/* 选中态：高亮边框 + 淡背景。用 :has 让整块跟着 radio 变（WebView 支持） */
+.imp-mode:has(input:checked){
+  border-color:#7b6cf6; background:rgba(123,108,246,.12);
+}
+.imp-mode:has(input:checked) .imp-mode-head b{ color:#a99bff; }
+
+/* 文件里没有这类内容 → 压暗，但仍然可选（选中后什么都不会变，自己承担） */
+.imp-empty{ opacity:.5; }
+
+/* 危险提示：红色左边框 + 淡红底。只有"完全还原"会渲染出这个块 */
+.imp-warn{
+  margin-top:7px; padding:7px 10px; border-radius:8px;
+  font-size:11.5px; line-height:1.6; color:#ff9a9a;
+  background:rgba(255,80,80,.1); border-left:2px solid #ff6b6b;
+}
+.imp-warn:empty{ display:none; }
+
+/* ===== Toast ===== */
+.toast{
+  position:fixed; left:50%; bottom:90px; transform:translateX(-50%);
+  background:rgba(30,32,42,.96); color:#fff; padding:11px 20px;
+  border-radius:12px; font-size:13.5px; z-index:999; max-width:82%;
+  text-align:center; border:1px solid var(--line);
+  box-shadow:0 6px 24px rgba(0,0,0,.4);
+  /* ⚠️ 它只是条提示，不该吃掉点击（v1.21.54，审计发现）。
+     它固定在底部往上 90px 处、z-index 999 高于 .view 的 2 ——
+     显示期间（2.2~6.5 秒）落在它身上的点击会被它吞掉，底下的按钮收不到，
+     表现是「点了没反应」。同类元素 .view.active::after、.msg-menu.closing
+     都显式写了这条，只有 toast 漏了。 */
+  pointer-events:none;
+}
+
+/* ===== 右侧抽屉（设置）===== */
+/* 复用 .view 的滑出机制：side-right 从右边进，和 side-left 对称。
+   下面的页面原地不动（stay），所以聊天页不会跟着滑 —— 这就是 E 站那种效果。 */
+.view.side-right{ transform:translateX(100%); }
+.view.side-right.active{ transform:translateX(0); }
+/* 抽屉比整页窄，露出后面的内容，让人知道"这是拉出来的" */
+#view-drawer{ width:82%; max-width:340px; margin-left:auto; box-shadow:-8px 0 32px rgba(0,0,0,.45); }
+
+.drawer-menu{ display:flex; flex-direction:column; gap:6px; }
+.drawer-item{
+  display:flex; align-items:center; gap:12px; width:100%;
+  padding:14px 14px; border-radius:12px; border:1px solid transparent;
+  background:transparent; color:var(--fg); font-family:inherit; font-size:14.5px;
+  text-align:left; cursor:pointer;
+}
+.drawer-item:active{ background:var(--bg3); }
+.drawer-item .di-ico{ font-size:18px; width:24px; text-align:center; flex-shrink:0; }
+.drawer-item .di-sub{ margin-left:auto; font-size:12px; color:var(--fg3); }
+.drawer-sep{ height:1px; background:var(--line); margin:6px 4px; }
+
+/* ===== 世界书 ===== */
+.wb-tip{ margin:8px 0 4px; }
+/* 「全局设置 / 单独角色」两个大入口 */
+.wb-entry{
+  display:flex; align-items:center; gap:10px; width:100%;
+  padding:15px 14px; margin-bottom:10px; border-radius:12px;
+  background:var(--bg3); border:1px solid var(--line);
+  color:var(--fg); font-family:inherit; text-align:left; cursor:pointer;
+}
+.wb-entry:active{ background:var(--bg2); }
+.wb-entry .wb-entry-t{ font-size:14.5px; flex-shrink:0; }
+.wb-entry .wb-entry-s{ font-size:12px; color:var(--fg3); margin-left:auto; text-align:right; }
+.wb-entry .fold-arrow{ flex-shrink:0; margin-left:8px; }
+
+/* 角色组列表 */
+.wb-group-list{ display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
+.wb-group{
+  display:flex; align-items:center; gap:10px;
+  padding:14px; border-radius:12px; background:var(--bg3);
+  border:1px solid var(--line); cursor:pointer;
+}
+.wb-group:active{ background:var(--bg2); }
+/* 左列竖排：组名 + 成员摘要。横排直接塞会把摘要挤到右边（踩过） */
+.wb-group .wg-body{ flex:1; min-width:0; }
+.wb-group .wg-name{ font-size:14.5px; word-break:break-word; }
+.wb-group .wg-meta{ font-size:11.5px; color:var(--fg3); margin-top:5px; }
+.wb-group .wg-custom{
+  flex-shrink:0; padding:7px 11px; border-radius:9px; font-size:12px;
+  background:var(--bg2); border:1px solid var(--line); color:var(--fg2);
+  font-family:inherit; cursor:pointer;
+}
+.wb-group .wg-custom:active{ background:var(--line); }
+.wb-group-empty{
+  padding:22px 14px; text-align:center; font-size:12.5px; color:var(--fg3);
+  border:1px dashed var(--line); border-radius:12px; margin-bottom:14px;
+}
+
+/* 条目列表 */
+.wb-list{ display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
+.wb-item{
+  padding:13px 14px; border-radius:12px; background:var(--bg3);
+  border:1px solid var(--line); cursor:pointer;
+}
+.wb-item:active{ background:var(--bg2); }
+.wb-item .wi-head{ display:flex; align-items:center; gap:8px; }
+.wb-item .wi-title{ font-size:14px; flex:1; min-width:0; word-break:break-word; }
+.wb-item .wi-pos{
+  flex-shrink:0; font-size:11px; padding:2px 7px; border-radius:6px;
+  background:var(--bg2); color:var(--pri2); border:1px solid var(--line);
+}
+.wb-item .wi-off{
+  flex-shrink:0; font-size:11px; padding:2px 7px; border-radius:6px;
+  background:var(--bg2); color:var(--fg3); border:1px solid var(--line);
+}
+.wb-item .wi-keys{ display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+.wb-item .wi-key{
+  font-size:11.5px; padding:2px 8px; border-radius:7px;
+  background:var(--bg2); color:var(--pri2); border:1px solid var(--line);
+}
+.wb-item .wi-content{
+  font-size:12px; color:var(--fg3); margin-top:9px; line-height:1.6;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.wb-list-empty{
+  padding:22px 14px; text-align:center; font-size:12.5px; color:var(--fg3);
+  border:1px dashed var(--line); border-radius:12px; margin-bottom:14px;
+}
+
+/* 触发词标签输入 */
+.key-box{
+  display:flex; flex-wrap:wrap; gap:7px; align-items:center;
+  min-height:46px; padding:9px 11px; border-radius:11px;
+  background:var(--bg2); border:1px solid var(--line);
+}
+.key-box:focus-within{ border-color:var(--pri); }
+/* ⚠️ 血泪 58：输入框外面必须套 <form>，安卓软键盘才知道回车是「提交」。
+   这一层要 display:contents —— 不然 flex 布局会多出一层盒子，
+   输入框就不再跟着标签一起换行了。 */
+.key-box .key-add{ display:contents; }
+.key-box input{
+  flex:1; min-width:90px; border:none; background:transparent; outline:none;
+  color:var(--fg); font-size:13.5px; font-family:inherit; padding:4px 2px; width:auto;
+}
+/* 「加」按钮：键盘什么都不给的时候，点它也能加 */
+.key-box #we-key-add{
+  flex:0 0 auto; padding:3px 10px; font-size:12.5px; border-radius:8px;
+}
+.key-tag{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 9px; border-radius:8px; background:var(--bg3);
+  border:1px solid var(--line); font-size:12.5px; color:var(--fg);
+}
+.key-tag .kt-x{ cursor:pointer; color:var(--fg3); font-size:14px; line-height:1; }
+.key-tag .kt-x:active{ color:var(--danger); }
+
+/* 弹窗里的角色选择列表 */
+.pick-list{
+  max-height:46vh; overflow-y:auto; margin:12px 0;
+  display:flex; flex-direction:column; gap:8px;
+  -webkit-overflow-scrolling:touch;
+}
+.pick-row{
+  display:flex; align-items:center; gap:11px; padding:11px 12px;
+  border-radius:11px; background:var(--bg2); border:1px solid var(--line);
+  cursor:pointer; flex-shrink:0;
+}
+.pick-row:active{ background:var(--bg3); }
+.pick-row .pk-name{ flex:1; min-width:0; font-size:14px; word-break:break-word; }
+/* 选中态：勾选圈 */
+.pick-row .pk-box{
+  width:21px; height:21px; border-radius:50%; flex-shrink:0;
+  border:2px solid var(--line); display:flex; align-items:center;
+  justify-content:center; font-size:13px; color:transparent;
+}
+.pick-row.on .pk-box{ background:var(--pri); border-color:var(--pri); color:#fff; }
+.pick-row.on{ border-color:var(--pri); }
+/* 全选按钮：和普通按钮区分开 */
+.pick-all{
+  width:100%; padding:10px; border-radius:10px; margin-bottom:4px;
+  background:var(--bg3); border:1px solid var(--line); color:var(--pri2);
+  font-family:inherit; font-size:13px; cursor:pointer; flex-shrink:0;
+}
+.pick-all:active{ background:var(--line); }
+
+/* ===== 角色组拖动排序 ===== */
+/* 拖动中：稍微抬起一点，让用户确信"拿起来了" */
+.wb-group.dragging{
+  opacity:.92;
+  transform:scale(1.02);
+  box-shadow:0 8px 24px rgba(0,0,0,.45);
+  border-color:var(--pri);
+  position:relative;
+  z-index:5;
+}
+/* 落到哪一行：给目标位置描一圈主题色，看得见"要放这儿" */
+.wb-group.drag-over{
+  border-color:var(--pri);
+  background:var(--bg2);
+}
+/* 拖动时禁掉文字选中，免得长按选中一堆字 */
+.wb-group{ -webkit-user-select:none; user-select:none; }
+
+/* ===== 顶栏右侧的一组小按钮（世界书条目的导入/导出） ===== */
+/* 不占一整行：挤在标题右边，比常规 icon-btn 更小一圈 */
+.top-actions{
+  display:flex; align-items:center; gap:2px; flex-shrink:0;
+}
+.icon-btn.sm{
+  width:32px; height:32px; font-size:15px; line-height:1;
+}
+/* 同一行里若既有 .sm 又有常规尺寸的按钮，高度会不齐（32 vs 40）。
+   统一压到 34px：既比原来小一圈，又不会因为字号/行高把对齐搞乱。 */
+.top-actions .icon-btn{ width:34px; height:34px; }
+.top-actions .icon-btn.sm{ width:32px; height:32px; }
+/* 同一行内所有按钮强制等高，靠 flex 拉伸 —— 免得日后加了新按钮又不对齐 */
+.top-actions{ align-items:stretch; }
+.top-actions .icon-btn{ align-self:center; }
+
+
+/* 重新提炼长期记忆（v1.20.20）：和上面的「立即整理」分开，视觉上是一块独立的小区 */
+.redo-box {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line, rgba(128,128,128,.25));
+}
+.redo-box .ghost-btn { margin-right: 8px; margin-bottom: 6px; }
+.redo-box .hint-text { margin: 0 0 8px; }
+
+/* 折进 fold-inner 之后，原来 .search-box 的纵向间距没了，这里补回来 */
+#search-wrap .fold-inner{ display:flex; flex-direction:column; gap:10px; padding-top:2px; }
+
+/* 「时间跟现实走」模式下的时间条（v1.20.21）：
+   保留位置让人看得见现在几点，但视觉上收进去、不再是可点的大按钮。
+   用户要求「像抽屉那样缩进上面的聊天栏」。 */
+.clock-bar.readonly{
+  cursor:default;
+  font-size:11px;
+  color:var(--fg3);
+  opacity:.75;
+  padding:3px 12px;
+  letter-spacing:.2px;
+  background:transparent;
+  border-bottom:1px dashed var(--line);
+}
+.clock-bar.readonly:active{ background:transparent; color:var(--fg3); }
+
+/* ===== 描写详细程度选择弹窗（v1.21.31） ===== */
+.drive-sub { font-size: 13px; line-height: 1.7; color: var(--dim, #9aa); margin: 6px 0 12px; }
+.drive-list { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
+.drive-item {
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
+  padding: 11px 13px; border-radius: 10px; cursor: pointer;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
+  color: inherit; font: inherit;
+}
+.drive-item b { font-size: 14px; font-weight: 600; }
+.drive-item span { font-size: 12px; line-height: 1.6; opacity: .68; }
+.drive-item.on { border-color: #7c6cf0; background: rgba(124,108,240,.16); }
+.drive-item.on b::after { content: " ✓"; color: #7c6cf0; }
+
+/* 设置页/角色页那个"点开选"的行（v1.21.31） */
+.pick-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 11px 13px; margin: 4px 0 2px;
+  border-radius: 10px; cursor: pointer;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
+  color: inherit; font: inherit; text-align: left;
+}
+.pick-row em { font-style: normal; font-size: 13px; opacity: .7; }
+.pick-row.slim { padding: 9px 12px; }
+.pick-row:active { background: rgba(255,255,255,.09); }
+/* 「每个时段对应几点」右侧的「默认划分 / 已改过」（v1.21.57） */
+#ranges-brief { flex-shrink: 0; }
+
+/* ===== 长文本编辑弹窗（v1.21.58）=====
+   人设 / 开场白这类长字段：页面上只留一行入口，正文在弹窗里写。
+   .hidden-src 是【原来的 textarea】—— 留着当数据源，保存链路不用改。 */
+.hidden-src { display: none !important; }
+.txt-box { max-width: 420px; }
+/* 一个角色都没有时的聊天页（v1.21.59） */
+.empty-chat {
+  margin: 56px 26px; text-align: center;
+  font-size: 13.5px; line-height: 2; color: var(--fg3);
+}
+
+/* ===== 关于页（v1.21.59）===== */
+.about-head {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 4px 0 14px;
+}
+.about-logo {
+  width: 64px; height: 64px; border-radius: 18px;
+  display: block; object-fit: cover;
+  background: var(--bg3); border: 1px solid var(--line);
+}
+.about-head b { font-size: 17px; color: var(--fg); }
+.about-head span { font-size: 12px; color: var(--fg3); }
+.about-desc { text-align: center; margin: 0 0 18px; }
+.about-line {
+  font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+  color: var(--fg2); word-break: break-all; margin: 0 0 10px;
+}
+.modal-box .txt-hint {
+  margin: 0 0 10px; font-size: 12.5px; line-height: 1.6; color: var(--fg3);
+}
+.txt-area {
+  display: block; width: 100%; box-sizing: border-box;
+  height: 46vh; min-height: 180px; resize: vertical;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--bg3); color: var(--fg); border: 1px solid var(--line);
+  font-family: inherit; font-size: 14px; line-height: 1.7; outline: none;
+}
+.txt-area:focus { border-color: var(--pri); }
+.txt-foot { display: flex; justify-content: flex-end; margin: 6px 0 12px; }
+.txt-foot .cnt { font-size: 11.5px; color: var(--fg3); }
+/* 时段弹窗：最后一行别和按钮离太远 */
+#phase-modal .clock-range:last-child { margin-bottom: 4px; }
+
+/* ===== 滑杆防误触（v1.21.31） =====
+   起因（用户反馈）：在设置页上下滚动时，手指落到温度/最大长度/上下文轮数
+   这几个 range 上就会被当成拖动，值被改掉。
+   做法：touchstart 记起点，touchmove 判断主方向 ——
+   垂直为主时给滑杆加 no-drag（pointer-events 不吃拖动），让页面正常滚。 */
+input[type="range"].no-drag { pointer-events: none; }
+input[type="range"] { touch-action: pan-y; }
+
+/* 记忆健康状态（v1.21.35） */
+.mem-health {
+  font-size: 12.5px; line-height: 1.9; color: var(--dim, #9aa);
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px; padding: 9px 12px; margin: 6px 0 10px; white-space: pre-line;
+}
+.mem-health b { color: #e8e8f0; }
+.mem-health .warn { color: #f0b060; }
+
+/* ===== 首次启动引导条（v1.21.40）=====
+   仅在 apiKey 为空时出现，点一下进设置并聚焦到 Key 输入框。
+   用 <button> 而不是 <div>：和上面的时钟条一样，键盘与无障碍自带可聚焦语义。 */
+.setup-banner{
+  display:flex; align-items:center; gap:10px;
+  margin:8px 12px 0; padding:10px 14px;
+  background:linear-gradient(90deg, rgba(139,124,246,.20), rgba(139,124,246,.06));
+  border:1px solid var(--pri); border-radius:12px;
+  color:var(--fg); font-family:inherit; font-size:calc(var(--fs) - 1px);
+  line-height:1.45; text-align:left; cursor:pointer;
+}
+.setup-banner:active{ transform:scale(.985); }
+.setup-banner .sb-ico{ font-size:17px; flex:0 0 auto; }
+.setup-banner .sb-txt{ flex:1 1 auto; }
+.setup-banner .sb-go{ color:var(--pri2); font-weight:600; flex:0 0 auto; white-space:nowrap; }

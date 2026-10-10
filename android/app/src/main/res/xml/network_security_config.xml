@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 明文 HTTP 放行（v1.21.51）
+     为什么需要：targetSdk 28+ 的 Android 默认禁止明文 HTTP，而「本地（Ollama）」
+     和「自定义（OpenAI 兼容）」这两条路，端点常常是 http://192.168.x.x:11434 这种。
+     光有这张表还不够 —— 页面 origin 是 https://localhost，WebView 还会按
+     mixed content 拦一次，所以 capacitor.config.json 里 allowMixedContent 也得开。
+
+     放行范围：整个 base-config。Android 的 network security config 只认主机名，
+     不认 192.168.0.0/16 这种网段写法，而家里路由器的分配地址会变，没法逐个列。
+     代价：你若把 baseUrl 填成 http:// 的公网地址，那一段就是明文传输 ——
+     公网端点请一律用 https。
+
+     不改 androidScheme（现在 https）：那会换掉页面 origin，
+     localStorage / IndexedDB 全部对不上 = 老用户数据凭空消失。-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <!-- 只信系统 CA。原来还写了 <certificates src="user" />，那是多余的：
+             局域网 Ollama 走的是明文 http（上面已经放行），根本用不到用户 CA；
+             而信了用户 CA，任何诱导你装一张证书的 App / 企业 MDM 就能中间人解密
+             api.deepseek.com 的 https —— 那是拿全部对话和 Key 换一个用不上的能力。-->
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

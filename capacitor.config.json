@@ -1,0 +1,11 @@
+{
+  "appId": "com.aicompanion.app",
+  "appName": "梦弦居",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

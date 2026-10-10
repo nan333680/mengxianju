@@ -1,0 +1,456 @@
+/**
+ * 角色卡（Character Card V2）导入 / 导出 —— v1.21.40
+ *
+ * 这是个【实验性】功能，刻意做成独立文件：
+ *   · 不动 app.js 的现有逻辑，只由它 import 三个入口函数；
+ *   · 全部是纯函数（解析 / 打包），只有 makeCardPng 碰 Canvas；
+ *   · 解析失败一律 throw 带人话的 Error，由调用方 toast，不静默吞。
+ *
+ * 为什么要手写 PNG chunk 而不用库：
+ *   package.json 里没有打包器，www/ 是原样同步进 APK 的静态目录 ——
+ *   WebView 里没有 node_modules，裸模块名 import 会让整个 app 挂掉
+ *   （app.js 第 6-9 行专门写了这条教训）。所以 PNG 和 CRC32 只能自己写。
+ *
+ * 规范：github.com/malfoyslastname/character-card-spec-v2
+ *   V2 卡是 { spec:'chara_card_v2', spec_version:'2.0', data:{...} }
+ *   V1 卡（老卡）就是字段平铺，没有 data 外壳 —— 两种都要认。
+ *   PNG 卡：把卡片 JSON 以 base64 塞进名为 "chara" 的 tEXt chunk。
+ */
+
+// ============================================================
+//  Base64 / UTF-8
+// ============================================================
+
+/**
+ * UTF-8 字符串 → base64。
+ *
+ * ⚠️ 不能直接 btoa(str)：它只认 Latin1，中文会直接抛 InvalidCharacterError。
+ * 先经 TextEncoder 变成字节，再逐字节喂给 btoa。
+ * 分块拼接是因为 String.fromCharCode.apply 在大数组上会爆栈。
+ */
+export function encodeB64Utf8(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return btoa(bin);
+}
+
+/** base64 → UTF-8 字符串（encodeB64Utf8 的逆） */
+export function decodeB64Utf8(b64) {
+  const bin = atob(String(b64).replace(/\s+/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+// ============================================================
+//  CRC32（PNG 每个 chunk 末尾都要）
+// ============================================================
+
+let _crcTable = null;
+
+function crcTable() {
+  if (_crcTable) return _crcTable;
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  _crcTable = t;
+  return t;
+}
+
+/** 标准 PNG CRC-32（多项式 0xEDB88320，初值/终值取反） */
+export function crc32(bytes) {
+  const t = crcTable();
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = t[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+// ============================================================
+//  JSON 卡解析
+// ============================================================
+
+/**
+ * 解析卡片对象（V1 或 V2）成统一形状。
+ * @param {any} raw 已经 JSON.parse 过的对象
+ */
+export function normalizeCard(raw) {
+  if (!raw || typeof raw !== 'object') throw new Error('卡片不是一个对象');
+  // V2 把真正的字段放在 data 里；V1 平铺。
+  // 判据用 data 是否存在且是对象 —— 不能靠 spec 字段，实测有卡只写了 data 没写 spec。
+  const d = (raw.data && typeof raw.data === 'object') ? raw.data : raw;
+  const name = String(d.name || '').trim();
+  if (!name) throw new Error('卡片里没有 name 字段');
+  return {
+    spec: String(raw.spec || (raw.data ? 'chara_card_v2' : 'v1')),
+    name,
+    description: String(d.description || ''),
+    personality: String(d.personality || ''),
+    scenario: String(d.scenario || ''),
+    first_mes: String(d.first_mes || ''),
+    mes_example: String(d.mes_example || ''),
+    creator_notes: String(d.creator_notes || ''),
+    system_prompt: String(d.system_prompt || ''),
+    post_history_instructions: String(d.post_history_instructions || ''),
+    alternate_greetings: Array.isArray(d.alternate_greetings) ? d.alternate_greetings.map(String) : [],
+    tags: Array.isArray(d.tags) ? d.tags.map(String) : [],
+    entries: extractEntries(d.character_book),
+    // ⚠️ v1.21.47：extensions 必须带出来。
+    // 我们自己导出的卡把角色级参数（表达方式 / 外貌 / 「他的设定」/ 临时场景）
+    // 挂在 extensions.mengxianju 上，而这里原来是【直接丢掉】的 ——
+    // 于是 readMkParams 永远读到 undefined，导入时静默把参数全丢了。
+    extensions: (d.extensions && typeof d.extensions === 'object') ? d.extensions : {},
+  };
+}
+
+/** 从 JSON 文本解析卡片 */
+export function parseCardJson(text) {
+  let raw;
+  try { raw = JSON.parse(String(text)); }
+  catch (e) { throw new Error('不是合法的 JSON：' + ((e && e.message) || e)); }
+  return normalizeCard(raw);
+}
+
+/** character_book.entries → 本项目世界书条目的形状 { title, keys, content, on, pos } */
+function extractEntries(book) {
+  if (!book || !Array.isArray(book.entries)) return [];
+  const out = [];
+  for (const e of book.entries) {
+    if (!e || typeof e !== 'object') continue;
+    let content = String(e.content || '').trim();
+    if (!content) continue;                                  // 空条目没意义，别塞进去占位
+    // 限长（v1.21.53）：卡是外面来的东西，一条塞几 MB 会撑爆提示词和存储
+    if (content.length > 20000) content = content.slice(0, 20000);                                  // 空条目没意义，别塞进去占位
+    // V2 用 keys，V1 的旧字段叫 key（单数）或 keywords，都认
+    let keys = [];
+    if (Array.isArray(e.keys)) keys = e.keys;
+    else if (Array.isArray(e.keywords)) keys = e.keywords;
+    else if (typeof e.key === 'string') keys = [e.key];
+    keys = keys.map(k => String(k || '').trim().slice(0, 64)).filter(Boolean).slice(0, 64);
+    // 标题：先认 SillyTavern 的 comment / name，再认我们自己导出的那份（v1.21.51）
+    const mk = (e.extensions && e.extensions.mengxianju) || {};
+    const title = String(e.comment || e.name || mk.title || '').trim();
+    // 「一直生效」不需要触发词。两个来源：我们自己导出的档位，或 ST 的 constant: true
+    const always = mk.pos === 'always' || e.constant === true;
+    const pos = always ? 'always' : (mk.pos === 'tail' ? 'tail' : 'front');
+    // 没有触发词又不是常驻 = 永远不会生效，跳过（老行为）
+    if (!keys.length && !always) continue;
+    out.push({ title, keys, content, on: e.enabled !== false, pos });
+  }
+  return out;
+}
+
+// ============================================================
+//  PNG 卡
+// ============================================================
+
+const PNG_SIG = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+/** 前 8 字节是不是 PNG 签名 */
+export function isPng(buf) {
+  const u8 = new Uint8Array(buf);
+  if (u8.length < 8) return false;
+  for (let i = 0; i < 8; i++) if (u8[i] !== PNG_SIG[i]) return false;
+  return true;
+}
+
+function latin1(u8, from, to) {
+  let s = '';
+  for (let i = from; i < to; i++) s += String.fromCharCode(u8[i]);
+  return s;
+}
+
+/**
+ * 从 PNG 里取出 "chara" / "ccv3" 的 tEXt（或 zTXt/iTXt）内容并解析成卡片。
+ *
+ * PNG 结构：8 字节签名，然后是一串 chunk：
+ *   [长度 4B 大端][类型 4B][数据][CRC 4B]
+ * tEXt 的数据是：keyword \0 text  （两边都是 Latin1；卡片本体是 base64 所以是纯 ASCII）
+ */
+export function extractCardFromPng(buf) {
+  const u8 = new Uint8Array(buf);
+  if (!isPng(u8)) throw new Error('不是 PNG 文件');
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  let off = 8;
+  let fallback = null;
+  while (off + 8 <= u8.length) {
+    const len = dv.getUint32(off);
+    const type = latin1(u8, off + 4, off + 8);
+    const ds = off + 8;
+    const de = ds + len;
+    if (de + 4 > u8.length) break;                           // 文件被截断，别再往下读
+    if (type === 'tEXt' || type === 'iTXt') {
+      // 找 keyword 和正文之间的那个 \0
+      let nul = -1;
+      for (let k = ds; k < de; k++) { if (u8[k] === 0) { nul = k; break; } }
+      if (nul > ds) {
+        const kw = latin1(u8, ds, nul);
+        if (kw === 'chara' || kw === 'ccv3') {
+          const raw = latin1(u8, nul + 1, de);
+          // iTXt 的正文前面还挂着 压缩标志/语言/译文名，这里只认最简单的形态，
+          // 认不出来就记下来当 fallback —— 别因为一个怪 chunk 就把整张卡判死。
+          try { return parseCardJson(decodeB64Utf8(raw)); }
+          catch (e) { if (!fallback) fallback = e; }
+        }
+      }
+    }
+    if (type === 'IEND') break;
+    off = de + 4;
+  }
+  if (fallback) throw fallback;
+  throw new Error('这张 PNG 里没有角色数据（找不到 chara 块）');
+}
+
+/** 在 IHDR 之后插入一个 tEXt chunk，返回新的字节数组 */
+export function insertTextChunk(pngBytes, keyword, text) {
+  const src = new Uint8Array(pngBytes);
+  if (!isPng(src)) throw new Error('底图不是 PNG');
+  const dv = new DataView(src.buffer, src.byteOffset, src.byteLength);
+
+  // 找 IHDR 之后的位置（规范要求 IHDR 必须是第一个 chunk）
+  let off = 8;
+  let insertAt = -1;
+  while (off + 8 <= src.length) {
+    const len = dv.getUint32(off);
+    const type = latin1(src, off + 4, off + 8);
+    off = off + 8 + len + 4;
+    if (type === 'IHDR') { insertAt = off; break; }
+  }
+  if (insertAt < 0) throw new Error('PNG 结构异常：找不到 IHDR');
+
+  const kw = String(keyword);
+  const tx = String(text);
+  // tEXt 只允许 Latin1 —— keyword 是 ASCII，正文是 base64（也是 ASCII），所以两个都安全。
+  // 要是有人往这里塞中文，这里会静默截断成低字节，所以下面做个断言。
+  if (/[^\x00-\x7F]/.test(kw) || /[^\x00-\x7F]/.test(tx)) {
+    throw new Error('tEXt 只能存 ASCII，正文必须已是 base64');
+  }
+
+  const dataLen = kw.length + 1 + tx.length;
+  const chunk = new Uint8Array(12 + dataLen);
+  const cdv = new DataView(chunk.buffer);
+  cdv.setUint32(0, dataLen);
+  chunk[4] = 0x74; chunk[5] = 0x45; chunk[6] = 0x58; chunk[7] = 0x74;   // 'tEXt'
+  for (let i = 0; i < kw.length; i++) chunk[8 + i] = kw.charCodeAt(i) & 0xFF;
+  chunk[8 + kw.length] = 0;
+  const txAt = 8 + kw.length + 1;
+  for (let i = 0; i < tx.length; i++) chunk[txAt + i] = tx.charCodeAt(i) & 0xFF;
+  // CRC 覆盖「类型 + 数据」，不含长度字段
+  cdv.setUint32(8 + dataLen, crc32(chunk.subarray(4, 8 + dataLen)));
+
+  const out = new Uint8Array(src.length + chunk.length);
+  out.set(src.subarray(0, insertAt), 0);
+  out.set(chunk, insertAt);
+  out.set(src.subarray(insertAt), insertAt + chunk.length);
+  return out;
+}
+
+// ============================================================
+// 打包成卡片
+// ============================================================
+
+/**
+ * 本项目的角色 + 世界书条目 → V2 卡对象。
+ * @param {object} char 角色（name / greeting / persona）
+ * @param {Array}  entries 世界书条目 [{keys, content, on}]
+ */
+/**
+ * 梦弦居自己的角色级参数（v1.21.47）。
+ *
+ * 之前导出的卡只有名字/人物设定/开场白/世界书 —— 表达方式、外貌、颜文字、
+ * 「他的设定」这些全留在手机里，换台机器导回去就全丢了。CCv2 的 extensions
+ * 本来就是留给各家放私有字段的自由区：别的软件会忽略它，我们自己导回来能原样还原。
+ *
+ * ⚠️ 只放跟这个角色绑定的东西。全局设置（API Key、搜索 key 之类）绝不能进卡 ——
+ *    卡是会被随手分享出去的东西。
+ */
+const MK_CARD_KEYS = [
+  'temperature', 'maxTokens', 'contextRounds', 'reasoningEffort',
+  'kaomojiFreq', 'kaomojiStyle', 'emojiFreq', 'verbosity', 'descLevel', 'detailDrive',
+  'splitMessages', 'povLock', 'thinkMode', 'searchPolicy', 'clockPolicy',
+  // ⚠️ povStyle 是现行字段（v1.21.49 起），povLock 已经废弃只是还留着兼容。
+  //    这张表原来只有废弃的那个 —— 于是 L2/L3/L4 视角的角色导出卡片再导回来，
+  //    视角整段静默消失（只有 L1 侥幸活着，因为 L1 ≡ povLock=true）。
+  'povStyle',
+  'appearance', 'appearanceOn', 'longMemory', 'allowEditMine',
+  'typingDelay', 'hesitation', 'showTyping',
+  // ⚠️ v1.21.53 补：「立即生效」那一层（她此刻的样子）也要进卡。
+  //    原来只带 appearance 基线，导回来时她身上那套临时的就没了。
+  'appearanceLive',
+  // 「临时场景」是【角色的】当前情境（c.scene），不是"我的设置"——
+  // 和下面被排除的那两项不同类，所以进卡（v1.21.53 从排除名单里挪回来）。
+  'scene',
+  // ⚠️ myProfile / myEnv 是【你自己的】私事（"我是谁""我住哪"），不是这个角色的设定。
+  //    角色卡是会被随手分享出去的东西 —— 这两项不进卡（v1.21.52）。
+  //    整机搬家请用设置页的「导出全部数据」，那条路会带。
+  //    （scene 曾经也被错划进这一组，v1.21.53 挪回来了：它是【角色的】当前情境 c.scene，
+  //     写在角色对象上、跟着角色走，和"我是谁/我住哪"不同类。这段注释当时没跟着改，
+  //     一直写着"三项不进卡"，和上面 MK_CARD_KEYS 里的 'scene' 自相矛盾 —— v1.21.54 更正。）
+];
+
+function mkParams(char) {
+  const o = {};
+  for (const k of MK_CARD_KEYS) if (char && char[k] !== undefined) o[k] = char[k];
+  return o;
+}
+
+/**
+ * 几个数字字段的合理范围（v1.21.53）。
+ *
+ * 为什么要有它：卡是外面来的东西。原来只判 `!== undefined`，于是一张写坏的、
+ * 或者故意构造的卡可以把 contextRounds 设成 999999、kaomojiFreq 设成字符串 ——
+ * 前者会让 buildHistory 一口气 slice 出整段历史，后者会让界面算出 NaN。
+ * 上限刻意放得很宽（宁可松，不要误伤正常人设的值）。
+ */
+const NUM_LIMITS = {
+  temperature: [0, 2], maxTokens: [1, 1000000], contextRounds: [1, 2000],
+  kaomojiFreq: [0, 1], emojiFreq: [0, 1], typingDelay: [0, 60],
+};
+const BOOL_KEYS = ['splitMessages', 'thinkMode', 'appearanceOn', 'longMemory', 'allowEditMine', 'hesitation', 'showTyping', 'povLock'];
+const STR_KEYS = {
+  reasoningEffort: 32, kaomojiStyle: 32, verbosity: 32, descLevel: 32,
+  detailDrive: 32, povStyle: 8, searchPolicy: 8, clockPolicy: 8,
+};
+const TEXT_KEYS = { appearance: 8000, appearanceLive: 8000, scene: 8000 };
+
+function sanitizeParam(k, v) {
+  if (TEXT_KEYS[k]) return typeof v === 'string' ? v.slice(0, TEXT_KEYS[k]) : undefined;
+  if (BOOL_KEYS.includes(k)) return !!v;
+  if (STR_KEYS[k]) return typeof v === 'string' ? v.slice(0, STR_KEYS[k]) : undefined;
+  const lim = NUM_LIMITS[k];
+  if (lim) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return undefined;
+    return Math.min(lim[1], Math.max(lim[0], n));
+  }
+  return v;
+}
+
+/** 从卡里读回梦弦居自己的参数。老卡没有这一段 → 返回空对象（导进去就是默认值） */
+export function readMkParams(card) {
+  const box = card && card.extensions && card.extensions.mengxianju;
+  const p = box && box.params;
+  if (!p || typeof p !== 'object') return {};
+  const o = {};
+  for (const k of MK_CARD_KEYS) {
+    if (p[k] === undefined) continue;
+    const v = sanitizeParam(k, p[k]);
+    if (v !== undefined) o[k] = v;
+  }
+  // 头像（v1.21.53）：JSON 卡里没有图，只能靠这一份 dataURL 还原。
+  // 只认 data:image/，且限个大小 —— 免得一张构造过的卡塞进几 MB 的串。
+  if (typeof box.avatar === 'string' && /^data:image\//.test(box.avatar) && box.avatar.length < 4000000) {
+    o.avatar = box.avatar;
+  }
+  return o;
+}
+
+export function buildCardV2(char, entries, opts) {
+  // ⚠️ v1.21.51：「一直生效」那一档【没有触发词】，按老判据会被整个滤掉 ——
+  //    导出卡片时那几条常驻设定就这么无声无息地没了（导回来当然也没有）。
+  //    判据改成「有内容，且有触发词或者本身就是常驻」。
+  const list = Array.isArray(entries)
+    ? entries.filter(e => e && e.content && ((e.keys || []).length || e.pos === 'always'))
+    : [];
+  const data = {
+    name: String(char.name || '').trim() || '未命名',
+    // 名称的对应关系：卡片 description ↔ 本项目 persona（都是"她是谁"）
+    description: String(char.persona || ''),
+    personality: '',
+    scenario: '',
+    // 卡片 first_mes ↔ 本项目 greeting（开场白）
+    first_mes: String(char.greeting || ''),
+    mes_example: '',
+    creator_notes: '由 梦弦居 导出',
+    system_prompt: '',
+    post_history_instructions: '',
+    alternate_greetings: [],
+    tags: [],
+    creator: '',
+    character_version: '',
+    // v1.21.47：把我们自己的角色级参数挂在这里。别的软件读卡时忽略它，
+    // 我们自己导回来则完整还原（含「他的设定 / 他的居处」和临时场景）。
+    // 头像（v1.21.53）：JSON 卡没有别的地方存图，只能塞在这儿。
+    // ⚠️ PNG 卡不塞（withAvatar:false）—— 它的图本身就是头像，再塞一份等于翻倍。
+    extensions: { mengxianju: Object.assign(
+      { spec: 1, params: mkParams(char) },
+      (opts && opts.withAvatar === false) ? {} : (typeof char.avatar === 'string' && char.avatar ? { avatar: char.avatar } : {})
+    ) },
+  };
+  if (list.length) {
+    data.character_book = {
+      name: data.name + ' 的世界书',
+      entries: list.map((e, i) => ({
+        // ⚠️ keys 可能是空的（常驻档）——原来直接 e.keys.map 会抛
+        keys: (e.keys || []).map(String),
+        content: String(e.content),
+        enabled: e.on !== false,
+        insertion_order: i,
+        case_sensitive: false,
+        // HACK v1.21.51：标题和档位是我们自己的字段，挂在标准扩展位里。
+        // 别的软件读卡时会忽略它，我们导回来则完整还原（和 params 一个套路）。
+        extensions: { mengxianju: { title: e.title || '', pos: e.pos || 'front' } },
+      })),
+    };
+  }
+  return { spec: 'chara_card_v2', spec_version: '2.0', data };
+}
+
+function loadImage(src) {
+  return new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => rej(new Error('头像加载失败'));
+    im.src = src;
+  });
+}
+
+/**
+ * 生成 PNG 卡：用 Canvas 出一张合法 PNG 当底图，再把卡片 JSON 塞进 tEXt。
+ *
+ * 为什么要过 Canvas 而不是直接拿头像：
+ *   头像可能是 JPEG（压缩后就选 jpeg），而 tEXt 只能挂在 PNG 上。
+ *   自己手搓 IDAT 的 zlib 流不现实，Canvas.toDataURL('image/png') 直接给合法 PNG。
+ */
+export async function makeCardPng(char, entries, avatarDataUrl, size = 512) {
+  // 图就在这张卡里，JSON 里不必再塞一份 dataURL（见 buildCardV2 末尾）
+  const cardOpts = { withAvatar: false };
+  const SZ = size;
+  const cv = document.createElement('canvas');
+  cv.width = SZ; cv.height = SZ;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#12131a';
+  ctx.fillRect(0, 0, SZ, SZ);
+  if (avatarDataUrl) {
+    try {
+      const img = await loadImage(avatarDataUrl);
+      // 按 cover 铺满：短边贴边，长边居中裁掉
+      const r = Math.max(SZ / img.width, SZ / img.height);
+      const w = img.width * r, h = img.height * r;
+      ctx.drawImage(img, (SZ - w) / 2, (SZ - h) / 2, w, h);
+    } catch (e) { /* 画不上就留纯色底，不影响卡片数据 */ }
+  }
+  const b64 = cv.toDataURL('image/png').split(',')[1];
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+  const json = JSON.stringify(buildCardV2(char, entries, cardOpts));
+  return insertTextChunk(bytes, 'chara', encodeB64Utf8(json));
+}
+
+/** Uint8Array → base64（写文件给 Filesystem 用时需要） */
+export function bytesToB64(bytes) {
+  let bin = '';
+  const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return btoa(bin);
+}

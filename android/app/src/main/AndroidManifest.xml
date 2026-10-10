@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:enableOnBackInvokedCallback="true"
+        android:requestLegacyExternalStorage="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 震动反馈（app.js 里两处 navigator.vibrate）。缺这条时该 API 静默无效，
+         而调用点外面套着 try/catch，连异常都看不到 —— 震动从来没生效过。-->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- ⚠️ 自动备份写公共「文档」目录要用的（v1.21.54，审计发现）。
+         Android 10 及以下，Directory.Documents 属于外部存储，**必须**声明这两个权限
+         （10 还需要 application 上的 requestLegacyExternalStorage），否则写入必然失败。
+         而失败后的行为是【静默退到 EXTERNAL】—— 那是 /Android/data/<包名>/files，
+         卸载应用或「清除数据」时系统会整目录删掉，正是备份要防的两件事：
+         用户以为有备份，换机时一无所有。这条在 Android 11+ 的机器上永远看不出来。
+         maxSdkVersion 限定生效范围：11+ 走分区存储用不上，13+ 的媒体权限也轮不到它。 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+</manifest>

@@ -1,0 +1,88 @@
+apply plugin: 'com.android.application'
+
+// ---- 签名密码：从 android/keystore.properties 读，不写死 ----
+// 缺这个文件时【不抛异常】—— 那样连 assembleDebug 都跑不了。
+// 只在日志里说清楚，让 release 签名失败时原因一目了然。
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+} else {
+    logger.warn('⚠️ 找不到 android/keystore.properties，release 签名会失败。' +
+                '把备份的密钥文件放回项目根目录即可。')
+}
+
+android {
+    namespace = "com.aicompanion.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+    buildToolsVersion = "36.0.0"
+    defaultConfig {
+        applicationId "com.aicompanion.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 118
+        versionName "0.3.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // 签名密码不写在这里 —— 这个文件在 git 里，写死等于把密码提交上去。
+    // 值放在 android/keystore.properties（.gitignore 已排除）。
+    // 缺文件时不抛异常，只在日志里提醒：否则连 assembleDebug 都跑不了。
+    signingConfigs {
+        release {
+            storeFile file("../../release.keystore")
+            storePassword keystoreProps['storePassword']
+            keyAlias keystoreProps['keyAlias'] ?: 'aicompanion'
+            keyPassword keystoreProps['keyPassword']
+            // APK Signature Scheme v3（v1.21.54）。
+            // 为什么要显式打开：v1.21.53 的包实测是 v1=false / v2=true / v3=false，
+            // 只有 v2 的话，将来真要换签名密钥就没有轮换能力（证明链是 v3 才有的）。
+            // 属性名对着 AGP 8.13.0 的 jar 核过（enableV1~V4Signing 四个都在）。
+            // v3 与 v2 并存，不影响覆盖安装：同一把密钥签的包照样盖得上去。
+            // ⚠️ 会丢数据的是【换密钥】那件事（包盖不上，卸载重装 = IndexedDB 清空），
+            //    这两个开关只决定用哪几套方案签，不碰密钥本身。
+            enableV2Signing true
+            enableV3Signing true
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

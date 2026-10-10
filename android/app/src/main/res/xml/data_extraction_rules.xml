@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+（API 31+）的备份规则。Android 11 及以下由 AndroidManifest 的 allowBackup 管。
+
+  为什么要有这个文件（v1.21.44）：
+    在此之前 Manifest 是 Capacitor 模板原样 —— allowBackup="true"、没有任何 rules。
+    于是应用私有目录（含 WebView 的 IndexedDB，也就是全部聊天记录/角色/记忆）
+    落进了系统 Auto Backup 的默认范围，会被上传到 Google Drive 或厂商云。
+
+  规则：
+    · cloud-backup —— 五个域全部排除：不上任何云。
+    · device-transfer —— 【整段不写】。官方语义是「某一段缺失 = 该模式对全部内容启用」，
+                         即换机迁移照旧可用，而这条路不经过云。
+                         刻意不写 include：没验证过「不带 path 的 domain 元素」在
+                         device-transfer 下的行为，写了反而给换机加一道没把握的门。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+</data-extraction-rules>

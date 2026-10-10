@@ -1,0 +1,19 @@
+# 换行符统一成 LF，免得在 Windows 上 clone 完 git status 显示"所有文件都改了"
+* text=auto eol=lf
+
+# 明确按二进制处理，别做任何转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.apk binary
+*.keystore binary
+*.jks binary
+*.jar binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+
+# 生成物不必在 diff / 语言统计里出现
+package-lock.json -diff linguist-generated

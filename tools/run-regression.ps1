@@ -72,7 +72,7 @@ foreach ($f in $files) {
     # 实况型（只打印过程给你看，没有断言）：没崩就算过
     if ($code -ne 0) { $verdict = 'FAIL' } else { $verdict = 'PASS' }
     $note = '(无汇总)'
-    if ($code -ne 0) { $fails += "$($f.Name)  退出码 $code" }
+    if ($code -ne 0) { $fails += "$($f.Name)  退出码 $code"; $fail++ }
   }
 
   $line = "{0,-4} {1,-26} {2}   [{3:N1}s]" -f $verdict, $f.Name, $note, $t0.Elapsed.TotalSeconds

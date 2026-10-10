@@ -67,12 +67,12 @@ const openSettings = async () => {
   await page.evaluate(() => document.getElementById('btn-settings').click());
   await sleep(800);
   await page.evaluate(() => {
-    const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'settings');
+    const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'mine');
     if (b) b.click();
   });
   await sleep(900);
 };
-const backFromSettings = async () => { await page.click('#btn-set-back'); await sleep(400);
+const backFromSettings = async () => { await page.click('#btn-mine-back'); await sleep(400);
   // v1.15.2 起栈多了 drawer 一层，退到设置页的上一层是抽屉，还要再关一次
   await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });
   await sleep(500); };
@@ -201,7 +201,7 @@ const greetingBefore = await page.evaluate(async () => {
 console.log('   角色: ' + greetingBefore.name + ' / 开场白长度 ' + greetingBefore.greeting.length);
 t('这个角色本来有开场白', greetingBefore.greeting.length > 0);
 
-t('仍停在设置页', await page.$eval('#view-settings', el => el.classList.contains('active')));
+t('仍停在我的设置页', await page.$eval('#view-mine', el => el.classList.contains('active')));
 // 统一用 JS 直接触发点击：弹窗有关闭动画，元素在动画期间不可点，
 // 这不是功能问题，是测试的等待时机问题。
 const jsClick = (sel) => page.evaluate(s => document.querySelector(s).click(), sel);

@@ -15,6 +15,21 @@
 **测试必须串行。** 每套自己起一个静态服务器和一个 Chrome 实例，
 并发跑会互相抢，报出来的是随机假失败。
 
+### ⚠️ 新克隆下来有 11 套跑不了，这是预期的
+
+`_fixtures/` **不在版本库里**（被 `.gitignore` 排除）—— 里面有一份真实的个人备份
+（聊天记录）和若干同人素材，不适合公开。所以依赖它的 **11 套**会失败：
+
+```
+e2e-cardio  e2e-import  e2e-importchars  e2e-settings  e2e-stpreset
+e2e-stworldbook  e2e-test2  e2e-wbentryio  e2e-wbimport  e2e-wbtouhou  e2e-ziworldbook
+```
+
+其余 **104 套**不依赖它，克隆后可以直接跑。要在本地补齐这 11 套，就在仓库根建一个
+`_fixtures/`，按套件里实际读到的文件名放你自己的样本（每个套件顶部的注释写了它要什么形状）。
+
+判断一次失败是不是这个原因：看报错里有没有 `ENOENT` 和 `_fixtures` 路径。
+
 ## 代码约定
 
 - `www/` 是纯前端、**没有构建步骤**，改完直接生效

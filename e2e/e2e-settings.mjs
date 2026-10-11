@@ -105,7 +105,7 @@ console.log('   实际栏目: ' + JSON.stringify(groups));
 // 和上面 #mine-fold / #mem-fold 一样，用折叠头 id 单独确认还在。
 // v1.21.61 起设置页拆成两个：「全局设置」管她和全局（接口/描写/写字台/记忆/联网/时段），
 // 「我的设置」管你自己（头像/外观/数据/角色卡）。所以这里只看全局那页的 h3。
-t('全局设置页栏目正确（描写与表达/写字台/记忆管理/联网搜索）', JSON.stringify(groups) === JSON.stringify(['描写与表达','写字台','记忆管理','联网搜索']), JSON.stringify(groups));
+// v0.3.1 加了第 5 个栏目「酒馆预设」（酒馆预设导入的入口，见 CHANGELOG 2.2）
 // 「我的设置」那页单独确认
 await page.evaluate(() => document.getElementById('btn-set-back').click()); await sleep(400);
 await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); }); await sleep(400);

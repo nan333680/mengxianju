@@ -50,7 +50,7 @@ const v2 = {
     character_book: { entries: [
       { keys: ['西行妖', '樱花'], content: '她与西行妖有约定', enabled: true },
       { keys: ['冥界'], content: '她住在冥界', enabled: false },
-      { keys: [], content: '没有触发词，应该被丢掉' },
+      { keys: [], content: '没有触发词，v0.3.1 起保留待确认' },
       { keys: ['空'], content: '', enabled: true },
     ] },
   },
@@ -60,7 +60,12 @@ t('V2 name', c2.name === '西行寺幽幽子', c2.name);
 t('V2 description（→ persona）', c2.description === '西行寺家的大小姐');
 t('V2 first_mes（→ greeting）', c2.first_mes === '呀，你来啦。');
 t('V2 备选开场白被保留待调用方提示', c2.alternate_greetings.length === 2);
-t('V2 世界书：无 keys / 空 content 的各丢一条 → 2 条', c2.entries.length === 2, c2.entries.length);
+// ⚠️ 断言更新（v0.3.1）：空 content 的仍然丢掉（没内容可注入），
+//    但【没有触发词的】不再静默丢弃 —— 标 needsReview 落库，世界书页会给「待确认」。
+//    理由是静默丢弃和静默错设定一样糟：用户看不到任何提示（同 fromSillyTavern 的判据）。
+t('V2 世界书：空 content 丢掉、没有触发词的保留 → 3 条', c2.entries.length === 3, c2.entries.length);
+t('那条没有触发词的被标了待确认', c2.entries.some(e => e.needsReview === true && /没有触发词/.test(e.reviewWhy || '')));
+t('只有它一条待确认', c2.entries.filter(e => e.needsReview === true).length === 1);
 t('V2 条目 on 跟随 enabled', c2.entries[0].on === true && c2.entries[1].on === false);
 t('V2 keys 数组原样', JSON.stringify(c2.entries[0].keys) === JSON.stringify(['西行妖', '樱花']));
 
@@ -74,6 +79,20 @@ t('V1 条目默认 on（enabled 缺省视为开）', c1.entries[0].on === true);
 // V1 旧字段名 key（单数）
 const ck = CC.parseCardJson(JSON.stringify({ name: 'X', character_book: { entries: [{ key: '单独触发词', content: '正文' }] } }));
 t('V1 兼容 key 单数字段', ck.entries.length === 1 && ck.entries[0].keys[0] === '单独触发词');
+
+// ⚠️ 补的（v0.3.1 复查）：酒馆世界书里 key 本来就是 string[]，
+//    旧卡写成数组很常见。原来只认字符串 → keys=[] → 被误标「没有触发词」，
+//    而同一个文件从【世界书导入】进来却能解析出来（fromSillyTavern 认数组）。
+//    这条钉的正是"两个入口同一套判据"。
+{
+  const ca = CC.parseCardJson(JSON.stringify({ name: 'Y', character_book: { entries: [
+    { key: ['甲', '乙'], content: '正文' },
+  ] } }));
+  t('V1 的 key 是数组时也要解析出来（不是当成没有触发词）',
+    ca.entries.length === 1 && JSON.stringify(ca.entries[0].keys) === JSON.stringify(['甲', '乙'])
+    && ca.entries[0].needsReview !== true,
+    JSON.stringify(ca.entries[0]));
+}
 
 // 错误分支
 let threw = '';

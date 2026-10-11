@@ -340,8 +340,8 @@ const phaseLabel = (k) => (PHASES.find(p => p.k === k) || {}).label || '';
  *   · 同一时段、且没开「精确时间」→ 说不清具体过了多久
  *   · 算出来是负数或零（时间被往回改过）
  *
- * @param {object|null} end   当前 clockState
- * @param {object|null} start 上一条消息的 story 快照
+ * @param {{day?: number, hour?: number, minute?: number, phase?: string}|null} end   当前 clockState
+ * @param {{day?: number, hour?: number, minute?: number, phase?: string}|null} start 上一条消息的 story 快照
  * @returns {string} 可以直接拼进 turnNote 的段落，或空串
  */
 function clockGap(end, start) {

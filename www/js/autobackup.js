@@ -71,8 +71,8 @@ export function pickOldBackups(names, keep = KEEP) {
  * 到期就跑一次自动备份。
  *
  * @param {object} o
- * @param {object} o.kv       要有 get / set
- * @param {object} o.FS       Capacitor Filesystem 插件对象（可为 null）
+ * @param {{get: Function, set: Function}} o.kv   要有 get / set
+ * @param {{writeFile: Function, readdir: Function, deleteFile: Function, readFile?: Function}|null} o.FS  Capacitor Filesystem 插件对象（可为 null）
  * @param {Function} o.collect 返回可 JSON.stringify 的备份对象（复用 exportData 的那套）
  * @param {string[]} [o.directories] 依次尝试的目录枚举值
  * @param {number} [o.now]
@@ -145,3 +145,82 @@ export async function autoBackupIfDue(o) {
 
   return { ran: true, dir: usedDir, name, deleted };
 }
+
+/**
+ * 启动自检：把最近一份自动备份【读回来】，确认它真的能解析（v0.3.1）。
+ *
+ * 起因：autoBackupIfDue 每天写一份，却【从来不读回】—— 写成功 ≠ 那份文件是可用的。
+ *   存储写满、写到一半被杀、SAF 授权被回收，都可能留下一份长度正常但内容截断的 JSON。
+ *   而这份备份存在的唯一意义就是「出事时能读回来」，它自己坏掉却没人知道 ——
+ *   等到真要用的时候才发现，那时已经晚了。
+ *
+ * 只验最近一份：它才是出事时你会去读的那一份。更早的坏掉不影响结论。
+ *
+ * @param {object} o
+ * @param {{readdir: Function, readFile: Function}|null} o.FS Capacitor Filesystem 插件对象（可为 null）
+ * @param {string[]} [o.directories]
+ * @returns {Promise<{ok:boolean, reason?:string, dir?:string, name?:string, bytes?:number, error?:string, characters?:number, messages?:number}>}
+ */
+export async function verifyLatestBackup(o) {
+  const { FS, directories = BACKUP_DIRS } = o || {};
+  if (!FS) return { ok: false, reason: 'no-filesystem' };
+  const folder = '梦弦居备份';
+  for (const dir of directories) {
+    let names;
+    try {
+      const rd = await FS.readdir({ path: folder, directory: dir });
+      names = (rd && rd.files ? rd.files : []).map(f => (typeof f === 'string' ? f : f && f.name));
+    } catch { continue; }   // 这个目录没有或读不了，换下一个
+    const mine = (names || [])
+      .filter(n => typeof n === 'string' && n.startsWith('梦弦居自动备份-') && n.endsWith('.json'))
+      .sort();
+    if (!mine.length) continue;
+    const latest = mine[mine.length - 1];
+    let raw = null;
+    let readFailed = null;
+    try {
+      const rd = await FS.readFile({ path: folder + '/' + latest, directory: dir, encoding: 'utf8' });
+      raw = (rd && typeof rd.data === 'string') ? rd.data : null;
+    } catch (e) { readFailed = String((e && e.message) || e); }
+    if (readFailed !== null || raw == null) {
+      return { ok: false, reason: 'read-failed', dir, name: latest, error: readFailed || '' };
+    }
+    let obj;
+    try { obj = JSON.parse(raw); }
+    catch (e) {
+      return { ok: false, reason: 'corrupt', dir, name: latest, bytes: raw.length,
+               error: String((e && e.message) || e) };
+    }
+    // 光能 parse 还不够：一份 {} 也是合法 JSON。要确认它真是【备份】——
+    // 至少得有导出时间，否则等于没有内容可恢复。
+    if (!obj || typeof obj !== 'object' || !obj.exportedAt) {
+      return { ok: false, reason: 'empty', dir, name: latest, bytes: raw.length };
+    }
+    // ⚠️ messages 和 characters 的【形状不一样】（v0.3.1 复查时发现报数一直是 0）。
+    //
+    // 起因：这里原来对两者都写 Array.isArray(...)。characters 确实是数组
+    // （collectBackupPayload 里 payload.characters = await chars.all()），但 messages
+    // 是【按 charId 分组的对象】：payload.messages[c.id] = await msgs.list(...)。
+    // 于是 Array.isArray 对真实备份恒为 false，messages 永远算出 0 ——
+    // 自检日志每次都打印「消息 0」，看着像"这份备份里没有聊天记录"，
+    // 而这正是它要否认的那种事（写成功 ≠ 读得回来）。
+    //
+    // ⚠️ 上一版的测试没抓到它，因为 e2e 的 fixture 把 messages 写成了数组 ——
+    //    测试验的是一个不存在的形状。改这里时【两个形状都要认】，
+    //    免得哪天有人为了兼容老备份又把数组写回来。
+    let msgN = 0;
+    if (Array.isArray(obj.messages)) {
+      msgN = obj.messages.length;
+    } else if (obj.messages && typeof obj.messages === 'object') {
+      for (const k of Object.keys(obj.messages)) {
+        const arr = obj.messages[k];
+        if (Array.isArray(arr)) msgN += arr.length;
+      }
+    }
+    return { ok: true, dir, name: latest, bytes: raw.length,
+             characters: Array.isArray(obj.characters) ? obj.characters.length : 0,
+             messages: msgN };
+  }
+  return { ok: false, reason: 'none' };
+}
+

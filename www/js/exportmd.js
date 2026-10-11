@@ -41,10 +41,19 @@ function realText(ts) {
 /**
  * 把一段对话拼成 Markdown。
  *
- * @param char     角色对象（用 name）
- * @param messages 该角色的全部消息，按时间正序
- * @param meName   「我」那一侧显示成什么，默认「我」
- * @param now      导出时刻（测试里固定用）
+ * @typedef {object} ExportMsg
+ * @property {string}  [role]
+ * @property {string}  [content]
+ * @property {boolean} [archived]
+ * @property {number}  [ts]
+ * @property {string[]} [images]
+ * @property {string[]} [imageNotes]
+ *
+ * @param {object} o
+ * @param {{name?: string}} [o.char]  角色对象（只用到 name）
+ * @param {ExportMsg[]} [o.messages]  该角色的全部消息，按时间正序
+ * @param {string} [o.meName] 我那一侧显示成什么（默认就是：我）
+ * @param {number} [o.now]    导出时刻（测试里固定用）
  * @returns {string}
  */
 export function buildChatMarkdown({ char, messages, meName = '我', now = Date.now() } = {}) {

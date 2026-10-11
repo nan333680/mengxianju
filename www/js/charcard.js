@@ -126,11 +126,17 @@ function extractEntries(book) {
     let content = String(e.content || '').trim();
     if (!content) continue;                                  // 空条目没意义，别塞进去占位
     // 限长（v1.21.53）：卡是外面来的东西，一条塞几 MB 会撑爆提示词和存储
-    if (content.length > 20000) content = content.slice(0, 20000);                                  // 空条目没意义，别塞进去占位
+    if (content.length > 20000) content = content.slice(0, 20000);
     // V2 用 keys，V1 的旧字段叫 key（单数）或 keywords，都认
     let keys = [];
     if (Array.isArray(e.keys)) keys = e.keys;
     else if (Array.isArray(e.keywords)) keys = e.keywords;
+    // ⚠️ key 也要认数组（v0.3.1 复查）：酒馆世界书的 key 本来就是 string[]，
+    //    旧卡里写成 ["甲","乙"] 很常见。原来只认字符串，于是这类条目 keys=[]
+    //    → 被标成「没有触发词」的待确认。不会静默生效（闸门挡住了），
+    //    但同一个文件从【世界书导入】进来能解析出触发词、从【角色卡】进来却不能，
+    //    而上面那段注释刚承诺"两个入口同一套判据"。
+    else if (Array.isArray(e.key)) keys = e.key;
     else if (typeof e.key === 'string') keys = [e.key];
     keys = keys.map(k => String(k || '').trim().slice(0, 64)).filter(Boolean).slice(0, 64);
     // 标题：先认 SillyTavern 的 comment / name，再认我们自己导出的那份（v1.21.51）
@@ -139,9 +145,20 @@ function extractEntries(book) {
     // 「一直生效」不需要触发词。两个来源：我们自己导出的档位，或 ST 的 constant: true
     const always = mk.pos === 'always' || e.constant === true;
     const pos = always ? 'always' : (mk.pos === 'tail' ? 'tail' : 'front');
-    // 没有触发词又不是常驻 = 永远不会生效，跳过（老行为）
-    if (!keys.length && !always) continue;
-    out.push({ title, keys, content, on: e.enabled !== false, pos });
+    // 读不懂触发条件的，标 needsReview —— 和世界书文件那条导入路径（fromSillyTavern）
+    // 用同一套判据，别让同一个文件从两个入口进来得到两种结果。
+    const why = [];
+    if (e.useRegex === true) why.push('触发词用的是正则');
+    if ((e.keysecondary || []).length || e.selective === true) why.push('带二次筛选条件');
+    if (Number(e.probability) > 0 && Number(e.probability) < 100) why.push('按概率随机触发');
+    if (Number(e.position) === 4) why.push('按对话深度插入');
+    // ⚠️ 没有触发词又不是常驻 = 永远不会生效。
+    //    v0.3.1 起【不再静默丢掉】（原来这里直接 continue）：标 needsReview 落库，
+    //    世界书页会显示「待确认」，用户能点「一直生效」或补触发词。
+    //    理由同 fromSillyTavern —— 静默丢弃和静默错设定一样糟，用户看不到任何提示。
+    if (!keys.length && !always) why.push('没有触发词');
+    out.push({ title, keys, content, on: e.enabled !== false, pos,
+               ...(why.length ? { needsReview: true, reviewWhy: why.join('、') } : {}) });
   }
   return out;
 }

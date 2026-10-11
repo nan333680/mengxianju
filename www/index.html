@@ -570,6 +570,16 @@
       </div>
     </section>
 
+    <!-- 酒馆预设（v0.3.1）：只解析展示，不执行 —— 见 app.js 的 describeStPreset。 -->
+    <section class="group">
+      <h3 data-i18n-en="SillyTavern preset">酒馆预设</h3>
+      <p class="hint-text" data-i18n-en-html="Look inside a preset exported from SillyTavern.<br> <b>This app does not run it</b> - it only tells you what is in there.">
+        导入酒馆导出的预设 JSON，看看里面有什么。<b>本软件不执行它</b>，只做展示。
+      </p>
+      <button class="ghost-btn" id="btn-preset-import" data-i18n-en="Import a SillyTavern preset">导入酒馆预设 JSON</button>
+      <input id="preset-import-file" type="file" accept=".json,application/json" hidden>
+      <div id="preset-report"></div>
+    </section>
     <section class="group">
       <button class="fold-head" id="mem-fold">
         <span data-i18n-en="Remembered">已记住的事</span>

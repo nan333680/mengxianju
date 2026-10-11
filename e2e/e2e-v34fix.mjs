@@ -77,7 +77,10 @@ await page.evaluate(async (k) => {
       const db = o.result;
       const g = db.transaction('kv').objectStore('kv').get('settings');
       g.onsuccess = () => {
-        const v = Object.assign({}, (g.result && g.result.v) || {}, { apiKey: k });
+        // ⚠️ followKeysMigrated（v0.3.1）：启动迁移会把角色身上 descLevel/detailDrive 的
+        //    历史快照清掉，而本套件要测的恰恰是「角色自己有值」那一档 —— 不立这个标记的话，
+        //    造数写完下一次 reload 就被迁移删掉，第 111 行会假失败（实测踩到）。
+        const v = Object.assign({}, (g.result && g.result.v) || {}, { apiKey: k, followKeysMigrated: true });
         const tx = db.transaction('kv', 'readwrite');
         tx.objectStore('kv').put({ k: 'settings', v });
         tx.oncomplete = () => { db.close(); res(); };

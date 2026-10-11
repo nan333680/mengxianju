@@ -82,7 +82,12 @@ await page.evaluate(async (k) => {
       const db = o.result;
       const g = db.transaction('kv').objectStore('kv').get('settings');
       g.onsuccess = () => {
-        const v = Object.assign({}, (g.result && g.result.v) || {}, { apiKey: k });
+        // ⚠️ followKeysMigrated（v0.3.1）：启动迁移会把角色身上 descLevel / detailDrive 的
+        //    历史快照清掉，而下面第 4 段造的正是「这个角色自己有 descLevel='high'」的场景 ——
+        //    不立标记的话它会回落到全局 descLevel（mid），而 mid 的括号上限 25 字装不下
+        //    detailDrive='high' 的要求，persona.js 会【降级到 low】，于是「动作链」不再出现，
+        //    第 171 行假失败（实测踩到）。
+        const v = Object.assign({}, (g.result && g.result.v) || {}, { apiKey: k, followKeysMigrated: true });
         const tx = db.transaction('kv', 'readwrite');
         tx.objectStore('kv').put({ k: 'settings', v });
         tx.oncomplete = () => { db.close(); res(); };

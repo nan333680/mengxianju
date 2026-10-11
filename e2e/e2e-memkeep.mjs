@@ -173,12 +173,28 @@ console.log('\n=== 1. 源码：三个退回操作【都要】清记忆 ===');
   // 这不是放宽到"随便"，两条式子都是当前代码里真实存在的收口点：
   //   noteDeleted  —— 把被删内容写进待清理队列
   //   tidyNow / dedupeIfNeeded —— 立刻整理一次（tidyNow 是它的带留痕包装）
-  const hasNote = (b) => b.includes('noteDeleted(');
+  // ⚠️ v0.3.1：这四个分支里的「作废摘要 + 记该忘的清单」两句收口进了 purgeRemoved()，
+  //    所以这里改成认【收口点】。和上面那段注释同一个道理：调用形式变了不该算挂，
+  //    功能被删掉才算挂 —— 下面额外钉一条「purgeRemoved 里那两句必须都在」。
+  const hasNote = (b) => b.includes('noteDeleted(') || b.includes('purgeRemoved(');
   const hasTidy = (b) => b.includes('tidyNow(') || b.includes('dedupeIfNeeded(');
-  t('编辑重发调 noteDeleted', hasNote(body.edit), '区间长度 ' + body.edit.length);
-  t('从这里重聊调 noteDeleted', hasNote(body.rewind));
-  t('重新思考调 noteDeleted', hasNote(body.regen));
-  t('删除单条也调 noteDeleted', hasNote(body.del));
+  t('编辑重发调了清理', hasNote(body.edit), '区间长度 ' + body.edit.length);
+  t('从这里重聊调了清理', hasNote(body.rewind));
+  t('重新思考调了清理', hasNote(body.regen));
+  t('删除单条也调了清理', hasNote(body.del));
+  const purgeBody = (() => {
+    const all = fs.readFileSync(WWW + '/js/app.js', 'utf8').split('\n');
+    const i = all.findIndex(l => l.includes('async function purgeRemoved('));
+    if (i < 0) return '';
+    let end = i + 1;
+    for (let j = i + 1; j < all.length; j++) { if (/^\}\s*$/.test(all[j])) { end = j + 1; break; } }
+    return all.slice(i, end).join('\n');
+  })();
+  t('purgeRemoved 里确实做了那两件事（摘要作废 + 记忆台账）',
+    purgeBody.includes('invalidateRollingIfStale(') && purgeBody.includes('noteDeleted('),
+    '函数体长度 ' + purgeBody.length);
+  t('purgeRemoved 空数组直接返回（不白跑一次库读）',
+    purgeBody.includes('if (!list.length) return;'));
   t('三个退回操作都触发整理',
     hasTidy(body.edit) && hasTidy(body.rewind) && hasTidy(body.regen),
     JSON.stringify({ edit: hasTidy(body.edit), rewind: hasTidy(body.rewind), regen: hasTidy(body.regen) }));

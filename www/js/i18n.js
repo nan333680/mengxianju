@@ -81,6 +81,10 @@ const BY_ZH = {
   '关闭': 'Close',
   // 空状态
   '还没有角色。': 'No characters yet.',
+  // ⚠️ 补上（v0.3.1）：这句原来是硬拼在 app.js 的 innerHTML 里、没走 tt()，
+  //    所以英文界面下它一直是中文；接进 tt() 之后字典里必须有对应条目。
+  '点左上角 ☰ → 角色列表 → 右上角 ＋ 建一个。':
+    'Tap ☰ top-left → Characters → ＋ top-right to create one.',
 };
 
 let _lang = 'zh';       // 实际生效的（'zh' / 'en'）

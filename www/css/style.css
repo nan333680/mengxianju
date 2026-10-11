@@ -831,7 +831,39 @@ input + .hint-text{ margin-top:8px; }
   font-size:12px; color:var(--fg3); margin-top:9px; line-height:1.6;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
 }
-.wb-list-empty{
+/* 「待确认」条目（v0.3.1）：从酒馆导进来、但触发条件没读懂 —— 落库、不注入、等用户过一眼 */
+.wb-review-bar{
+  font-size:12.5px; line-height:1.65; color:var(--fg2);
+  background:var(--bg2); border:1px solid var(--line); border-radius:10px;
+  padding:9px 11px; margin-bottom:10px;
+}
+.wb-review-bar b{ color:#e0a33a; }
+.wb-item.wb-need-review{ border-color:rgba(224,163,58,.45); }
+.wb-item .wi-review{
+  font-size:10.5px; padding:1px 6px; border-radius:5px; white-space:nowrap;
+  background:rgba(224,163,58,.14); color:#e0a33a; border:1px solid rgba(224,163,58,.4);
+}
+.wb-item .wi-why{ font-size:11.5px; color:var(--fg3); margin-top:7px; line-height:1.55; }
+.wb-item .wi-review-act{ display:flex; gap:8px; margin-top:9px; }
+.wb-item .wi-review-act button{
+  font-size:12px; padding:5px 12px; border-radius:8px;
+  background:var(--bg2); border:1px solid var(--line); color:var(--fg);
+}
+.wb-item .wi-review-act button:active{ opacity:.6; }
+/* 酒馆预设（v0.3.1）：只展示，不执行 */
+.stp-head{ font-size:14px; font-weight:600; margin-bottom:6px; }
+.stp-row{ font-size:12.5px; color:var(--fg2); margin-bottom:8px; }
+.stp-warn{ font-size:12px; line-height:1.6; color:#e0a33a; background:rgba(224,163,58,.1);
+  border:1px solid rgba(224,163,58,.35); border-radius:8px; padding:8px 10px; margin:8px 0; }
+.stp-sub{ font-size:12px; color:var(--fg3); margin:10px 0 6px; }
+.stp-rule{ border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px; }
+.stp-rule-name{ font-size:12.5px; font-weight:600; margin-bottom:5px; }
+.stp-line{ display:flex; gap:8px; font-size:11.5px; margin-top:3px; align-items:baseline; }
+.stp-line span{ color:var(--fg3); flex:0 0 42px; }
+.stp-line code{ flex:1; min-width:0; word-break:break-all; background:var(--bg2); border-radius:5px; padding:2px 6px; }
+.stp-where{ font-size:11.5px; color:var(--fg3); margin-top:5px; }
+.stp-more{ font-size:12px; color:var(--fg3); }
+.wb-list-empty{'
   padding:22px 14px; text-align:center; font-size:12.5px; color:var(--fg3);
   border:1px dashed var(--line); border-radius:12px; margin-bottom:14px;
 }

@@ -13,8 +13,7 @@
       apk\      安装包（有才放）
       src\      www / android / e2e / assets 完整源码
       tools\    构建脚本、依赖清单
-      keys\     签名密钥与密码文件
-      docs\     续接摘要与各轮评审报告
+     docs\     续接摘要与各轮评审报告
       BUILD.md  构建参数、签名指纹、SHA256
 #>
 param(
@@ -33,14 +32,17 @@ if (Test-Path $dest) {
 }
 
 $null = New-Item -ItemType Directory -Force -Path $dest
-foreach ($sub in 'apk','src','tools','keys','docs') {
+foreach ($sub in 'apk','src','tools','docs') {
   $null = New-Item -ItemType Directory -Force -Path (Join-Path $dest $sub)
 }
 
-function Copy-Tree($from, $to, $exclDirs) {
+function Copy-Tree($from, $to, $exclDirs, $exclFiles) {
   if (-not (Test-Path $from)) { Write-Host "  跳过（不存在）：$from"; return }
   $a = @($from, $to, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:1', '/W:1')
   if ($exclDirs) { $a += '/XD'; $a += $exclDirs }
+  # ⚠️ /XD 只排【目录】，排不掉文件（v0.3.0 实测）：android\keystore.properties 是文件，
+  #    写进 /XD 完全不起作用 —— 必须走 /XF。下面那句 Copy-Tree android 靠这个参数挡住它。
+  if ($exclFiles) { $a += '/XF'; $a += $exclFiles }
   robocopy @a | Out-Null
   # robocopy 退出码 0-7 都算成功，>=8 才是失败
   if ($LASTEXITCODE -ge 8) { throw "robocopy 失败（码 $LASTEXITCODE）：$from" }
@@ -52,7 +54,7 @@ Write-Host "归档 v$Version -> $dest"
 Copy-Tree (Join-Path $root 'www')     (Join-Path $dest 'src\www')     $null
 # ⚠️ 也要排掉 app\src\main\assets\public —— 那是 cap sync 从 www 拷过去的副本，
 #    留着就是每个快照多一份重复的前端代码，而且它和 www 可能不是同一版，回溯时更迷惑。
-Copy-Tree (Join-Path $root 'android') (Join-Path $dest 'src\android') @('build','.gradle','.kotlin',(Join-Path $root 'android\app\src\main\assets\public'))
+Copy-Tree (Join-Path $root 'android') (Join-Path $dest 'src\android') @('build','.gradle','.kotlin',(Join-Path $root 'android\app\src\main\assets\public')) 'keystore.properties'
 Copy-Tree (Join-Path $root 'e2e')     (Join-Path $dest 'src\e2e')     $null
 Copy-Tree (Join-Path $root 'assets')  (Join-Path $dest 'src\assets')  $null
 
@@ -68,12 +70,13 @@ foreach ($f in 'package.json','package-lock.json','capacitor.config.json','.giti
 }
 
 # ---- 密钥 ----
-$ks = Join-Path $root 'release.keystore'
-if (Test-Path $ks) { Copy-Item $ks (Join-Path $dest 'keys\release.keystore') -Force }
-# ⚠️ 密码文件也要备份（v1.21.40）：它和 keystore 是一对，只留 keystore
-#    的话，回溯时构建能跑但签不出包，等于白备份。
-$kp = Join-Path $root 'android\keystore.properties'
-if (Test-Path $kp) { Copy-Item $kp (Join-Path $dest 'keys\keystore.properties') -Force }
+#  v0.3.0 起【不再把签名密钥和口令复制进 releases\】。
+#  起因（本机实测）：这个复制块 + 上面那句 Copy-Tree android，会让每个版本目录留下
+#      keys\release.keystore、keys\keystore.properties、src\android\keystore.properties
+#  三份明文副本 —— 本机因此攒出 3 份签名私钥 + 5 份明文口令（v0.3.0 / v1.21.61 各一套）。
+#  私钥和明文口令躺在同一目录、目录名还带着版本号和 APK，一次打包外发就等于交出签名权。
+#  需要重建这个版本时，密钥从仓库根取：
+#      release.keystore  +  android\keystore.properties
 
 # ---- 文档 ----
 Get-ChildItem -Path $root -Filter '*.md' -File | ForEach-Object {
@@ -136,7 +139,7 @@ $build = @"
     cd src\android
     .\gradlew.bat assembleRelease --no-daemon
 
-签名用的是 keys\release.keystore。把它按 build.gradle 里 signingConfigs 的路径放好再构建 ——
+签名用的是仓库根的 release.keystore —— 快照里【不含】密钥。把它和 android\keystore.properties
 **同一个 keystore 才能签出可以覆盖安装、不丢数据的包**（证书指纹：$cert）。
 
 ## 目录说明
@@ -144,8 +147,7 @@ $build = @"
     apk\      安装包
     src\      www（前端源码）/ android（壳工程）/ e2e（测试）/ assets（图标）
     tools\    构建与归档脚本、依赖清单
-    keys\     签名密钥（丢失后无法再签出可覆盖安装的同名包）
-    docs\     续接摘要与评审报告
+   docs\     续接摘要与评审报告
 "@
 $build | Set-Content -Path (Join-Path $dest 'BUILD.md') -Encoding UTF8
 

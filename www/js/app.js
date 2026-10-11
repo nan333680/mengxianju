@@ -7,7 +7,7 @@ import { t, tt, applyI18n, setLang, getLang, getActiveLang, refreshLang, LANGS }
 // 主文件只负责"选文件 / 落库 / 写出去"。
 import { isPng, parseCardJson, extractCardFromPng, buildCardV2, makeCardPng, bytesToB64, readMkParams } from './charcard.js';
 // 自动备份（v1.21.40）：纯逻辑，依赖全部注入，见该文件头部说明。
-import { autoBackupIfDue } from './autobackup.js';
+import { autoBackupIfDue, verifyLatestBackup } from './autobackup.js';
 // 导出 Markdown（v1.21.48）：纯函数，接一组消息吐一个字符串
 import { buildChatMarkdown, markdownFileName } from './exportmd.js';
 
@@ -204,6 +204,28 @@ const CHAR_KEYS = [
   // 它们是全局统一的，改在「设置 → 记忆管理 → 记忆节奏」。
   // 记忆的内容则完全按角色走（memories 表里按 charId 分）。
 ];
+
+/**
+ * 「三态键」：不写这个键 = 跟随全局（v0.3.1 归纳）。
+ *
+ * 起因：descLevel(v1.21.31) / detailDrive(v1.21.32) 引入时，编辑页保存会把当时生效的值
+ * 写进角色，而 effSettings 是【角色值优先】—— 于是设置页改这两个档位，对那批角色
+ * 【零效果】，toast 却承诺"下一条回复生效"。作者为这两项补过三态（编辑页选「跟随全局」
+ * 就不写这个键），但【没有任何一条路径能把已经写进去的值清掉】：
+ *   1) 编辑页选「跟随全局」保存 —— chars.put({...c, ...data}) 会把 c 上的旧值留下
+ *   2) 勾「覆盖全局设定」广播   —— params 里没这个键，其他角色的旧值原样保留
+ *   3) 导入角色卡               —— pickCharParams(S) 把全局值复制进新角色
+ *   4) 已存在的角色             —— 快照还躺在库里（实测 19 个角色全带 descLevel）
+ * v0.3.1 四条一起修，并做一次性迁移（migrateFollowKeysToGlobal）。
+ */
+const FOLLOW_KEYS = ['descLevel', 'detailDrive'];
+
+/** 从一份参数里摘掉三态键 —— 用于"继承全局"的场合（新建角色/导入卡） */
+function omitFollowKeys(o) {
+  const c = { ...o };
+  for (const k of FOLLOW_KEYS) delete c[k];
+  return c;
+}
 
 /** 从全局设置里抽一份角色参数（新建角色时作为初始值） */
 function pickCharParams(s) {
@@ -1164,23 +1186,79 @@ async function migrateGlobalProfileToChars() {
   if (S.mkProfileMigrated) return;
   const gp = typeof S.myProfile === 'string' ? S.myProfile : '';
   const ge = typeof S.myEnv === 'string' ? S.myEnv : '';
-  let n = 0;
+  let n = 0, failed = 0;
   for (const c of allChars) {
     const patch = {};
     if (c.myProfile === undefined) patch.myProfile = gp;
     if (c.myEnv === undefined) patch.myEnv = ge;
     if (!Object.keys(patch).length) continue;
     // 单个角色写失败不该挡住启动
-    try { await chars.put({ ...c, ...patch }); Object.assign(c, patch); n++; } catch { /* 跳过 */ }
+    try { await chars.put({ ...c, ...patch }); Object.assign(c, patch); n++; } catch { failed++; }
   }
+  // ⚠️ 同 migrateFollowKeysToGlobal（v0.3.1 复查）：写入失败被吞掉、标记却无条件落下 ——
+  //    那个角色永久停在旧行为（「他的设定 / 他的居处」是空的），而闸门已经关了。
+  //    函数幂等（有值的角色 patch 为空、直接 continue），失败留待下次启动重跑。
+  if (failed) { console.warn('[迁移 v1.21.47] 有 ' + failed + ' 个角色没写成功，本次不落闸门，下次启动重试'); return; }
   try { await saveSettings({ mkProfileMigrated: true }); } catch { /* 同上 */ }
   if (n) console.log('[迁移 v1.21.47] 「他的设定 / 他的居处」已复制给 ' + n + ' 个角色');
+}
+
+/**
+ * 一次性迁移（v0.3.1）：把角色身上的「描写档位」历史快照清掉，退回跟随全局。
+ *
+ * 为什么要迁：descLevel / detailDrive 是"不写 = 跟随全局"的三态键，但机制补上之前
+ * 编辑页把当时生效的值写进了角色，而 effSettings 角色值优先 —— 于是设置页改这两个
+ * 档位对老角色零效果。机制后来修好了，角色身上的快照却一直留着（实测 19 个全带）。
+ *
+ * 迁完的效果：设置页改描写档位，这些角色下一轮就跟着变；想给某个角色单独设，
+ * 在编辑页选一个具体档位再保存即可（那会重新写进角色）。
+ * 原值留在 kv 的 followKeysBackup:v0.3.1 里，万一要查回。
+ */
+async function migrateFollowKeysToGlobal() {
+  if (S.followKeysMigrated) return;
+  // ⚠️ 空库不写标记（v0.3.1）：启动时一个角色都没有的话，标记照写下去，
+  //    之后用户从备份恢复出【带旧快照的角色】时迁移不会再跑 —— 那批角色永远锁在快照上。
+  if (!allChars.length) return;
+  const backup = {};
+  let n = 0, failed = 0;
+  for (const c of allChars) {
+    const hit = FOLLOW_KEYS.filter(k => c[k] !== undefined);
+    if (!hit.length) continue;
+    for (const k of hit) backup[c.id + '.' + k] = c[k];
+    // 单个角色写失败不该挡住启动
+    try {
+      const next = { ...c };
+      for (const k of hit) delete next[k];
+      await chars.put(next);
+      for (const k of hit) delete c[k];
+      n++;
+    } catch { failed++; }   // 跳过，但【记下来】—— 下面据此决定闸门落不落
+  }
+  if (n) {
+    // ⚠️ 合并进旧备份，不覆盖（v0.3.1 复查）：下面"有角色没迁成功就不落闸门"
+    //    会让本函数下次启动再跑一遍。那一趟里已经迁好的角色 hit 为空、直接 continue，
+    //    于是本次 backup 只装得下【重试成功的那几个】—— 直接 set 就把第一趟
+    //    记下的完整原值冲掉了，用户再想查回老档位就只剩残缺的一份。
+    try {
+      const prev = await kv.get('followKeysBackup:v0.3.1', {});
+      await kv.set('followKeysBackup:v0.3.1', { ...(prev && typeof prev === 'object' ? prev : {}), ...backup });
+    } catch { /* 备份写不进去也不挡迁移 */ }
+    console.log('[迁移 v0.3.1] 描写档位已退回跟随全局：' + n + ' 个角色（原值见 kv followKeysBackup:v0.3.1）');
+  }
+  // ⚠️ 有角色没迁成功就【不落闸门】（v0.3.1 复查）：这个标记是一次性开关，
+  //    落下之后函数开头就 return 了。而写入失败是 catch 吞掉的、循环继续 ——
+  //    于是那个角色永久停在旧行为：设置页改描写档位对它永远零效果
+  //    （CHANGELOG 1.1 承诺"改全局终于会生效"治的正是这个）。
+  //    本函数是幂等的（迁过的角色 hit 为空），失败就留待下次启动重跑。
+  if (failed) { console.warn('[迁移 v0.3.1] 有 ' + failed + ' 个角色没写成功，本次不落闸门，下次启动重试'); return; }
+  try { await saveSettings({ followKeysMigrated: true }); } catch { /* 同上 */ }
 }
 
 async function ensureChar() {
   // 启动时顺手扫一次孤儿世界书（失败无所谓）。
   await sweepWbOrphans();
   await migrateGlobalProfileToChars();
+  await migrateFollowKeysToGlobal();
   if (allChars.length) {
     // 回到上次离开时用的那个角色；她要是被删了，就退回第一个
     const last = await kv.get('lastCharId', null);
@@ -1207,8 +1285,13 @@ async function showEmptyChat() {
   const bar = $('chat-clock'); if (bar) bar.textContent = '';
   const box = $('messages');
   if (box) {
-    box.innerHTML = '<div class="empty-chat">还没有角色。<br>'
-      + '点左上角 ☰ → 角色列表 → 右下角 ＋ 建一个。</div>';
+    // ⚠️ 这一屏原来没走 tt()（v0.3.1）：i18n.js 的 BY_ZH 里明明有「还没有角色。」，
+    //    但这里是硬拼的中文字符串，英文用户看到的第一屏仍然是中文。
+    box.innerHTML = '<div class="empty-chat">' + esc(tt('还没有角色。')) + '<br>'
+      // ⚠️ 文案对齐实际位置（v0.3.1）：这个 ＋ 是 #btn-new-char，在角色列表页
+      //    .topbar 的【行尾】= 右上角（index.html:68）。原来写「右下角」，照着找的人
+      //    第一步就卡住 —— 而这是每个人看到的第一屏。
+      + esc(tt('点左上角 ☰ → 角色列表 → 右上角 ＋ 建一个。')) + '</div>';
   }
   await renderClock();
 }
@@ -1690,7 +1773,6 @@ async function showMsgMenu(el) {
       // ⚠️ 滚动摘要也要一并作废（v1.21.42 修）。
       // 被删的这条若是【曾归档过又取消归档】的，它的内容早折进摘要了 ——
       // 光清长期记忆不够，她照样带着那段"已经不存在的事"重新想。
-      await invalidateRollingIfStale(curCharId, rest);
       // 被删的这段对话产生的记忆，要一起清掉（2026-09-26 最终版）。
       //
       // 用户明确要求（原话）：
@@ -1708,7 +1790,7 @@ async function showMsgMenu(el) {
       // 模型会放宽成"沾边就删"，把更早形成的长期事实也一起抹掉。
       // 现在 noteDeleted 会把「被删的对话」和「当前记忆」配对送进去，
       // 让模型按「这条记忆是不是只能从被删内容里得到」来判（见 dedupeIfNeeded）。
-      await noteDeleted(rest.map(x => x.content));
+      await purgeRemoved(rest);
       // ⚠️ 必须 await（v1.21.37 修，复审 贯穿性根因）。
       // 起因：rewind / regen 两个分支补了 await，edit / del 没补 ——
       // 【同一路径两个入口行为不同】：不 await 的话紧接着的 regenerate()/renderMessages()
@@ -1771,11 +1853,10 @@ async function showMsgMenu(el) {
         }
       } catch { /* 读不出来不影响删除本身 */ }
       // ⚠️ 滚动摘要一并作废（v1.21.42）：删的若是"曾归档又取消"的那条，摘要里还有它
-      await invalidateRollingIfStale(curCharId, [m]);
       // 删除单条：这条产生的记忆一起清掉。
       // （四个操作【行为一致】—— 删除 / 重新思考 / 编辑重发 / 从这里重聊
       //   都会清掉被删那段产生的记忆，也都会退回剧情时间。区别只在删几条消息。）
-      await noteDeleted([m.content]);
+      await purgeRemoved([m]);
       // 立刻核对一遍：不然要等下一轮自动整理，用户会觉得「删了她还记得」。
       // 清理范围由 dedupe 里的配对判据控制（"只能从被删内容得到"的才删），
       // 更早形成的长期事实不会受牵连。
@@ -1838,12 +1919,11 @@ async function showMsgMenu(el) {
       await msgs.del(id);
       // ⚠️ 滚动摘要一并作废（v1.21.42）：rewind 删的是"这条 + 之后"，
       // 里面若有曾归档又取消的，摘要里还驮着它。
-      await invalidateRollingIfStale(curCharId, after.concat([m]));
       // 退回去的那段，产生的记忆也要一起清掉（2026-09-26 最终版）。
       // 用户场景：「十句话里我在第五句点了在这重聊，后面几个全删掉，
       //            不影响她新的思考输出」—— 留着就会污染重新生成的思考。
       // 清理范围由 dedupeIfNeeded 里的配对判据控制，只删"只能从被删内容得到"的那些。
-      await noteDeleted(after.map(x => x.content).concat([m.content]));
+      await purgeRemoved(after.concat([m]));
       // ⚠️ 必须【等它清完】再重聊（v1.21.35 修，P0-3）。
       //
       // 起因：原来是 `tidyNow()` 不 await，紧接着就 regenerate() ——
@@ -1967,8 +2047,7 @@ async function showMsgMenu(el) {
       }
       await msgs.del(id);
       // ⚠️ 滚动摘要一并作废（v1.21.42），与另外三个操作保持一致
-      await invalidateRollingIfStale(curCharId, [m]);
-      await noteDeleted([m.content]);
+      await purgeRemoved([m]);
       await kv.set('memNeedTidy:' + curCharId, true);
       // 同上（v1.21.54）：先重绘再等整理，否则这条回复消失得无声无息。
       await renderMessages();
@@ -2236,6 +2315,29 @@ async function foldIntoRolling(charId, msgs) {
 }
 
 /**
+ * 「删掉这些消息」之后的统一善后（v0.3.1）。
+ *
+ * 四个入口（删除 / 重新思考 / 编辑重发 / 从这里重聊）原来各写一遍这两句，
+ * 于是【改一处漏三处】—— 作者在注释里一条条记着踩过的坑：edit / rewind / regen
+ * 都有剧情时间退回、唯独 del 没有；regen 漏了「删完还剩什么」的护栏。
+ *
+ * 这两句的语义对四个入口是【完全一样】的，所以收口到这里：
+ *   ① 作废滚动摘要（被删的若是曾归档又取消的，它的内容早折进摘要了）
+ *   ② 把被删内容记进「该忘的清单」（noteDeleted → dedupeIfNeeded 按配对判据清）
+ * ⚠️ 顺序不能换：先作废摘要，再记账。
+ *
+ * 各入口【不同】的部分仍然留在各自分支里：删哪几条、要不要退回剧情时间、
+ * 各种护栏（开场白不能重聊、删完必须还剩 user）—— 那些本来就不该被统一。
+ *
+ * @param {Array<{id?: string, content?: string, ts?: number}>} removed 被删掉的消息（含本条）
+ */
+async function purgeRemoved(removed) {
+  const list = (removed || []).filter(Boolean);
+  if (!list.length) return;
+  await invalidateRollingIfStale(curCharId, list);
+  await noteDeleted(list.map(x => x.content));
+}
+/**
  * 改/删旧消息之后，滚动摘要可能已经过期 —— 作废它。
  *
  * 【为什么会过期】滚动摘要是【归档时】增量折叠出来的：某条消息一旦被折进去，
@@ -2426,7 +2528,21 @@ async function runArchiveNow(onProgress, insideLock = false, maxPerRun = 0, char
         // 起因：v1.21.35 只写了"试满放行"，忘了归零 ——
         // 于是累计到 3 之后，此后每一个 0 产出批次都直接放行。
         // 对照 summarizeIfNeeded 那边是有的（kv.set(rk, {})），两处口径必须一致。
-        try { await kv.set(retryKey, {}); } catch { /* 清不掉不影响正确性 */ }
+        // ⚠️ 只清【这一批自己】的签名，不再整张表清空（v0.3.1 复查修）。
+        //
+        // 原来这里是 kv.set(retryKey, {})。它和 v1.21.36 修的"忘记归零"不是同一件事：
+        // 这张表是 per-batch 签名的、每个签名各自独立，清掉【别人的】计数没有任何必要，
+        // 而后果是：同一趟里只要有一个批次提炼成功，另一个 0 产出批次的计数就被抹掉，
+        // 它永远攒不到 ZERO_RETRY_MAX=3 → 一直 held（每轮重新喂一次模型，
+        // 而且一直留在上下文里不归档，白烧 token）。
+        // 要等那些成功的批次退出 batches 之后它才可能攒够 —— 属于"延迟放行"。
+        // 下面 summarize 路径的放行出口用的就是 delete zr[sig]，两处口径现在一致，
+        // 也和 L2484 那句设计意图（"给每个批次记一个重试次数"）对上了。
+        try {
+          const zrKeep = (await kv.get(retryKey, {})) || {};
+          delete zrKeep[batchSig(batches[i])];
+          await kv.set(retryKey, zrKeep);
+        } catch { /* 清不掉不影响正确性 */ }
         // 只有【真的提炼出内容】才把"总结到哪"往前推。
         const acc = new Set(await kv.get('memSummed:' + myCharId, []) || []);
         for (const mm of batches[i]) acc.add(mm.id);
@@ -2714,6 +2830,9 @@ async function worldbookHits(charId, recentText) {
   const push = (entries, title) => {
     for (const e of (entries || [])) {
       if (!e || e.on === false || !e.content) continue;
+      // ⚠️ 待确认的条目不注入（v0.3.1）：它的触发条件我们【没读懂】，
+      //    硬注入就是"用户以为设定生效了、实际时机全错、而且不报错" —— 那比不导入更糟。
+      if (e.needsReview === true) continue;
       // 常驻条目（pos === 'always'）进的是稳定前缀，见 worldbookConst（v1.21.51）
       if (e.pos === 'always') continue;
       if (!(e.keys || []).length) continue;
@@ -2778,6 +2897,7 @@ async function worldbookConst(charId) {
   const take = (entries, title) => {
     for (const e of (entries || [])) {
       if (!e || e.on === false || !e.content) continue;
+      if (e.needsReview === true) continue;   // 同上：待确认的不注入
       if (e.pos !== 'always') continue;
       out.push({ title: e.title || title, content: e.content, key: e.id || title, pos: 'always' });
     }
@@ -3041,7 +3161,11 @@ function openCharPicker(opts) {
   if (!list.length) { toast('还没有角色，先去建一个'); return; }
   const rows = list.map(c => {
     const on = sel.has(c.id);
-    return '<div class="pick-row' + (on ? ' on' : '') + '" data-pk="' + c.id + '">'
+    // ⚠️ id 也要 esc（v0.3.1 复查发现）：导入备份时角色是【整条原样入库】的
+    // （见 importData 里的 chars.put(c)），文件里的 id 不一定是本机 uid() 生成的。
+    // 不转义的话，一个带引号的 id 就能把 data-pk="…" 这个属性【提前闭合】，
+    // 后面跟的东西会被当成新属性解析 —— 这是本项目 HTML 里唯一没走 esc 的用户数据。
+    return '<div class="pick-row' + (on ? ' on' : '') + '" data-pk="' + esc(c.id) + '">'
       + '<span class="pk-box">✓</span>'
       + '<span class="pk-name">' + esc(c.name) + '</span>'
       + '</div>';
@@ -3176,6 +3300,129 @@ async function wbSaveEntries(ctx, entries) {
   }
 }
 
+/**
+ * 把一个酒馆（SillyTavern）预设 JSON 描述成人能看的样子（v0.3.1）。
+ *
+ * ⚠️ 只解析、只展示，【一个字符都不执行】。
+ *    预设里的正则会对模型的输入输出做全局替换 —— 那是本软件没有的能力，
+ *    贸然执行等于让一份外面来的文件去改你每一轮的提示词和显示。
+ *    所以这一步的产出是「告诉你里面有什么」，不是「照它做」。
+ *
+ * 将来真要执行，红线写在这里：正则只作用于【副本】（构建提示词 / 渲染显示），
+ * 绝不改存档原文。现在的 stripKaomoji（渲染前过一道）就是这个模式。
+ *
+ * @param {object} data 解析后的预设 JSON
+ * @returns {{ok: boolean, reason?: string, html: string, summary: string}}
+ */
+function describeStPreset(data) {
+  if (!data || typeof data !== 'object') {
+    return { ok: false, reason: '不是一个 JSON 对象', html: '', summary: '' };
+  }
+  const prompts = Array.isArray(data.prompts) ? data.prompts : [];
+  const regs = (data.extensions && Array.isArray(data.extensions.regex_scripts))
+    ? data.extensions.regex_scripts : [];
+  if (!prompts.length && !regs.length) {
+    return { ok: false, reason: '里面既没有 prompts 也没有 regex_scripts，不像是酒馆预设', html: '', summary: '' };
+  }
+  // 外面来的字符串一律过这里 —— 它要进 innerHTML
+  // ⚠️ 顺序：先截断，再 esc —— 反过来的话 300 字符的刀会把结尾的实体切断
+  //    （…&amp; 被切成 …&am），屏幕上就显示出一个字面量 "&am"。
+  //    预设里的正则很容易超过 300 字符，正好踩这个。
+  const cut = (s) => esc(String(s == null ? '' : s).slice(0, 300));
+  const name = data.name || data.preset_name || '(没写名字)';
+  let h = '<div class="stp-head">' + cut(name) + '</div>';
+  h += '<div class="stp-row">提示词段：<b>' + prompts.length + '</b> 段'
+     + (regs.length ? '　正则：<b>' + regs.length + '</b> 条' : '') + '</div>';
+  if (regs.length) {
+    h += '<div class="stp-warn">⚠️ 本软件<b>不执行</b>这些正则 —— 下面是它们原本打算做什么。</div>';
+    for (const r of regs) {
+      const where = [];
+      if (r.promptOnly) where.push('只改送进去的提示词');
+      if (r.markdownOnly) where.push('只改屏幕上显示的字');
+      if (!where.length) where.push('提示词和显示都改');
+      if (r.disabled) where.push('（这份预设里它是关着的）');
+      h += '<div class="stp-rule">'
+        + '<div class="stp-rule-name">' + cut(r.scriptName || '(没写名字)') + '</div>'
+        + '<div class="stp-line"><span>找</span><code>' + cut(r.findRegex) + '</code></div>'
+        + '<div class="stp-line"><span>换成</span><code>' + cut(r.replaceString) + '</code></div>'
+        + '<div class="stp-where">' + cut(where.join(' · ')) + '</div>'
+        + '</div>';
+    }
+  }
+  if (prompts.length) {
+    h += '<div class="stp-sub">提示词段（最多列 20 段）</div>';
+    for (const q of prompts.slice(0, 20)) {
+      h += '<div class="stp-line"><span>' + cut(q.role || 'system') + '</span><code>'
+        + cut(q.name || q.identifier || '(没写名字)') + '</code></div>';
+    }
+    if (prompts.length > 20) h += '<div class="stp-more">…还有 ' + (prompts.length - 20) + ' 段</div>';
+  }
+  const summary = '看完了：' + prompts.length + ' 段提示词'
+    + (regs.length ? '、' + regs.length + ' 条正则' : '') + '。本软件不执行它。';
+  return { ok: true, html: h, summary };
+}
+/**
+ * 把酒馆（SillyTavern）的世界书条目转成本软件的格式（v0.3.1）。
+ *
+ * 起因：本软件原来遇到这种结构直接 toast「本软件不认那种结构」，让用户自己把两百条
+ * 整理成数组。而 { entries: { "0": {...} } } 正是酒馆导出世界书的默认形态 ——
+ * 也就是说，【每个从酒馆搬过来的人手上都有这个东西】。角色卡进得来、世界书被弹回去，
+ * 恰好卡在「要不要继续用」那一步上。
+ *
+ * ⚠️ 只映射能确定的字段，读不懂的地方【不猜】。
+ *    猜错比不导入更糟：用户以为设定生效了，实际触发时机全错，而且不报错。
+ *    所以拿不准的条目一律标 needsReview —— 落库、但不注入，等用户在世界书页里确认。
+ */
+function fromSillyTavern(entriesObj) {
+  const out = [];
+  for (const k of Object.keys(entriesObj || {})) {
+    const st = entriesObj[k];
+    if (!st || typeof st !== 'object') continue;
+    const content = String(st.content || '').trim();
+    if (!content) continue;
+
+    // 触发词：老板酒馆叫 key，新版还有 keywords；都当字符串数组处理
+    const rawKeys = [].concat(st.key || [], st.keywords || [], st.keys || []);
+    const keys = rawKeys.map(x => String(x == null ? '' : x).trim()).filter(Boolean).slice(0, 64);
+
+    // ⚠️ 两套字段都认（v0.3.1 复查）：酒馆导出的和本软件自己导出的字段名不一样 ——
+    //    酒馆是 key / comment / disable / constant / position，
+    //    本软件是 keys / title / on / pos。
+    //    为什么必须都认：{ entries: [...] } 这种【数组】形态也要走这个函数
+    //    （组页的 importEntries 早就认数组了，全局导入原来不认，见下面那段），
+    //    而数组既可能是酒馆格式、也可能是本软件自己导出的。只认酒馆那套的话，
+    //    本软件导出的文件再导回来会【掉档位】：pos:'always' 变 front、on:false 变 true。
+    const isConst = st.constant === true || st.pos === 'always';
+    // position：0/1 = 角色卡前/后；2/3 = Author's Note 前/后（本软件没有 AN，一并当 front）；
+    //           4 = 按对话深度插入
+    const pos = isConst ? 'always'
+      : ((Number(st.position) === 4 || st.pos === 'tail') ? 'tail' : 'front');
+
+    // 读不懂的地方逐条记原因 —— 世界书页要把原因显示出来，用户才知道自己在确认什么
+    const why = [];
+    if (st.useRegex === true) why.push('触发词用的是正则');
+    if ((st.keysecondary || []).length || st.selective === true) why.push('带二次筛选条件');
+    if (Number(st.probability) > 0 && Number(st.probability) < 100) why.push('按概率随机触发');
+    // ⚠️ 只看 position===4，不看 depth（v0.3.1）：酒馆的 depth 默认就是 4，
+    //    可 position 不是 4 时它根本不参与计算 —— 拿 depth 当判据会把
+    //    【绝大多数正常条目】误判成待确认，那比不导入还烦人。
+    if (Number(st.position) === 4) why.push('按对话深度插入');
+    if (!isConst && !keys.length) why.push('没有触发词');
+
+    out.push({
+      id: uid(),
+      title: String(st.comment || st.name || st.title || ('条目 ' + (Number(k) + 1 || k))).slice(0, 120),
+      keys,
+      content: content.slice(0, 20000),
+      // disable:true = 用户在酒馆里把它关了（酒馆字段）；on:false 是本软件自己的字段
+      on: st.disable !== true && st.on !== false,
+      pos,
+      // 标了 needsReview 的条目不注入（worldbookHits / worldbookConst 里各有一道闸）
+      ...(why.length ? { needsReview: true, reviewWhy: why.join('、') } : {}),
+    });
+  }
+  return out;
+}
 async function openWbEntries(gid) {
   _wbCtx = { kind: 'group', id: gid };
   const g = await wb.group(gid);
@@ -3204,15 +3451,32 @@ async function renderWbEntries() {
     target.innerHTML = '<div class="wb-list-empty">还没有条目。<br>点下面的按钮加一条，写上「什么时候用」和「内容」。</div>';
     return;
   }
-  target.innerHTML = entries.map((e, i) => {
+  // ⚠️ 待确认的条目要【显式报数】（v0.3.1）：它们已经从酒馆导进来、也落了库，
+  //    但因为触发条件没读懂而【不注入】。不报数的话，用户看到的是一份"导进来了却不生效"
+  //    的世界书，而且完全不知道为什么。
+  const nReview = entries.filter(e => e.needsReview === true).length;
+  const bar = nReview
+    ? '<div class="wb-review-bar">有 <b>' + nReview + '</b> 条从酒馆导入的条目<b>还没确认，现在不生效</b>。'
+      + '<br>逐条处理：能看懂触发条件的点进卡片改；本来就不看触发词的点「一直生效」；用不上的点「丢弃」。</div>'
+    : '';
+  target.innerHTML = bar + entries.map((e, i) => {
     const keys = (e.keys || []).map(k => '<span class="wi-key">' + esc(k) + '</span>').join('');
-    return '<div class="wb-item" data-wb-e="' + i + '">'
+    const rev = e.needsReview === true;
+    return '<div class="wb-item' + (rev ? ' wb-need-review' : '') + '" data-wb-e="' + i + '">'
       + '<div class="wi-head">'
       +   '<span class="wi-title">' + esc(e.title || ('条目 ' + (i + 1))) + '</span>'
+      +   (rev ? '<span class="wi-review">待确认</span>' : '')
       +   (e.pos === 'always' ? '<span class="wi-pos">一直生效</span>'
             : (e.pos === 'tail' ? '<span class="wi-pos">临场</span>' : ''))
       +   (e.on === false ? '<span class="wi-off">已关闭</span>' : '')
       + '</div>'
+      + (rev ? '<div class="wi-why">酒馆那条带了本软件没有的东西：'
+            + esc(e.reviewWhy || '触发条件没读懂') + ' —— 所以先不注入。</div>'
+            + '<div class="wi-review-act">'
+            +   '<button data-rv="always">一直生效</button>'
+            +   '<button data-rv="drop">丢弃</button>'
+            + '</div>'
+          : '')
       + (keys ? '<div class="wi-keys">' + keys + '</div>' : '')
       + (e.content ? '<div class="wi-content">' + esc(e.content) + '</div>' : '')
       + '</div>';
@@ -3220,6 +3484,42 @@ async function renderWbEntries() {
   target.querySelectorAll('[data-wb-e]').forEach(el => {
     el.onclick = () => openEntryEditor(Number(el.dataset.wbE));
   });
+  // ⚠️ 这两个按钮在卡片【内部】，必须 stopPropagation —— 不然点「丢弃」会顺手把编辑弹窗也打开
+  target.querySelectorAll('[data-rv]').forEach(b => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const card = b.closest('[data-wb-e]');
+      if (card) resolveReview(Number(card.dataset.wbE), b.dataset.rv);
+    };
+  });
+}
+
+/**
+ * 处理一条「待确认」的世界书条目（v0.3.1）。
+ *
+ * 只有两个动作在这里做：「一直生效」和「丢弃」。
+ * 「按触发词」走卡片本身 —— 点进去就是编辑弹窗，那里能改触发词、能选生效档，
+ * 保存时重建条目对象，needsReview 自然就掉了（见 openEntryEditor 的 rec）。
+ */
+async function resolveReview(index, action) {
+  if (!_wbCtx) return;
+  const entries = await wbLoadEntries(_wbCtx);
+  const e = entries[index];
+  if (!e) return;
+  if (action === 'drop') {
+    const ok = await confirmBox('丢弃这一条',
+      '「' + esc(e.title || '未命名') + '」会从这个世界书里删掉，不能撤销。', '丢弃');
+    if (!ok) return;
+    entries.splice(index, 1);
+  } else {
+    e.pos = 'always';
+    delete e.needsReview;
+    delete e.reviewWhy;
+  }
+  await wbSaveEntries(_wbCtx, entries);
+  await renderWbEntries();
+  await refreshWbSubs();
+  toast(action === 'drop' ? '已丢弃' : '已设为「一直生效」');
 }
 
 // ---------- 单条编辑弹窗 ----------
@@ -3444,7 +3744,7 @@ async function refreshWbSubs() {
 function openSoloPicker() {
   if (!allChars.length) { toast('还没有角色，先去建一个'); return; }
   const rows = allChars.map(c =>
-    '<div class="pick-row" data-pk="' + c.id + '"><span class="pk-name">' + esc(c.name) + '</span><i class="fold-arrow">›</i></div>'
+    '<div class="pick-row" data-pk="' + esc(c.id) + '"><span class="pk-name">' + esc(c.name) + '</span><i class="fold-arrow">›</i></div>'
   ).join('');
   const m = $('modal');
   $('modal-title').textContent = '选择角色';
@@ -3503,6 +3803,24 @@ function bindWorldbook() {
   if (newE2) newE2.onclick = () => openEntryEditor(-1);
   const impBtn = $('btn-wb-import');
   if (impBtn) impBtn.onclick = () => $('wb-import-file').click();
+  // 酒馆预设（v0.3.1）：只解析展示，不执行。理由见 describeStPreset 的注释。
+  const pBtn = $('btn-preset-import'), pFile = $('preset-import-file');
+  if (pBtn && pFile) {
+    pBtn.onclick = () => pFile.click();
+    pFile.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      try {
+        const rep = describeStPreset(JSON.parse(await f.text()));
+        const box = $('preset-report');
+        if (box) box.innerHTML = rep.ok ? rep.html
+          : ('<div class="stp-warn">读不了：' + esc(rep.reason || '格式不认识') + '</div>');
+        toast(rep.ok ? rep.summary : ('这不是酒馆预设：' + (rep.reason || '')), 5200);
+      } catch (err) {
+        toast('读不了这个文件：' + ((err && err.message) || err), 4200);
+      } finally { e.target.value = ''; }   // 允许重复导同一个文件
+    };
+  }
 
   const impFile = $('wb-import-file');
   if (impFile) impFile.onchange = async (e) => {
@@ -3511,8 +3829,24 @@ function bindWorldbook() {
     try {
       const txt = await f.text();
       const data = JSON.parse(txt);
-      const gs = data.groups || (Array.isArray(data) ? [] : null);
-      const so = data.solo || [];
+      let gs = data.groups || (Array.isArray(data) ? [] : null);
+      let so = data.solo || [];
+      // ⚠️ 酒馆格式（v0.3.1）：{ entries: { "0": {...} } } —— entries 是【对象】，键是下标。
+      //    本软件原来走到下面那句 toast「这个文件里没有世界书内容」，也就是【不认】。
+      //    而这是酒馆导出世界书的默认形态，每个从酒馆搬过来的人手上都是它。
+      //    现在认：装进一个角色组，members 取【当前所有角色】—— 导进来就对这些角色生效。
+      // ⚠️ 数组形态也要认（v0.3.1 复查）：组页的 importEntries（见下面 3958 那段）
+      //    早就写了 Array.isArray(data.entries) 这一支，全局这个按钮却把数组挡在门外 ——
+      //    同一个 { entries: [...] } 文件，从组页导能进、从这儿导就报「没有世界书内容」。
+      //    fromSillyTavern 的 Object.keys 对数组一样有效（键就是下标），两套字段它都认。
+      if (!gs && !so.length && data.entries && typeof data.entries === 'object') {
+        const conv = fromSillyTavern(data.entries);
+        if (conv.length) {
+          const all = await chars.all();
+          const gname = String(f.name || '').replace(/\.json$/i, '').trim() || '从酒馆导入的世界书';
+          gs = [{ id: uid(), name: gname, members: all.map(c => c.id), entries: conv }];
+        }
+      }
       if (!gs && !so.length) { toast('这个文件里没有世界书内容', 3200); return; }
       // ⚠️ 先建 charId 映射（v1.21.24 修，审计第 8 条）——
       // 换机导入时旧 id 在本机不存在，直接写库等于写了一批幽灵引用。
@@ -3676,13 +4010,19 @@ function bindEntryIO() {
         let incoming = [];
         if (Array.isArray(data)) incoming = data;
         else if (Array.isArray(data.entries)) incoming = data.entries;
+        // ⚠️ 酒馆世界书（v0.3.1）：{ entries: { "0": {...}, "1": {...} } } —— entries 是
+        //    【对象】不是数组。这里原来直接弹 toast 让用户自己转格式，现在【认它】。
+        else if (data.entries && typeof data.entries === 'object') incoming = fromSillyTavern(data.entries);
         else if (data.groups && data.groups[0] && Array.isArray(data.groups[0].entries)) {
           incoming = data.groups.reduce((acc, g) => acc.concat(g.entries || []), []);
         } else if (data.solo && data.solo[0] && Array.isArray(data.solo[0].entries)) {
           incoming = data.solo.reduce((acc, s) => acc.concat(s.entries || []), []);
         }
         // 常驻档（pos === 'always'）不需要触发词，别把它一起滤掉（v1.21.51）
-        incoming = incoming.filter(x => x && x.content && (x.pos === 'always' || (x.keys || []).length));
+        // ⚠️ 待确认的条目同样不能滤（v0.3.1）：它们正是因为"没读懂触发条件"才被标出来，
+        //    在这里滤掉等于又悄悄丢一遍 —— 而且用户连个提示都看不到。
+        incoming = incoming.filter(x => x && x.content
+          && (x.needsReview === true || x.pos === 'always' || (x.keys || []).length));
         // 限长（v1.21.53）：世界书文件同样是外面来的，一条塞几 MB 会撑爆提示词和存储
         incoming = incoming.map(x => ({
           ...x,
@@ -3691,16 +4031,8 @@ function bindEntryIO() {
           keys: (x.keys || []).map(k => String(k || '').trim().slice(0, 64)).filter(Boolean).slice(0, 64),
         }));
         if (!incoming.length) {
-          // SillyTavern 的世界书长这样：{ entries: { "0": {...}, "1": {...} } } ——
-          // entries 是【对象】不是数组，本软件认不了。
-          // 不说清楚的话，用户只会看到「没有能用的条目」，分不清是格式不对还是自己写错了。
-          const stEntries = (data && data.entries && !Array.isArray(data.entries)
-            && typeof data.entries === 'object') ? Object.keys(data.entries).length : 0;
-          if (stEntries) {
-            toast('这个文件像是 SillyTavern 的世界书（' + stEntries + ' 条），本软件不认那种结构。'
-              + '需要把每条整理成 { title, keys, content } 的数组再导入。', 7000);
-            return;
-          }
+          // 酒馆那种 { entries: {...} } 在上面已经被 fromSillyTavern 接住了（v0.3.1），
+          // 走到这里说明是真的没有可用条目（空文件 / 全是空内容 / 结构不认识）。
           toast('这个文件里没有能用的条目', 3400); return;
         }
         const cur = await wbLoadEntries(_wbCtx);
@@ -4713,7 +5045,23 @@ function parseMemJson(s) {
   try { arr = JSON.parse(m[0]); }
   catch (e) { throw new Error('记忆总结的 JSON 解析失败：' + ((e && e.message) || e)); }
   if (!Array.isArray(arr)) throw new Error('记忆总结返回的不是数组');
-  return arr.filter(x => x && x.text).map(x => ({
+  // ⚠️ 非空数组却被滤空了 = 元素【字段名不对】（模型回了 [{"content":…}]、[{"memory":…}]、
+  //    或干脆 ["你喜欢咖啡"]）—— 那是"没按格式回"，不是"它说没有要记的"。
+  //
+  // v0.3.1 复查修：这里原来直接 return 滤空的结果，于是上面那段"必须抛错"的承诺
+  // 在【这一种形状上】被绕过了 —— 调用方拿到的是 []，和"合法空数组"分不出来。
+  // 后果具体在 tidyNow：它用 parseOK && !parsed.length 判"模型真的核对过了"，
+  // 于是把「被删对话清单」清掉（memDeleted）。而那份清单是【唯一凭据】
+  // （消息本体早删了），清掉之后被删内容产生的记忆再没人清理 —— 正是
+  // 「删了她还记得」，且永不复发失败、只能手删。
+  // 抛错则走"抽风"那条路：清单留着，下次整理再判。
+  // 合法的空数组 [] 不受影响（它 arr.length === 0），所以"模型确实没东西可记"
+  // 照样成立，ZERO_RETRY_MAX 那条放行路径也不受影响。
+  const kept = arr.filter(x => x && x.text);
+  if (!kept.length && arr.length) {
+    throw new Error('记忆总结的 ' + arr.length + ' 个元素里没有 text 字段（模型没按格式回）');
+  }
+  return kept.map(x => ({
       text: String(x.text).trim(),
       kind: x.kind === 'event' ? 'event' : 'fact',
       // 频次：让模型顺手标出来，代码这边判起来才可靠。
@@ -4725,8 +5073,14 @@ function parseMemJson(s) {
       // 注意：Number(null) === 0 且 Number.isFinite(0) === true，所以必须先把
       // null / 空串排除掉。否则模型按提示词填的 null 会变成 0，pruneMemories
       // 下一轮就把它当成"早就过期"静默删掉。
+      // ⚠️ 还要 >= 1（v0.3.1 复查修）：上面那段只排除了 null / 空串，
+      //    而 0 和负数过得去 —— 模型说「就是今天」时真会回 untilDay:0。
+      //    untilDay:0 不是"没有限期"（那是 null），它让 memExpireMin 算出
+      //    「第 0 天 23:59」= 1439 分钟，而任何一天的 nowMin 都 ≥ 1440 ——
+      //    下一条消息触发的时效清理立刻把它删掉，无提示、无撤销点。
       untilDay: (x.kind === 'event' && x.untilDay !== null && x.untilDay !== ''
-                 && Number.isFinite(Number(x.untilDay))) ? Number(x.untilDay) : null,
+                 && Number.isFinite(Number(x.untilDay)) && Number(x.untilDay) >= 1)
+                ? Number(x.untilDay) : null,
       // ⚠️ 小时/分钟也必须在这里产出（v1.21.29 修，复审 新4）。
       //
       // 起因：v1.21.25 的 ★4 只修了【下游搬运】（写回时带上这两个字段），
@@ -4784,6 +5138,12 @@ async function pruneMemories(charId = null) {
   const nowMin = clockToMin(clockOf);
   for (const m of list) {
     if (m.kind !== 'event' || typeof m.untilDay !== 'number') continue;
+    // ⚠️ 兜底（v0.3.1 复查）：限期 <= 0 是【坏数据】，不是"立刻过期"。
+    //    上面两个入口现在都不会再产出它了，但【库里可能已经存着】（老版本
+    //    手输 0.5、或模型回了 untilDay:0）。不挡的话这条记忆会被静默删掉 ——
+    //    没有提示、没有撤销点，用户只会觉得"她忘了"。
+    //    看不懂的限期就当没有限期，和本项目其它地方"读不懂的就不动它"一致。
+    if (!(m.untilDay >= 1)) continue;
     if (nowMin > memExpireMin(m)) await mem.del(m.id);
   }
 }
@@ -4794,6 +5154,7 @@ let _deduping = false;
 // 只在内存里，刷新就没了 —— 它只是给用户看一眼的证据，不需要持久化。
 let _lastDedupeStat = null;
 let _memBusy = false;   // 三个记忆任务必须排队，不能并发改同一份数据
+let _memBusySince = 0;  // 上面那把锁是什么时候拿到的（给破坏性操作的守卫判"是不是卡住了"用）
 let _archiving = false; // 自动归档防重入（和 _memBusy 不同：这个是"这一趟还没结束就别再开一趟"）
 let _memPending = false;   // 忙的时候被挡下来的调用，跑完补一次（不再静默丢弃）
 let _lastMemError = null;  // 最近一次记忆任务的失败原因，给排查用（以前全被 catch 吞了）
@@ -4986,7 +5347,14 @@ async function summarizeIfNeeded(charId = null) {
           + `    错误示范："${who}喜欢喝咖啡"、"他说她怕黑" —— 这样写等于在写别人的事。\n`
           + `    正确："我喜欢喝咖啡"、"你怕黑"。\n`
           + `  · 你自己怎么称呼自己（比如自称「妾身」）是【说话时】的事，\n`
-          + `    记忆里统一用「我」，不要写成"妾身喜欢……"。\n\n`
+          + `    记忆里统一用「我」，不要写成"妾身喜欢……"。\n`
+          // ⚠️ 主客方向 + 兜底（v0.3.1）：括号里那些第三人称的动作描写，模型复述时
+          //    会把「谁对谁做的」写反（实测出过「我会摸你的翅膀」这种刚好相反的记法）。
+          //    只写禁止不够 —— 再给一条「拿不准就改写成状态句」的出路，它才不会硬猜。
+          + `  · 括号里的动作，主语多半是【他】、承受方是你 —— 方向别记反。\n`
+          + `    他做的 → 用「你」当主语：✓「你揉了揉我的头发」　✗「我揉了揉你的头发」。\n`
+          + `  · 拿不准是谁做的，就改写成状态句：「我的头发被你揉乱了」，\n`
+          + `    不要写「我摸你的翅膀」这种分不清方向的说法。\n\n`
           + `【分两类】\n`
           + `· fact = 关于他本人的稳定事实（喜好、习惯、经历、关系、忌讳、在意的东西），不会过期。\n`
           + `· event = 有时限的事（假期、约定、某段时间的状态），要给出失效的那一天。\n\n`
@@ -5090,7 +5458,15 @@ async function summarizeIfNeeded(charId = null) {
     if (items.length > 0) {
       const nowSummed = [...summedIds, ...chunk.map(m => m.id)];
       await kv.set('memSummed:' + cid0, nowSummed);   // 同上：不截断
-      await kv.set(rk, {});                          // 成功了，清掉本链路的重试计数
+      // ⚠️ 只清【这一批自己】的签名（v0.3.1 复查修），理由同 runArchiveNow 那一处：
+      //    整表清空会把同一链路里其它 0 产出批次的计数一起抹掉，
+      //    它们就永远攒不到 ZERO_RETRY_MAX，一直 held、每轮重喂模型。
+      //    （下面放行出口本来就是 delete zr[sig]，这样两处终于一致。）
+      try {
+        const zrKeep = (await kv.get(rk, {})) || {};
+        delete zrKeep[batchSig(chunk)];
+        await kv.set(rk, zrKeep);
+      } catch { /* 清不掉不影响正确性 */ }
     } else {
       const zr = (await kv.get(rk, {})) || {};
       const sig = batchSig(chunk);
@@ -5452,7 +5828,15 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
     //
     // 但整理这条路不一样：它已经走到准备重写这一步了，抛出去只会让
     // memDedupeAt 不更新 → 下一轮又跑一次 → 每轮白花一次 API 直到成功。
-    // 所以这里就地降级成空数组 = 这次不整理，原样保留已有记忆，也不推进水位。
+    // 所以这里就地降级成空数组 = 这次不整理，原样保留已有记忆。
+    //
+    // ⚠️ 措辞更正（v0.3.1 复查）：这一段原来还写着"也不推进水位"，与代码不符 ——
+    //    函数收尾那句 if (!noTick) kv.set('memDedupeAt:...') 是【无条件】执行的，
+    //    解析失败这趟照样把水位推到当前条数。
+    //    而"推进水位"恰恰是上面那个降级的【目的】：不推进的话下一轮又会跑一次、
+    //    每轮白烧一次 API，正是这段注释自己说要避免的事。所以行为是对的、注释是错的。
+    //    实际影响也不大：水位只影响 grownEnough 一条判据，nearlyFull（记忆 >= 上限的 80%）
+    //    等旁路照样会让自动整理跑起来。
     //
     // 安全前提：下面的记忆删除在 if (items.length) 里面，空数组走不到那里，
     // 所以解析失败绝不会删掉任何一条已有记忆。
@@ -5747,6 +6131,37 @@ async function noteDeleted(texts, charId = curCharId) {
  * 必须串行：dedupe 是「先写新的、再删旧的」，要是 prune 中途插进来把新写的当过期删掉，
  * dedupe 随后又把旧的删掉，记忆就整个清空了。
  */
+/**
+ * 破坏性操作（删角色 / 清空聊天 / 清空全部）的前置守卫（v0.3.1 复查新增）。
+ *
+ * 起因：这三处原来只挡 busy（正在生成），不挡 _memBusy（后台记忆任务：
+ * 时效清理 / 记忆总结 / 查重整理 / 自动归档）。
+ * 而 runMemTasks 是从 send() 的 finally 里 fire-and-forget 的 —— 库里那句是
+ *   if (P && P.longMemory) runMemTasks(myCharId).catch(...)
+ * 走到它的时候 busy 已经置回 false 了。这几个任务要调模型，最长能跑几十秒。
+ * 这期间用户把角色删掉 / 把聊天清空，任务跑完后照样按【发送时冻结的 charId】
+ * 把记忆和记账键写回库：
+ *   · 刚删掉的角色又冒出记忆（记忆页出现「已删除的角色」分组，怎么删都删不干净）
+ *   · memRolling: / memSummed: / memDedupeAt: / memNeedTidy: 这些刚被扫掉的键原样写回，
+ *     变成永远回收不了的孤儿
+ *   · 清空聊天之后她仍然"记得"刚被清掉的内容
+ * 所以这里一并挡住，等它跑完再操作。
+ *
+ * ⚠️ 不能把用户永久锁死：正常一趟最多几十秒，超过 2 分钟就当这把锁出问题了，放行。
+ *
+ * @param {string} what 操作名，拼进提示语（「删角色」/「清空」）
+ * @returns {boolean} true = 现在不该做，调用方直接 return
+ */
+function destructiveBlocked(what) {
+  if (busy) { toast('她还在打字，先按停止再' + what, 2600); return true; }
+  if (_memBusy && Date.now() - _memBusySince < 120000) {
+    // ⚠️ 不写"请稍后重试"这种废话：说清在等什么、大概多久。
+    toast('她还在整理记忆（可能要几十秒），等它跑完再' + what, 3600);
+    return true;
+  }
+  return false;
+}
+
 async function runMemTasks(charId = null) {
   // ⚠️ 角色一路透传（v1.21.24 修，审计第 20 条）。
   //
@@ -5764,6 +6179,7 @@ async function runMemTasks(charId = null) {
     return;
   }
   _memBusy = true;
+  _memBusySince = Date.now();
   try {
     // ⚠️ 四个任务必须【各自 try/catch】，一个失败不能连累后面三个。
     // 起因（真实数据实测）：某个角色积压 1990 条未归档，同时记忆是 0 条。
@@ -5813,6 +6229,7 @@ async function withMemLock(fn) {
   // 两处都弹用户会看到重复提示。让调用方当唯一出口，语义也更准。
   if (_memBusy) return { ok: false, msg: '忙碌中' };
   _memBusy = true;
+  _memBusySince = Date.now();
   try { return await fn(); }
   finally { _memBusy = false; }
 }
@@ -5850,7 +6267,11 @@ async function summarizeChunk(charId, chunk) {
         + `  · 下面【${who}：】开头的是你自己说的话 → 输出时换成「我」。\n`
         + `  · 下面【他：】开头的是他说的 → 输出时换成「你」。\n`
         + `  · 一律用「我」指你自己，用「你」指他，【不要用第三人称】，也不要写名字。\n`
-        + `  例：✓「你喜欢坐在窗边发呆」　✗「他喜欢坐在窗边发呆」　✗「${who}喜欢…」\n\n`
+        + `  例：✓「你喜欢坐在窗边发呆」　✗「他喜欢坐在窗边发呆」　✗「${who}喜欢…」\n`
+        + `  · 括号里的动作，主语多半是【他】、承受方是你 —— 方向别记反。\n`
+        + `    他做的 → 用「你」当主语：✓「你揉了揉我的头发」　✗「我揉了揉你的头发」。\n`
+        + `  · 拿不准是谁做的，就改写成状态句：「我的头发被你揉乱了」，\n`
+        + `    不要写「我摸你的翅膀」这种分不清方向的说法。\n\n`
         + `【分两类】\n`
         + `· fact = 关于他本人的稳定事实（喜好、习惯、经历、关系、忌讳、在意的东西），不会过期。\n`
         + `· event = 有时限的事（假期、约定、某段时间的状态），要给出失效的那一天。\n\n`
@@ -6392,7 +6813,12 @@ async function saveCharEdit() {
     // 于是用过一次「立即生效」的角色，之后再怎么改文字、点 ✓，
     // 生效的都还是最早那次「立即生效」的内容，重开编辑页显示的也是旧那份：
     // 看起来像"刚写的字丢了"。用户按了 ✓ 就是"以框里这份为准"，所以这里把 live 清空。
-    await chars.put({ ...c, ...data, appearanceLive: '' });
+    // ⚠️ 三态键要能【退回】跟随全局（v0.3.1）：data 里没有这个键 = 用户在编辑页选了
+    //    「跟随全局」，但 { ...c, ...data } 会把 c 上的旧值留下来 —— 于是那个选项
+    //    形同虚设（选了保存后角色仍然是自己的值）。这里显式删掉。
+    const nextC = { ...c, ...data, appearanceLive: '' };
+    for (const k of FOLLOW_KEYS) if (data[k] === undefined) delete nextC[k];
+    await chars.put(nextC);
   } else {
     const c = { id: uid(), ...data, presetKey: editPresetKey, createdAt: Date.now() };
     await chars.put(c);
@@ -6411,7 +6837,11 @@ async function saveCharEdit() {
     await saveSettings(params);            // 同时更新全局兜底值
     for (const c of allChars) {
       if (c.id === id) continue;
-      await chars.put({ ...c, ...params });
+      // 同上面 saveCharEdit 的理由（v0.3.1）：广播 = "这一页的表达方式覆盖其他角色"，
+      // 这一页没给的三态键要退回跟随全局，否则其他角色身上的旧快照原样留着。
+      const nextC = { ...c };
+      for (const k of FOLLOW_KEYS) delete nextC[k];
+      await chars.put({ ...nextC, ...params });
     }
     toast('已覆盖：所有角色都同步成这套设置');
   } else {
@@ -6879,6 +7309,9 @@ function bindSettings() {
     await renderArchiveHint();
   };
   $('btn-archive-now').onclick = async () => {
+    // ⚠️ 没角色就别往下走（v0.3.1 复查）：下面 doArchive 里的 msgs.list(null)
+    // 会抛 DataError，而这里是裸 async onclick，异常没人接 —— 按钮看着像坏了。
+    if (!curCharId) { toast('还没有选择角色'); return; }
     const keep = Math.max(0, Number(S.archiveKeep) || 0);
     const st = await archivePreview();
     if (st.total <= keep) { toast('没什么可归档的（当前 ' + st.total + ' 条）'); return; }
@@ -6892,6 +7325,8 @@ function bindSettings() {
     await doArchive();
   };
   $('btn-archive-restore').onclick = async () => {
+    // ⚠️ 同 btn-archive-now（v0.3.1 复查）：msgs.archived(null) 同样抛 DataError
+    if (!curCharId) { toast('还没有选择角色'); return; }
     const rbtn = $('btn-archive-restore');
     if (rbtn.disabled) return;                 // 防重入：连点会并发跑两个事务
     const n = await msgs.archived(curCharId);
@@ -7324,6 +7759,17 @@ function bindSettings() {
  * 归档区的实时提示：让用户点之前就知道会动多少条。
  */
 async function archivePreview() {
+  // ⚠️ 没选角色时直接给空结果，【不要】去查库（v0.3.1 复查修）。
+  //
+  // 起因：curCharId 为 null 时，下面 msgs.list(null) 里那句
+  //   IDBKeyRange.bound([charId, -Infinity], [charId, Infinity])
+  // 会抛 DataError —— null 不是合法的 IndexedDB 键。
+  // 而两个调用方（btn-archive-now / btn-archive-restore）都是【裸 async onclick】，
+  // 没有 try/catch，全项目也没有 unhandledrejection 处理器 →
+  // 按钮点下去【完全没反应】：没 toast、没弹窗，只有控制台一行错。
+  // renderArchiveHint 早就为这个状态加了 !curCharId 守卫，这两个按钮漏了。
+  // 删光所有角色（或刚装好还没建角色）时进设置页展开「归档旧对话」就会碰到。
+  if (!curCharId) return { total: 0, kept: 0, archived: 0 };
   const all = await msgs.list(curCharId);
   const keep = Math.max(0, Number(S.archiveKeep) || 0);
   const arch = await msgs.archived(curCharId);
@@ -7524,8 +7970,16 @@ async function saveMemEdit(memId, charId) {
   if (!m) return false;
   const text = ($('mem-edit-text')?.value || '').trim() || m.text;
   const useExp = !!$('mem-edit-hasexp')?.checked;
-  const n = Number($('mem-edit-exp')?.value);
-  const untilDay = useExp && isFinite(n) && n > 0 ? Math.floor(n) : null;
+  // ⚠️ 必须拿【取整之后】的值判（v0.3.1 复查修）。
+  //
+  // 原来写的是 isFinite(n) && n > 0，判的是【取整前】的输入 —— 于是手输 0.5
+  // 过得去，Math.floor(0.5) 却是 0。而 untilDay:0 不是"没有限期"（那是 null）：
+  // memExpireMin 会算出「第 0 天 23:59」= 1439 分钟，任何一天的 nowMin 都 ≥ 1440，
+  // 所以下一条消息触发的时效清理会立刻把它删掉 —— 用户只看到"她忘了"。
+  // 输入框上写着 min="1"，但 min 只拦 spinner，手输照样能填 0.5。
+  const expRaw = Number($('mem-edit-exp')?.value);
+  const expDay = isFinite(expRaw) ? Math.floor(expRaw) : NaN;
+  const untilDay = useExp && expDay >= 1 ? expDay : null;
   // 小时/分钟：只有开了时间细化、且有时限时才存。留空 = 那一天过完才过期（老行为）
   let untilHour = null, untilMinute = 0;
   if (untilDay !== null && S.clockDetail) {
@@ -7733,7 +8187,11 @@ async function renderMem() {
     };
 
     // 用共用的绑定（删除 + 点开弹窗修改），和角色页保持一致
-    bindMemItems(gEl, cid, () => renderMem());
+    // ⚠️ 删完要连【上方那三行「记忆健康」】一起重算（v0.3.1 复查修）。
+    //    它显示「长期记忆 N 条」，而原来这里只调 renderMem()（只重绘下面这个列表）——
+    //    于是删掉几条之后上面的 N 纹丝不动，用户以为没删掉；退出设置页再进才对。
+    //    renderMemHealth 全项目只在 bindSettings 里被调过一次。
+    bindMemItems(gEl, cid, async () => { await renderMem(); await renderMemHealth(); });
 
     const inp = gEl.querySelector('[data-inp]');
     inp.addEventListener('input', () => { _memDraft[cid] = inp.value; });
@@ -7800,7 +8258,8 @@ async function importCharacterCard(card, avatarDataUrl = '') {
     persona: card.description || (preset && preset.persona) || '',
     presetKey: preset ? preset.key : 'blank',
     createdAt: Date.now(),
-    ...pickCharParams(S),   // 新角色默认继承当前全局参数，与 ensureChar 一致
+    // 三态键不继承（v0.3.1）：继承一份快照进去 = 这个角色从此脱离全局。
+    ...omitFollowKeys(pickCharParams(S)),   // 新角色默认继承当前全局参数
     // 「他的设定 / 他的居处」（v1.21.47）也是角色级，导入时同样给个初始值
     myProfile: typeof S.myProfile === 'string' ? S.myProfile : '',
     myEnv: typeof S.myEnv === 'string' ? S.myEnv : '',
@@ -8205,7 +8664,19 @@ async function applyImport(data, p, file) {
     if (want('kv')) {
       const all = await kv.entries();
       for (const e of all) {
-        if (isBackupKey(e.k)) { try { await kv.del(e.k); } catch { /* 单个失败不影响 */ } }
+        // ⚠️ memTidyBackup: 要【单独】带上（v0.3.1 复查修）。
+        //
+        // 它被有意排除在 BACKUP_KV_PREFIXES 之外（见上面那段说明：它是"撤销上次整理"
+        // 的临时快照，跨设备没意义），所以 isBackupKey 认不出它 ——
+        // 于是「完全还原」之后，还原【之前】那份撤销快照还留在库里。
+        // 而撤销那边读它时【没有任何新鲜度校验】（btn-mem-undo 里只判 items 非空），
+        // 用户一点「撤销上次整理」就会：把刚还原回来的记忆删掉、把这份备份里
+        // 根本没有的旧记忆写回来。用户以为只是"撤销整理"，实际把还原结果毁了。
+        // 还原本身就意味着"以这份备份为准"，那份快照已经没有任何意义。
+        const k = String(e.k || '');
+        if (isBackupKey(e.k) || k.startsWith('memTidyBackup:')) {
+          try { await kv.del(e.k); } catch { /* 单个失败不影响 */ }
+        }
       }
     }
   }
@@ -8473,19 +8944,26 @@ async function applyImport(data, p, file) {
     //   · 时间/开场白标记/记忆记账全部丢失（读的是新 id）
     //   · 旧 id 的键永远回收不了（删角色只按新 id 清）
     // clock:<id>:real 同理，多一段后缀也要一起翻。
+    // ⚠️ 逐段找 id，不再假设"第一段后面就是 id"（v0.3.1 复查修）。
+    //
+    // 起因：原来是 indexOf(':') 切出 prefix，再把 rest 的第一段当 oldId ——
+    // 只认两种形态：<prefix>:<oldId> 和 <prefix>:<oldId>:real。
+    // 而 memZeroRetry 是三段式 <prefix>:<scope>:<charId>（charId 在最后），
+    // 于是 rest 的第一段 'arch'/'sum' 被当成 oldId，remap 查不到、原样返回，
+    // 键就带着【旧角色 id】原样写回本机 —— 指向一个不存在的角色：
+    //   · 新 id 读不到这个计数（等于没导入）
+    //   · 旧 id 的键永远回收不了（删角色只按新 id 清）
+    // 逐段试就不会错：remap 是 id 映射表查找，段名（arch/sum/real）不在表里，
+    // 原样返回；只有真正的角色 id 才会被换掉。天然支持将来任意段数的键。
     const pairs = data.kv.filter(e => e && isBackupKey(e.k)).map(e => {
-      const k = String(e.k);
-      const i = k.indexOf(':');
-      if (i < 0) return e;
-      const prefix = k.slice(0, i + 1);
-      const rest = k.slice(i + 1);
-      // rest 形态：<oldId>  或  <oldId>:real
-      const j = rest.indexOf(':');
-      const oldId = j < 0 ? rest : rest.slice(0, j);
-      const suffix = j < 0 ? '' : rest.slice(j);
-      const nid = remap(oldId);
-      if (nid === oldId) return e;
-      return { ...e, k: prefix + nid + suffix };
+      const parts = String(e.k).split(':');
+      if (parts.length < 2) return e;
+      let changed = false;
+      for (let idx = 0; idx < parts.length; idx++) {
+        const nid = remap(parts[idx]);
+        if (nid !== parts[idx]) { parts[idx] = nid; changed = true; }
+      }
+      return changed ? { ...e, k: parts.join(':') } : e;
     });
     kvN = await kv.setMany(pairs);
   }
@@ -8498,22 +8976,57 @@ async function applyImport(data, p, file) {
     // ⚠️ memSummed（"哪些已经总结过"）也要一起补上：备份里的记忆本来就是
     //    从这些对话总结出来的，不补的话导入后第一次总结会把整段历史重嚼一遍
     //    （白花 token + 记忆里出现重复条目）。
-    for (const c of await chars.all()) {
+    // ⚠️ 只对【备份里真的出现过的角色】补账，而且只补【本次导进来的那些 id】
+    //    （v0.3.1 复查修）。
+    //
+    // 起因：这里原来是 for (const c of await chars.all()) —— 本机【所有】角色都过一遍，
+    // 还把每个角色的【全部】消息都塞进 memSummed。而 memSummed 是只进不出的单向门：
+    // 进过一次就永远不会再被总结。
+    // 于是给角色B导入一份「仅聊天记录」备份，会把角色A（本机原有、备份里根本没有）
+    // 那些"攒着但还没到 memSummarizeEvery"的消息一并判成"总结过了"。
+    // 后果：那些对话再也不会变成长期记忆；随后自动归档又按 already 把它们直接收走，
+    // 内容最后只剩滚动摘要里一段散文。非归档的可见消息连记忆页那个
+    // 「重新提炼长期记忆」都救不回来（那个按钮只清已归档的 id）。
+    // 同一个循环还会顺手把无关角色的 memDedupeAt（查重水位）重置成当前条数，
+    // 把本来要触发的自动整理整整推迟一轮。
+    //
+    // 键的形态：data.messages 是 { <charId>: [消息…] }（见 collectBackupPayload）。
+    const imported = (data.messages && typeof data.messages === 'object') ? data.messages : {};
+    for (const rawCid of Object.keys(imported)) {
+      const cid = remap(rawCid);
+      if (!cid || !(await chars.get(cid))) continue;   // 角色没落地（被跳过/认领失败），别记账
       try {
-        const all = await msgs.list(c.id, 0, true);
-        const n = all.length;
-        const cur = (await kv.get('msgSeq:' + c.id, 0)) || 0;
-        if (n > cur) await kv.set('msgSeq:' + c.id, n);
-        const acc = new Set(await kv.get('memSummed:' + c.id, []) || []);
+        const arr = Array.isArray(imported[rawCid]) ? imported[rawCid] : [];
+        // 本机条数用本地读的，msgSeq 是"累计序号"口径，不能拿备份里的条数充数
+        const n = (await msgs.list(cid, 0, true)).length;
+        const cur = (await kv.get('msgSeq:' + cid, 0)) || 0;
+        if (n > cur) await kv.set('msgSeq:' + cid, n);
+        const acc = new Set(await kv.get('memSummed:' + cid, []) || []);
         const beforeN = acc.size;
-        for (const m of all) acc.add(m.id);
-        if (acc.size !== beforeN) await kv.set('memSummed:' + c.id, [...acc]);
+        // ⚠️ 只加【备份里带来的】id，不是该角色的全部消息 ——
+        //    合并导入时本机可能还有更新的、从没总结过的消息，那些不能记账。
+        //
+        // ⚠️ 而且还要满足"这一趟【真的把记忆也导进来了】"（v0.3.1 复查）：
+        //    memSummed 的正当性来自"备份里的记忆本来就是从这些对话总结出来的"，
+        //    可这句话在两种情况下不成立 ——
+        //      · 「仅聊天记录」模式：压根不导记忆
+        //      · 备份里这个角色本来就没有记忆（源码注释里就有实测：角色C 101 条 → 0 条）
+        //    这两种情况下消息在本机【确实还没被总结过】，补上就等于永久判成
+        //    "总结过了" —— 本地记忆永远长不出来（而且非归档的可见消息连
+        //    「重新提炼长期记忆」都救不回来，那个按钮只清已归档的 id）。
+        //    注意 data.memories 里的 charId 用的是【备份的】id，所以比 rawCid。
+        const backMems = Array.isArray(data.memories)
+          ? data.memories.filter(m => m && m.charId === rawCid) : [];
+        if (want('mems') && backMems.length) {
+          for (const m of arr) if (m && typeof m === 'object' && m.id) acc.add(m.id);
+        }
+        if (acc.size !== beforeN) await kv.set('memSummed:' + cid, [...acc]);
         // 节奏水位也对齐，免得刚导入就立刻触发一次总结
-        await kv.set('memSumAt:' + c.id, n);
+        await kv.set('memSumAt:' + cid, n);
         // 这里必须写记忆条数，不是消息条数（v1.21.25 修）。
         // 上一版写的是 n（消息数，可能几百），而读取侧当记忆条数用，
         // 又一个量纲错：导入完自动查重就再也不触发了。
-        await kv.set('memDedupeAt:' + c.id, (await mem.list(c.id)).length);
+        await kv.set('memDedupeAt:' + cid, (await mem.list(cid)).length);
       } catch { /* 单条失败不影响整体导入 */ }
     }
   }
@@ -8559,7 +9072,12 @@ async function importData(file, mode) {
   const txt = await file.text();
   const data = JSON.parse(txt);
   // ⚠️ 同上放宽（v1.21.28，复审 新8_）——世界书导出的文件没有 characters。
-  if (!data.characters && !data.groups && !data.solo && !data.messages) throw new Error('文件格式不对');
+  // ⚠️ 再把话说准一点（v0.3.1）：酒馆的世界书只有 entries，用户拖进「导入备份」
+  //    就会撞上这句。原来只说「文件格式不对」，他不会知道这东西该从世界书页进。
+  if (!data.characters && !data.groups && !data.solo && !data.messages) {
+    if (data.entries) throw new Error('这是世界书文件，请从「设置 → 世界书 → 导入世界书文件」进来');
+    throw new Error('文件格式不对');
+  }
   if (!mode) throw new Error('没有选择导入方式');
 
   const survey = surveyBackup(data);
@@ -8915,7 +9433,9 @@ function bindEvents() {
     // 它走到 AbortError 分支时照样把半截回复落库，而 charId 用的是【发送时冻结的】那个
     //（也就是刚被删掉的）角色 —— 留下一条看不见、导不出、删不掉的孤儿消息，
     // 带图的话能占几 MB，永久趴在 IndexedDB 里。
-    if (busy) { toast('她还在打字，先按停止再删角色', 2600); return; }
+    // ⚠️ 还要挡 _memBusy（v0.3.1 复查）：见 destructiveBlocked 的说明 ——
+    //    后台记忆任务会按【发送时冻结的 charId】把记忆写回刚被删掉的角色。
+    if (destructiveBlocked('删角色')) return;
     // 删除范围（v1.21.59 起）：角色本体 + 聊天记录（含归档的）+ 长期记忆 + 世界书里的成员身份和单独条目。
     // 以前记忆是特意留着的（注释还写着"记忆是全局共用的"，那句是错的），
     // 结果是删完角色，她的记忆留下当孤儿。现在一并清掉，只清她自己那份。
@@ -9239,7 +9759,10 @@ function bindEvents() {
     // 清完就会在空对话里冒出一条"自问自答"的孤儿回复，内容还是用已被删掉的历史生成的。
     // 单条删除那条路早就拦了（见 attachMsgActions 里的 busy 判据，注释里还留着当时的实测记录），
     // 这个入口漏了 —— 同一个坑第二次。
-    if (busy) { toast('她还在打字，先按停止再清空', 2600); return; }
+    // ⚠️ 还要挡 _memBusy（v0.3.1 复查）：见 destructiveBlocked 的说明 ——
+    //    后台记忆任务跑完后会按冻结的 charId 把记忆和记账键写回，
+    //    刚清空就又"记得"了。
+    if (destructiveBlocked('清空')) return;
     const nm = esc(curChar?.name || '她');
     const ok = await confirmBox(
       '清空聊天记录',
@@ -9296,13 +9819,35 @@ function bindEvents() {
     //   memRolling —— ⚠️ 滚动摘要（v1.18.10 新增）。它是"你们之前发生过什么"，
     //                 清空聊天就是要从头开始，留着会把【已经不存在的前情】讲给她听，
     //                 她会提到用户根本没经历过的往事。
-    // ⚠️ 同样从常量派生（v1.21.32 修，复审 #11 的第二处硬编码）。
-    for (const k of [...BACKUP_KV_PREFIXES, 'memTidyBackup:']) {
-      try { await kv.del(k + id); } catch { /* 同上 */ }
+    // ⚠️ 改成扫库，不再靠人工维护的前缀表（v0.3.1 复查）。
+    //
+    // 起因：下面这一行原来是 kv.del(k + id) —— 只有【两段式】的键删得掉。
+    // 而 memZeroRetry 是三段式：zeroRetryKey() 产出
+    // 'memZeroRetry:<scope>:<charId>'（charId 在最后，见文件上方那个函数）。
+    // 于是这里删的是 'memZeroRetry:<id>' —— 库里根本没有这个键，静默失败，
+    // 孤儿键永不回收；更坏的是"清空后重新导入同一份备份"时，残留的重试计数
+    // 会让那一批被直接判成"确实没有可记的"，那批对话再也不产出记忆。
+    // 删角色那边（btn-del-char）早就改用扫库了，只有这里漏改。
+    //
+    // 扫尾缀天然覆盖任意段数的键，也不会误删 —— 角色 id 是 uid()，永不复用。
+    try {
+      const allKv = await kv.entries();
+      for (const e of allKv) {
+        const k = String(e.k || '');
+        if (k.endsWith(':' + id) || k.endsWith(':' + id + ':real')) {
+          try { await kv.del(e.k); } catch { /* 单条清不掉不影响整体 */ }
+        }
+      }
+    } catch { /* 扫库失败就退回按清单清，保证不崩 */
+      for (const k of [...BACKUP_KV_PREFIXES, 'memTidyBackup:']) {
+        try { await kv.del(k + id); } catch { /* 同上 */ }
+      }
     }
     // 现实时间模式的存档位（v1.20.21）：清空 = 回到第一天，
     // 所以这里【重开】而不是删掉 —— 从此刻算第 1 天。
-    // 上面那个循环删不掉它（键名多了 ':real' 后缀），得单独处理。
+    // ⚠️ 措辞更正（v0.3.1 复查）：上面那个循环原来删不掉它（拼键拼的是
+    //    'clock:' + id，而它的键名多了 ':real' 后缀）；现在改成扫尾缀之后
+    //    那一句已经能覆盖到它了，这里这句是【兜底】，保留着不碍事。
     try { await kv.del('clock:' + id + ':real'); } catch { /* 同上 */ }
     if (id === curCharId && isRealClock()) {
       clockReal = null;
@@ -9317,7 +9862,10 @@ function bindEvents() {
     // ⚠️ 生成中不许清（v1.21.54，审计发现）：「清空当前角色的聊天记录」那边早有这个守卫，
     //    这个入口漏了。正在流的回复回来时会【无条件落库】，清完就会在空库里冒出一条
     //    自问自答的孤儿回复（内容还是用已经删掉的历史生成的）。
-    if (busy) { toast('她还在打字，先按停止再清空', 2800); return; }
+    // ⚠️ 同上：还要挡 _memBusy（v0.3.1 复查）。这里更要紧 ——
+    //    记忆任务持有连接时 deleteDatabase 会被挡住（onblocked），
+    //    结果就是"提示已清空、其实没清掉"。
+    if (destructiveBlocked('清空')) return;
     if (!confirm('清空全部数据（角色、记录、设置）？不可恢复！')) return;
     // ⚠️ 必须看返回值（v1.21.54，审计发现）：deleteDatabase 被在途连接挡住时走 onblocked →
     //    resolve(false)，数据【并没有删掉】。而以前无论成败都提示「已清空，正在重启…」——
@@ -9364,7 +9912,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.3.0';
+const WEB_VERSION_FALLBACK = '0.3.1';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
@@ -9406,6 +9954,16 @@ async function init() {
     if (refreshLang() !== before) { applyI18n(); renderDrawerMenu(); }
   });
   applyTheme();
+  // ⚠️ 「跟随系统」要【当场】跟着变（v0.3.1）。
+  // 起因：applyTheme 原来只在三个时刻被调用 —— 启动(这一行)、用户改设置(s-theme 的 onchange)、
+  //   退出设置页(btn-set-back / btn-mine-back)。没有 matchMedia 监听，所以用户在系统设置里
+  //   切深浅色、不重启 App 也不进设置页，界面纹丝不动。
+  // 同一个文件里【语言】早就注册了 visibilitychange（上面那段），主题这边漏了 ——
+  // 这个不对称本身就说明是漏的，不是刻意不做。
+  // 只在 theme==='system' 时重算：选了具体主题就轮不到系统说话（DEFAULTS 里是 'dark'）。
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (S.theme === 'system') applyTheme();
+  });
   bindEvents();
   bindBackButton();
   renderAppVersion();   // 关于页版本号（v1.21.45）：真机读原生，不再写死 v0.1.0
@@ -9428,6 +9986,24 @@ async function init() {
   // （console），否则"备份没做成"会一直没人知道，直到真的需要那份备份。
   setTimeout(() => {
     const FS = capPlugin('Filesystem');
+    // ⚠️ 先自检【上一份】能不能读回来（v0.3.1）—— 刻意放在自动备份之前：
+    //    验的是上次写的那份，而不是这次刚写的。这次刚写的大概率是好的，
+    //    会把历史坏档盖过去。写成功 ≠ 读得回来。
+    verifyLatestBackup({ FS }).then(chk => {
+      if (chk && chk.ok) {
+        console.log('[备份自检] 最近一份可读：', chk.dir, chk.name, chk.bytes + ' 字节',
+          '角色 ' + chk.characters + ' / 消息 ' + chk.messages);
+      } else if (chk && chk.reason !== 'none' && chk.reason !== 'no-filesystem') {
+        console.warn('[备份自检] 最近那份读不出来：', chk.reason, chk.name || '', chk.error || '');
+        // 同一个文件只提醒一次，别天天弹
+        kv.get('backupVerifyWarned', '').then(warned => {
+          if (warned === chk.name) return;
+          kv.set('backupVerifyWarned', chk.name || chk.reason).catch(() => {});
+          toast('⚠️ 最近那份自动备份读不出来（' + (chk.name || chk.reason)
+            + '），别指望它 —— 快去「我的设置」里手动导出一次', 7000);
+        }).catch(() => {});
+      }
+    }).catch(() => { /* 自检失败绝不该挡住启动 */ });
     autoBackupIfDue({ kv, FS, collect: collectBackupPayload }).then(async r => {
       if (r.ran) {
         console.log('[自动备份] 已写入', r.dir, r.name,

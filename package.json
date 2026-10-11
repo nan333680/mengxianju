@@ -1,11 +1,14 @@
 {
   "name": "ai-companion",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "梦弦居 —— 安卓端 AI 伴侣 App（纯前端，无后端）",
   "private": true,
   "author": "DaRiko <3780117926@qq.com>",
   "license": "AGPL-3.0-only",
-  "repository": { "type": "git", "url": "https://github.com/nan333680/mengxianju.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nan333680/mengxianju.git"
+  },
   "scripts": {
     "sync": "cap sync android",
     "open": "cap open android",
@@ -13,7 +16,8 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
-    "puppeteer-core": "^25.10.0"
+    "puppeteer-core": "^25.10.0",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

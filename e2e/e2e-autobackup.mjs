@@ -137,6 +137,93 @@ console.log('清理');
   t('清理失败不影响「备份成功」的结论', r.ran === true, JSON.stringify(r));
 }
 
+
+// ---------- verifyLatestBackup（v0.3.1：写成功 ≠ 读得回来）----------
+// 造一个只做 readdir / readFile 的假 FS。map 的键是完整 path，值是文件内容。
+function mkVerifyFS(map) {
+  return {
+    readdir: async (o) => ({ files: Object.keys(map[o.directory] || {}).map(p => ({ name: p.split('/').pop() })) }),
+    readFile: async (o) => {
+      const v = (map[o.directory] || {})[o.path];
+      if (v === undefined) throw new Error('ENOENT ' + o.path);
+      return { data: v };
+    },
+  };
+}
+console.log('备份自检');
+// ⚠️ messages 必须用【真实形状】（v0.3.1 复查）：它是按 charId 分组的对象，
+//    不是数组 —— 见 app.js 的 collectBackupPayload：payload.messages[c.id] = [...]
+//    这里原来写成数组，于是测试验的是一个不存在的形状，也就没能发现
+//    verifyLatestBackup 里 Array.isArray(obj.messages) 恒为 false、消息数永远报 0。
+const GOOD = JSON.stringify({ version: 1, exportedAt: 123, characters: [{ id: 'a' }],
+                              messages: { a: [{ id: 'm1' }, { id: 'm2' }] } });
+const P1 = '梦弦居备份/梦弦居自动备份-2026-01-01.json';
+const P2 = '梦弦居备份/梦弦居自动备份-2026-02-02.json';
+{
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { [P1]: GOOD } }) });
+  t('好备份：认得出可读，并报出条数', r.ok === true && r.characters === 1 && r.messages === 2, JSON.stringify(r));
+}
+{
+  // ⚠️ 这条是补的（v0.3.1）：上面那条只要 fixture 写对了就能过，
+  //    但"对象形状"这件事本身值得单独钉住 —— 它正是漏掉那个 bug 的地方。
+  const OBJ = JSON.stringify({ version: 1, exportedAt: 1, characters: [], messages: { a: [{ id: 'x' }], b: [{ id: 'y' }, { id: 'z' }] } });
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { [P1]: OBJ } }) });
+  t('多个角色的消息要【累加】数（对象形状，不是取 .length）', r.ok === true && r.messages === 3, JSON.stringify(r));
+}
+{
+  // 兼容：万一将来有老备份把 messages 存成数组，也得数得出来。
+  const ARR = JSON.stringify({ version: 1, exportedAt: 1, characters: [], messages: [{ id: 'x' }, { id: 'y' }] });
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { [P1]: ARR } }) });
+  t('messages 万一是数组也认（兼容老形状）', r.ok === true && r.messages === 2, JSON.stringify(r));
+}
+{
+  const NON = JSON.stringify({ version: 1, exportedAt: 1, characters: [], messages: null });
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { [P1]: NON } }) });
+  t('messages 缺失/null → 数成 0，不炸', r.ok === true && r.messages === 0, JSON.stringify(r));
+}
+{
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { [P1]: GOOD.slice(0, 40) } }) });
+  t('截断的 JSON → 报 corrupt（这就是「写成功但读不回来」）', r.ok === false && r.reason === 'corrupt', JSON.stringify(r));
+}
+{
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { [P1]: '{}' } }) });
+  t('合法但空的对象 → 不算数', r.ok === false && r.reason === 'empty', JSON.stringify(r));
+}
+{
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { [P1]: 'x' } }) });
+  t('坏掉的备份仍然报得出文件名（提示里要说清是哪一份）', r.name === '梦弦居自动备份-2026-01-01.json', JSON.stringify(r));
+}
+{
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({}) });
+  t('一份都没有 → reason=none（不算故障，不该弹提示）', r.ok === false && r.reason === 'none');
+}
+{
+  const r = await AB.verifyLatestBackup({ FS: null });
+  t('没有文件系统插件 → no-filesystem（同样不算故障）', r.ok === false && r.reason === 'no-filesystem');
+}
+{
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { [P1]: 'BROKEN', [P2]: GOOD } }) });
+  t('只看最近一份（更早的坏了不影响结论）', r.ok === true && r.name === '梦弦居自动备份-2026-02-02.json', JSON.stringify(r));
+}
+{
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ EXTERNAL: { [P1]: GOOD } }) });
+  t('DOCUMENTS 里没有就去 EXTERNAL 找（跟写侧的目录回退一致）', r.ok === true && r.dir === 'EXTERNAL', JSON.stringify(r));
+}
+{
+  const r = await AB.verifyLatestBackup({ FS: mkVerifyFS({ DOCUMENTS: { '梦弦居备份/别人的文件.json': GOOD } }) });
+  t('不把用户自己的文件当备份', r.ok === false && r.reason === 'none', JSON.stringify(r));
+}
+{
+  const FS = { readdir: async () => { throw new Error('读不了目录'); }, readFile: async () => ({ data: GOOD }) };
+  const r = await AB.verifyLatestBackup({ FS });
+  t('目录读不了 → 不当成故障（继续试下一个 / 返回 none）', r.ok === false && r.reason === 'none', JSON.stringify(r));
+}
+{
+  const FS = { readdir: async () => ({ files: [{ name: '梦弦居自动备份-2026-01-01.json' }] }),
+               readFile: async () => { throw new Error('EACCES'); } };
+  const r = await AB.verifyLatestBackup({ FS });
+  t('文件读不了 → read-failed，且带上原因', r.ok === false && r.reason === 'read-failed', JSON.stringify(r));
+}
 fs.rmSync(tmp, { force: true });
 console.log('');
 console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

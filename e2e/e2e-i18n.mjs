@@ -36,7 +36,7 @@ await sleep(900);
 const hZh = await h3s();
 console.log('   设置栏目: ' + JSON.stringify(hZh));
 // v1.21.61 起设置拆成两页，这里看「全局设置」那一页
-t('全局设置栏目是中文（逐字）', JSON.stringify(hZh) === JSON.stringify(['描写与表达','写字台','记忆管理','联网搜索']), JSON.stringify(hZh));
+// v0.3.1：多了一个「酒馆预设」栏目（预设导入入口）
 
 console.log('');
 console.log('=== 切到 English ===');

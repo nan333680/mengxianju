@@ -88,6 +88,10 @@ const setup = await page.evaluate(async (spec) => {
   await kv.set('lastCharId', id);
   const s = (await kv.get('settings', {})) || {};
   s.myProfile = '全局的他'; s.myEnv = '全局的居处';
+  // ⚠️ followKeysMigrated（v0.3.1）：下面第 95 行的 reload 会触发启动迁移，把角色身上
+  //    descLevel / detailDrive 的历史快照清掉 —— 而本套件要的恰恰是「这两个键在卡里一项不少」。
+  //    不立标记的话造数刚写完就被清，导出自然缺这两项（实测：26 项里缺 2 项）。
+  s.followKeysMigrated = true;
   await kv.set('settings', s);
   return id;
 }, SPEC);

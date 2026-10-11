@@ -42,6 +42,9 @@ _evidence_v26/
 _evidence_v27/
 _fixtures/
 _archive/
+# 竞品调研的原始素材（各家 readme、reddit 帖、同类对比报告草稿）——
+# 是本机资料，不是本软件的一部分，也不随代码一起分发。
+_research/
 tmp/
 
 # ---- 过程产物（调试脚本、临时输出）----

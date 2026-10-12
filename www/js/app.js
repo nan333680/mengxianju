@@ -1,15 +1,23 @@
 import { kv, chars, msgs, mem, wb, uid, wipeAll, dbAdmin } from './db.js';
-import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget } from './api.js';
+import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
 import { buildStablePrompt, buildTurnNote, decideKaomoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR } from './persona.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
 import { t, tt, applyI18n, setLang, getLang, getActiveLang, refreshLang, LANGS } from './i18n.js';
 // 角色卡（实验，v1.21.40）：解析与 PNG 打包都在这个独立文件里，
 // 主文件只负责"选文件 / 落库 / 写出去"。
-import { isPng, parseCardJson, extractCardFromPng, buildCardV2, makeCardPng, bytesToB64, readMkParams } from './charcard.js';
+// ⚠️ 只 import 真用到的（v0.4.0 复查）：卡片现在是 parseCardAuto 一把抓
+//    （PNG / CHARX / JSON 三种容器都认，PNG 里还优先读 ccv3 块），
+//    isPng / parseCardJson / extractCardFromPng 在 app.js 里已经没人调了。
+import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entriesFromList } from './charcard.js';
 // 自动备份（v1.21.40）：纯逻辑，依赖全部注入，见该文件头部说明。
-import { autoBackupIfDue, verifyLatestBackup } from './autobackup.js';
+import { autoBackupIfDue, verifyLatestBackup, readLatestBackup, BACKUP_DIRS } from './autobackup.js';
 // 导出 Markdown（v1.21.48）：纯函数，接一组消息吐一个字符串
 import { buildChatMarkdown, markdownFileName } from './exportmd.js';
+// 酒馆正则（v0.4.0）：解析 + 应用都在 stregex.js 里，不碰 DOM 也不碰数据库。
+// ⚠️ 红线写在那文件头上：正则只作用于【副本】（提示词 / 屏幕），永不回写存档。
+import { parseStRegexList, applyStRegex, previewOne } from './stregex.js';
+// 酒馆聊天记录（v0.4.0）：.jsonl / .json 的解析是纯函数，见 stchat.js 头部说明。
+import { parseStChat, toMessages } from './stchat.js';
 
 // ⚠️ 这里绝对不能 import '@capacitor/xxx'！
 // www/ 会被原样复制进 APK，WebView 里没有 node_modules，
@@ -19,7 +27,7 @@ import { buildChatMarkdown, markdownFileName } from './exportmd.js';
 /** 是否跑在安卓原生壳里 */
 function isNative() {
   try {
-    const C = window.Capacitor;
+    const C = /** @type {any} */ (window).Capacitor;
     return !!(C && C.isNativePlatform && C.isNativePlatform());
   } catch { return false; }
 }
@@ -27,7 +35,7 @@ function isNative() {
 /** 取原生插件（取不到返回 null，绝不抛错） */
 function capPlugin(name) {
   try {
-    const C = window.Capacitor;
+    const C = /** @type {any} */ (window).Capacitor;
     if (C && C.Plugins && C.Plugins[name]) return C.Plugins[name];
   } catch { /* ignore */ }
   return null;
@@ -150,6 +158,9 @@ const DEFAULTS = {
   //    真要用还得自己在设置里填 Key，没填时状态栏会写「缺 key」。
   searchOn: true,
   searchKey: '',
+  // 搜索后端（v0.4.0）：原来只有 Tavily 一条路，等于逼用户再注册一家。
+  // 'zhipu' 时 searchKey 留空就复用主 API key —— 能省一步就省一步。
+  searchProvider: 'tavily',
   searchCount: 5,          // 每次取几条结果
   // 记忆管理（可在设置里调）
   archiveKeep: 30,         // 归档时「保留最近多少条」不归档（独立于记忆节奏）
@@ -270,6 +281,19 @@ let editingId = null;
 let editingAvatar = null;
 let editPresetKey = null;
 
+/**
+ * 取元素（按 id）。
+ *
+ * ⚠️ 返回类型【故意是 any】，不是疏忽：
+ *    这是 JS 项目，元素类型全靠 HTML 里的 id 约定，没有地方能把
+ *    "s-apikey 是 input、messages 是 div" 这一层告诉 tsc。写成 HTMLElement
+ *    会产生三百多条 .value / .checked / .dataset 的假报错，把真正的问题淹掉 ——
+ *    实测：写成 HTMLElement 时 tsc 报 348 条，其中 327 条是这一类。
+ *    改成 any 之后剩下的才是能看的（v0.4.0 就是靠它抓到 clockState 被整段冲掉
+ *    和 _renderView 那个被丢掉的参数）。
+ *    代价：元素上写错字段名 tsc 不再拦 —— 这个代价换来的信噪比是值的。
+ * @type {(id: string) => any}
+ */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -647,6 +671,7 @@ function detectClock(text) {
   // 实测对照：「（跟她说）两天后出发。」→ 时间【不动】；「两天后出发。」→ 时间 +2 ✅
   const scan = parens ? (parens + ' ' + text) : text;
 
+  /** @type {[RegExp, number][]} */
   const dayRules = [
     [/第二天|次日|隔天|翌日/, 1],
     [/第三天|两天后/, 2],
@@ -654,6 +679,7 @@ function detectClock(text) {
     [/一周后|一个星期后|七天/, 7],
     [/一个月后|下个月/, 30],
   ];
+  /** @type {[RegExp, string][]} */
   const phRules = [
     [/凌晨|深夜|半夜/, 'lateNight'],
     [/清晨|早上|早晨|一早/, 'morning'],
@@ -664,6 +690,7 @@ function detectClock(text) {
     [/晚上|夜里|夜晚|入夜/, 'night'],
   ];
 
+  /** @type {[RegExp, string][]} */
   const seasonRules = [
     [/开春|初春|春天|春日|入春|春季/, 'spring'],
     [/入夏|初夏|夏天|夏日|盛夏|夏季/, 'summer'],
@@ -675,6 +702,7 @@ function detectClock(text) {
   //    然后立刻落库、注入给模型，用户还看不出是哪来的。
   // 2) 顺序要按"信息量大的在前"排，同一条里出现多个词时取更具体的那个；
   //    原来「雨」排在「晴」前面，于是「雨停了，放晴」永远判成 rain。
+  /** @type {[RegExp, string][]} */
   const weatherRules = [
     [/冰雹/, 'hail'],
     [/暴雨|大雨|雷阵雨|雷雨|打雷|雷声|闪电|电闪/, 'storm'],
@@ -1058,14 +1086,19 @@ function showView(name) {
 /** 把栈清成只剩它（选完角色 / 存完角色回主界面时用） */
 function resetTo(name) {
   _stack = [name];
-  _renderView(name, 'back');   // 回主界面，视觉上当退回来处理
+  // ⚠️ v0.4.0：这里原来传了第二个参数 'back'，注释写"视觉上当退回来处理"——
+  //    但 _renderView(name) 只收一个参数，那个 'back' 一直是【被丢掉】的。
+  //    翻页动效由 .view 上的同一条 transition 决定，进出用的是同一条曲线
+  //    （见 style.css 里那段"曲线形状"的说明），本来就没法在调用点上区分方向。
+  //    所以删掉误导性的参数和注释，而不是留一句做不到的承诺。
+  _renderView(name);
 }
 
 /** 返回上一层。返回 false = 已经到栈底，该退出软件了 */
 function goBack() {
   if (_stack.length <= 1) return false;
   _stack.pop();
-  _renderView(_stack[_stack.length - 1], 'back');
+  _renderView(_stack[_stack.length - 1]);
   return true;
 }
 
@@ -1130,10 +1163,20 @@ function applyTheme() {
 async function loadChars() {
   allChars = await chars.all();
   allChars.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  // 群聊的人设是从成员【算出来】的，不存手工版本（v0.4.0）。
+  // 每次载入重算一遍：成员加了/删了、有人改了设定，群的人设就自动跟上 ——
+  // 不这么做的话，直接导进来/直接建好的群会带着空人设，她在群里就"谁都不是"。
+  for (const c of allChars) {
+    if (!isGroup(c)) continue;
+    await refreshGroupPersona(c);
+  }
 }
 
 function avatarHtml(c, cls = 'avatar-sm') {
   if (c && c.avatar) return `<span class="${cls}"><img src="${esc(c.avatar)}" alt=""></span>`;
+  // 群聊用 👥（v0.4.0）：不特判的话它会去查预设表的 emoji，
+  // 于是聊天顶栏和气泡上顶着一个普通角色的脸，一眼看不出这是群。
+  if (isGroup(c)) return `<span class="${cls}">👥</span>`;
   const p = PRESETS.find(p => p.key === c?.presetKey);
   return `<span class="${cls}">${p ? p.emoji : '🙂'}</span>`;
 }
@@ -1328,6 +1371,7 @@ function updateStatus() {
   // 判断放在这里而不是启动时判一次 —— 设置页改完 Key 会回调 updateStatus（见 bindSettings），
   // 一处判断两处生效。
   $('setup-banner')?.classList.toggle('hidden', ok);
+  renderGroupRoster();   // 群聊的在场名单 + "这一轮轮到谁"（v0.4.0）
 }
 
 // ================= 渲染消息 =================
@@ -1336,20 +1380,47 @@ function fmtTime(ts) {
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
-function msgHtml(m) {
+/**
+ * 一条消息 → 气泡 HTML。
+ *
+ * @param m     消息
+ * @param depth 这条离最新那条有多远（0 = 最新）。酒馆正则的 minDepth / maxDepth 用它
+ *              —— 必须在【渲染这一遍】算，不能存进消息里（存了就是动存档了）。
+ */
+function msgHtml(m, depth = 0) {
   const isMe = m.role === 'user';
   // 她那条的头像带 av-her 类 —— 长按它可以进她的编辑页（见 attachMsgActions）
   const av = isMe
     ? (S.myAvatar ? `<span class="av"><img src="${esc(S.myAvatar)}" alt=""></span>` : '<span class="av">🧑</span>')
-    : avatarHtml(curChar, 'av av-her');
+    : (() => {
+        // 群聊（v0.4.0）：头像用【说话的那个人】，不是群的头像 ——
+        // 不这样的话一条聊天记录里所有人的话都顶着同一张脸，根本分不清谁在说。
+        const spk = isGroup(curChar) ? speakerCharOf(m) : null;
+        return avatarHtml(spk || curChar, 'av av-her');
+      })();
   let inner = '';
+  // 群聊：气泡顶上标出这是谁说的（单聊不显示，看着更干净）
+  const spkName = isGroup(curChar) ? speakerCharOf(m) : null;
+  if (spkName) inner += '<div class="who">' + esc(spkName.name || '') + '</div>';
   if (m.images && m.images.length) {
     inner += m.images.map((i, idx) => {
       const note = (m.imageNotes && m.imageNotes[idx]) || '';
       return `<img class="pic" src="${esc(i)}" alt="">` + (note ? `<div class="pic-note">说明：${esc(note)}</div>` : '');
     }).join('');
   }
-  if (m.content) inner += esc(m.content);
+  // 显示侧正则（v0.4.0）：只改这一份副本，m.content 本身一个字不动。
+  // 用 m.content 而非 inner —— 图片和搜索标记不该被正则碰到。
+  if (m.content) inner += esc(stRe(m.content, 'display', depth));
+  // 版本切换（v0.4.0）：有两个以上版本时，气泡下面出现 ‹ 2/3 ›
+  const vsN = Array.isArray(m.variants) ? m.variants.filter(Boolean).length : 0;
+  if (vsN > 1) {
+    const vi = Math.max(0, Math.min(vsN - 1, Number(m.vIdx) || 0));
+    inner += '<div class="swipe">'
+      + '<button data-sw="-1" title="上一版">‹</button>'
+      + '<span>' + (vi + 1) + ' / ' + vsN + '</span>'
+      + '<button data-sw="1" title="下一版">›</button>'
+      + '</div>';
+  }
   // 这条是打了「/搜」发出去的 —— 在气泡里留个小标记，回头能看出哪几条是联网问的
   if (m.searched) inner += '<div class="search-tag" title="联网搜索：' + esc(m.searched) + '">🔍 ' + esc(m.searched) + '</div>';
   // token 角标：总开关关掉时整条不渲染（历史记录里的 usage 仍然留着，随时能开回来）
@@ -1461,11 +1532,12 @@ async function renderMessages() {
     archHtml = '<div class="arch-bar" id="arch-bar">'
       + '<button class="arch-toggle" id="arch-toggle">' + (_archOpen ? '收起已归档的对话' : '更早的 ' + arch.length + ' 条已归档（点开查看）') + '</button>'
       + '<div class="arch-list' + (_archOpen ? '' : ' hidden') + '" id="arch-list">'
-      + arch.map(msgHtml).join('')
+      + arch.map((m, i) => msgHtml(m, list.length + (arch.length - 1 - i))).join('')
       + '</div></div>';
   }
 
-  box.innerHTML = archHtml + list.map(msgHtml).join('');
+  // 深度从最新那条倒着数：最后一条 depth 0，倒数第二条 1……（酒馆的 minDepth/maxDepth 就按这个）
+  box.innerHTML = archHtml + list.map((m, i) => msgHtml(m, list.length - 1 - i)).join('');
   const tg = $('arch-toggle');
   if (tg) tg.onclick = () => {
     _archOpen = !_archOpen;
@@ -1519,6 +1591,23 @@ function attachMsgActions() {
     el.addEventListener('touchend', () => clearTimeout(_pressTimer));
     el.addEventListener('touchmove', () => clearTimeout(_pressTimer));
     el.addEventListener('contextmenu', (e) => { e.preventDefault(); showMsgMenu(el); });
+  });
+  // 版本切换（v0.4.0）：气泡里那两个 ‹ ›
+  // ⚠️ 要 stopPropagation —— 不拦的话点它会冒泡到 .msg 上，长按菜单/编辑页跟着一起触发
+  box.querySelectorAll('.msg [data-sw]').forEach(b => {
+    if (b.dataset.swBound) return;
+    b.dataset.swBound = '1';
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const el = b.closest('.msg');
+      const id = el && el.dataset.id;
+      if (!id) return;
+      const all = await msgs.list(curCharId, 0, true);
+      const m = all.find(x => x.id === id);
+      if (!m) return;
+      const cur = Math.max(0, Math.min(variantsOf(m).length - 1, Number(m.vIdx) || 0));
+      await setVariant(m, cur + Number(b.dataset.sw));
+    };
   });
 
   // 长按她的头像 → 进她的编辑页（和点聊天栏上面那个头像等效）。
@@ -1713,6 +1802,9 @@ async function showMsgMenu(el) {
     //   · 而「开场白刷时间标签」那个需求不受影响 ——
     //     开场白要刷时间时列表里通常只有它一条（既是首条又是末条，isLast 成立）
     if (!isMe && isLast && !locked) acts.push({ k: 'regen', t: '重新生成' });
+    // 换一个版本（v0.4.0）：不删旧的，再要一版并排存着。
+    // 和「重新生成」的区别就是【旧的那版还在】—— 想对比、想切回去都行。
+    if (!isMe && isLast && !locked) acts.push({ k: 'variant', t: '换一个版本' });
     // 回溯：丢掉这条之后的所有对话，从这里重新聊。记忆不删——她是记得的。
     if (!isMe && !isLast && !locked) acts.push({ k: 'rewind', t: '从这里重聊' });
   }
@@ -1743,7 +1835,7 @@ async function showMsgMenu(el) {
     // 仍会跑完，并在成功路径把 assistant 回复落库（落库不校验对应 user 消息还在）
     // → 库里只剩一条"她自问自答"的孤立回复。
     // 实测证据：删后库=[]，生成结束后库=["...:assistant:片1。片2。…"]。
-    if (busy && (k === 'edit' || k === 'rewind' || k === 'regen' || k === 'del')) {
+    if (busy && (k === 'edit' || k === 'rewind' || k === 'regen' || k === 'del' || k === 'variant')) {
       toast('她还在打字，先按停止再操作');
       return;
     }
@@ -1954,6 +2046,10 @@ async function showMsgMenu(el) {
       await renderMessages();
       regenerate();
       toast((after.length ? '后面 ' + after.length + ' 条也退了' : '从这条重新聊') + timeBack2);
+    } else if (k === 'variant') {
+      // 换一个版本（v0.4.0）：不删旧的，再要一版并排存着
+      const mm = all.find(x => x.id === id);
+      if (mm) regenAsVariant(mm);
     } else if (k === 'regen') {
       // ⚠️ 开场白是个特例：它【没有对应的用户输入】（app.js 里 role:'assistant'
       // 且带 greeting 标记），重新生成 = 拿"最后一条用户消息"重发 ——
@@ -2089,6 +2185,85 @@ async function retrySend(msgId) {
 }
 
 /** 用最后一条用户消息重新请求一次 */
+// ============================================================
+//  消息版本 / 左右切（v0.4.0）
+// ============================================================
+//
+// 「重新生成」原来只有一条路：把这一轮整个删掉再重发 ——
+// 旧的那版就没了，想对比一下都不行。这里是【加法】：再生成一版，
+// 和原来那版并排存着，气泡下面左右切。
+//
+// ⚠️ 进上下文的永远是 content —— 也就是【当前选中的那一版】。
+//    切版本 = 改 content，别的链路（提示词 / 导出 / 记忆 / 归档）一行都不用改。
+//
+// ⚠️ 只对【单条】回复开放。开着「分段发送」时一轮回复是好几条消息，
+//    把它们并成"一个版本"会打乱先后 —— 那种情况直接说清楚，不硬做。
+
+/** 这条消息的版本表（老数据没有 → 就是它自己那一版） */
+function variantsOf(m) {
+  const vs = Array.isArray(m && m.variants) ? m.variants.filter(Boolean) : [];
+  if (!vs.length) return [{ text: (m && m.content) || '' }];
+  return vs.map(v => (typeof v === 'string' ? { text: v } : v));
+}
+
+/** 切到第 idx 版：改的是 content，别的都不动 */
+async function setVariant(m, idx) {
+  const vs = variantsOf(m);
+  if (vs.length < 2) return;
+  const i = ((idx % vs.length) + vs.length) % vs.length;
+  const v = vs[i];
+  const next = { ...m, variants: vs, vIdx: i, content: v.text };
+  // 版本里存过时间/说话人的，一并还原 —— 不然切到旧版会顶着新版的剧情时间
+  if (v.story !== undefined) next.story = v.story;
+  if (v.speakerId !== undefined) next.speakerId = v.speakerId;
+  await msgs.add(next);
+  await renderMessages();
+}
+
+/**
+ * 给最后那一条回复再要一个版本（不删旧的那版）。
+ * 走的是现成的 regenerate()：它会删掉这一轮并重发。
+ * 我们【在删之前把旧内容抄下来】，等新回复落库再并成版本表。
+ */
+async function regenAsVariant(m) {
+  if (busy) { toast('还在生成中，先按停止再换版本'); return; }
+  if (_pickingImages) { toast('图片还在处理，稍等一下'); return; }
+  const all = await msgs.list(curCharId);
+  const tail = [];
+  for (let i = all.length - 1; i >= 0; i--) {
+    if (all[i].role === 'user') break;
+    tail.unshift(all[i]);
+  }
+  if (!tail.length || !tail.some(x => x.id === m.id)) { toast('只能对最后那一段回复换版本'); return; }
+  if (tail.length > 1) {
+    toast('开着「分段发送」时一轮回复是好几条，暂时换不了版本 —— 到角色设置里关掉它再试', 6400);
+    return;
+  }
+  const vs = variantsOf(m);
+  const idx = Math.max(0, Math.min(vs.length - 1, Number(m.vIdx) || 0));
+  vs[idx] = { text: m.content, story: m.story, speakerId: m.speakerId };
+  await regenerate();
+  // regenerate 末尾是 send()（没 await），这里等它跑完
+  for (let i = 0; i < 480 && busy; i++) await new Promise(r => setTimeout(r, 250));
+  if (busy) { toast('这次生成太久了，版本没合并进去'); return; }
+  const now = await msgs.list(curCharId);
+  const tail2 = [];
+  for (let i = now.length - 1; i >= 0; i--) {
+    if (now[i].role === 'user') break;
+    tail2.unshift(now[i]);
+  }
+  if (!tail2.length) { toast('这次没生成出内容，版本没换成'); return; }
+  const merged = vs.concat(tail2.map(x => ({ text: x.content, story: x.story, speakerId: x.speakerId })));
+  const first = tail2[0];
+  await msgs.add({ ...first, variants: merged, vIdx: merged.length - 1, content: merged[merged.length - 1].text });
+  // 这次要是生成成了几条，把多余的并掉（它们的正文已经进版本表了）
+  for (let i = 1; i < tail2.length; i++) {
+    try { await msgs.del(tail2[i].id); } catch { /* 删不掉最多多留一条，不致命 */ }
+  }
+  await renderMessages();
+  toast('换好了 —— 这条现在有 ' + merged.length + ' 个版本，在气泡下面左右切', 5600);
+}
+
 async function regenerate() {
   // 和 retrySend 同理：下面会先删掉那条用户消息再调 send()，
   // 而 send() 在 busy / 图片处理中会直接 return —— 消息就白删了。
@@ -2798,6 +2973,22 @@ const WB_HOLD = 2;              // 命中后额外保留几轮
 let _wbHold = { charId: null, map: new Map() };   // key = 标题，value = { title, content, left }
 
 /** 收集某个角色当前该生效的世界书条目（已启用 + 已命中） */
+/**
+ * 这个 charId 生效的世界书来自哪些 id（v0.4.0）。
+ *
+ * 单聊就是它自己。群聊是【群自己 + 每个成员】——
+ * 成员各自的组和单独条目都要在场，不然群里的人一进群就集体失忆，
+ * 而用户会以为是"世界书坏了"。
+ *
+ * ⚠️ 顺序必须【完全确定】（群 → 成员按 memberIds 顺序）：
+ *    它决定了注入顺序；顺序一抖，稳定前缀每轮都在变，前缀缓存全废。
+ */
+function wbEffectiveIds(charId) {
+  const c = allChars.find(x => x.id === charId);
+  if (!isGroup(c)) return [charId];
+  return [charId].concat(groupMembers(c).map(m => m.id));
+}
+
 async function worldbookHits(charId, recentText) {
   if (S.worldbookOn === false) {
     // ⚠️ 关掉总开关时要【清空滞回缓存】（v1.21.24 修）：
@@ -2839,24 +3030,27 @@ async function worldbookHits(charId, recentText) {
       const key = e.id || e.title || title;   // ← 隔离用 id；title 只用于显示
       const t = e.title || title;
       liveAll.set(key, e);
-      if (hitKeys(e.keys, recentText)) {
+      if (hitKeys(e.keys, recentText, { useRegex: e.useRegex === true, excludeKeys: e.excludeKeys })) {
         hitNow.add(key);
         out.push({ title: t, content: e.content, key, pos: e.pos || '' });
       }
     }
   };
+  const ids = wbEffectiveIds(charId);
   // 1) 角色组：只要它在组里，该组的条目就生效；不在任何组则不参与
   try {
     const groups = await wb.groups();
     for (const g of groups) {
-      if ((g.members || []).includes(charId)) push(g.entries, g.name || '角色组');
+      if (ids.some(id => (g.members || []).includes(id))) push(g.entries, g.name || '角色组');
     }
   } catch (e) { /* 读不到就当没有，别让聊天崩 */ }
-  // 2) 单独角色：和全局平行，互不影响
-  try {
-    const solo = await wb.solo(charId);
-    if (solo) push(solo.entries, '单独设定');
-  } catch (e) { /* 同上 */ }
+  // 2) 单独角色：和全局平行，互不影响（群聊时是"每个成员各来一份"）
+  for (const id of ids) {
+    try {
+      const solo = await wb.solo(id);
+      if (solo) push(solo.entries, '单独设定');
+    } catch (e) { /* 同上 */ }
+  }
   // —— 滞回（v1.20.20）：本轮命中的续期，上一轮留下还没过期的接着带上 ——
   // 没有它时，用户说 6 个字还是 20 个字就能让边界条目进进出出，
   // 而 buildTurnNote 里世界书【之后】的整段会跟着全部重算（实测每轮多花 4000~5800 token）。
@@ -2902,27 +3096,57 @@ async function worldbookConst(charId) {
       out.push({ title: e.title || title, content: e.content, key: e.id || title, pos: 'always' });
     }
   };
-  // 顺序必须稳定（组顺序 → 组内顺序 → 单独角色），否则前缀每轮都在变
+  // 顺序必须稳定（组顺序 → 组内顺序 → 单独角色），否则前缀每轮都在变。
+  // 群聊同理：群在前、成员按 memberIds 顺序在后（见 wbEffectiveIds）。
+  const ids = wbEffectiveIds(charId);
   try {
     const groups = await wb.groups();
     for (const g of groups) {
-      if ((g.members || []).includes(charId)) take(g.entries, g.name || '角色组');
+      if (ids.some(id => (g.members || []).includes(id))) take(g.entries, g.name || '角色组');
     }
   } catch (e) { /* 读不到就当没有，别让聊天崩 */ }
-  try {
-    const solo = await wb.solo(charId);
-    if (solo) take(solo.entries, '单独设定');
-  } catch (e) { /* 同上 */ }
+  for (const id of ids) {
+    try {
+      const solo = await wb.solo(id);
+      if (solo) take(solo.entries, '单独设定');
+    } catch (e) { /* 同上 */ }
+  }
   return out;
 }
 
-/** 触发词命中判定：任意一个触发词出现在文本里就算命中（不区分大小写） */
-function hitKeys(keys, text) {
+/**
+ * 触发词命中判定：任意一个触发词出现在文本里就算命中（不区分大小写）。
+ *
+ * v0.4.0 补两条（都是酒馆本来就有的语义）：
+ *   · useRegex —— V3 的 use_regex / V2 的 useRegex。触发词当【正则】用，
+ *     不是当字面量。规范明确：正则写坏了就【当它不命中】（不能当字面量硬匹配，
+ *     那会让一条写着 ^雾.*湖$ 的条目在正文里出现 "^雾" 时才触发）。
+ *   · excludeKeys —— V3 的 @@exclude_keys 装饰器。出现了这些词就【不命中】。
+ *     放在最前面判：排除优先于命中。
+ *
+ * @param {string[]} keys
+ * @param {string} text
+ * @param {{useRegex?:boolean, excludeKeys?:string[]}} [opt]
+ */
+function hitKeys(keys, text, opt) {
   if (!text) return false;
-  const t = String(text).toLowerCase();
+  const raw = String(text);
+  const t = raw.toLowerCase();
+  const o = opt || {};
+  // 排除词优先：命中了一个就不看了
+  for (const x of (o.excludeKeys || [])) {
+    const xx = String(x || '').trim().toLowerCase();
+    if (xx && t.includes(xx)) return false;
+  }
   for (const k of keys) {
-    const kk = String(k || '').trim().toLowerCase();
-    if (kk && t.includes(kk)) return true;
+    const kk = String(k == null ? '' : k).trim();
+    if (!kk) continue;
+    if (o.useRegex === true) {
+      // 正则只认「能编出来」的；编不出来按规范当不命中
+      try { if (new RegExp(kk, 'i').test(raw)) return true; } catch { /* 坏正则 = 不命中 */ }
+    } else {
+      if (t.includes(kk.toLowerCase())) return true;
+    }
   }
   return false;
 }
@@ -3157,7 +3381,10 @@ function bindGroupDrag(box) {
 function openCharPicker(opts) {
   const o = opts || {};
   let sel = new Set(o.selected || []);
-  const list = allChars.slice();
+  // ⚠️ excludeGroups（v0.4.0）：建群 / 改群成员时不能把另一个"群"选进来。
+  //    群不是人 —— 选进来之后人设里会出现一段名单文本，世界书也会串味，
+  //    而且没有任何报错，用户只会觉得"她怎么怪怪的"。
+  const list = (o.excludeGroups ? allChars.filter(c => !isGroup(c)) : allChars).slice();
   if (!list.length) { toast('还没有角色，先去建一个'); return; }
   const rows = list.map(c => {
     const on = sel.has(c.id);
@@ -3173,13 +3400,13 @@ function openCharPicker(opts) {
   // 复用通用 modal：它有 modal-title / modal-text / modal-ok / modal-cancel
   const m = $('modal');
   $('modal-title').textContent = o.title || '选择角色';
-  $('modal-ok').textContent = '确定';
+  $('modal-ok').textContent = o.okText || '确定';
   $('modal-cancel').textContent = '取消';
   $('modal-text').innerHTML =
     '<button class="pick-all" id="pk-all">全选</button>'
     + '<div class="pick-list" id="pk-list">' + rows + '</div>'
-    + '<label class="field" style="margin-bottom:0"><span>组列名称</span>'
-    + '<input type="text" id="pk-name" placeholder="比如：东方幻想乡" value="' + esc(o.name || '') + '"></label>'
+    + '<label class="field" style="margin-bottom:0"><span>' + esc(o.pickName || '组列名称') + '</span>'
+    + '<input type="text" id="pk-name" placeholder="' + esc(o.namePlaceholder || '比如：周末茶会') + '" value="' + esc(o.name || '') + '"></label>'
     + (o.onDelete ? '<button class="danger-btn" id="pk-del" style="margin-top:14px">删除这个组</button>' : '');
   m.classList.remove('hidden');
 
@@ -3215,7 +3442,7 @@ function openCharPicker(opts) {
   $('modal-cancel').onclick = () => done(false);
   $('modal-ok').onclick = async () => {
     const nm = ($('pk-name').value || '').trim();
-    if (!nm) { toast('给这个组起个名字吧'); return; }
+    if (!nm) { toast('先给它起个名字吧'); return; }
     const ids = [...sel];
     done(true);
     if (o.onOk) await o.onOk(nm, ids);
@@ -3301,17 +3528,21 @@ async function wbSaveEntries(ctx, entries) {
 }
 
 /**
- * 把一个酒馆（SillyTavern）预设 JSON 描述成人能看的样子（v0.3.1）。
+ * 把一个酒馆（SillyTavern）预设 JSON 描述成人能看的样子。
  *
- * ⚠️ 只解析、只展示，【一个字符都不执行】。
- *    预设里的正则会对模型的输入输出做全局替换 —— 那是本软件没有的能力，
- *    贸然执行等于让一份外面来的文件去改你每一轮的提示词和显示。
- *    所以这一步的产出是「告诉你里面有什么」，不是「照它做」。
+ * 这一步本身【只解析、只展示】，一个字符都不执行 —— 外面来的文件不该
+ * 直接改你每一轮的提示词和显示。
  *
- * 将来真要执行，红线写在这里：正则只作用于【副本】（构建提示词 / 渲染显示），
- * 绝不改存档原文。现在的 stripKaomoji（渲染前过一道）就是这个模式。
+ * 但 v0.4.0 起，展示页上多了两个【用户自己点】的转换动作：
+ *   ① 把预设里的正则收进「酒馆正则」—— 收进来之后由用户逐条开关；
+ *   ② 把某一段提示词转成世界书条目 / 人设补充 —— 用户自己挑哪一段有用。
+ * 这两条都要点一下才发生，预设本身仍然不会自己生效。
  *
- * @param {object} data 解析后的预设 JSON
+ * ⚠️ 红线（v0.4.0 真的执行了，所以这条必须写死在这里）：
+ *    正则只作用于【副本】—— 构建提示词 / 渲染显示。
+ *    绝不改存档原文。见 stregex.js 头上那段。
+ *
+ * @param {any} data 解析后的预设 JSON（外面来的，字段名有历史包袱，不设死类型）
  * @returns {{ok: boolean, reason?: string, html: string, summary: string}}
  */
 function describeStPreset(data) {
@@ -3334,7 +3565,11 @@ function describeStPreset(data) {
   h += '<div class="stp-row">提示词段：<b>' + prompts.length + '</b> 段'
      + (regs.length ? '　正则：<b>' + regs.length + '</b> 条' : '') + '</div>';
   if (regs.length) {
-    h += '<div class="stp-warn">⚠️ 本软件<b>不执行</b>这些正则 —— 下面是它们原本打算做什么。</div>';
+    // v0.4.0：这些正则现在【收得进来】了。收进来之后由用户逐条开关，
+    // 而且只作用于副本（提示词 / 屏幕），存档原文一个字不动 —— 所以可以放心给按钮。
+    h += '<div class="stp-warn">这些正则可以收进来，之后在「酒馆正则」里<b>逐条开关</b>。'
+      + '它们只改<b>送进模型的提示词</b>和<b>屏幕上的字</b>，不动你的聊天记录。</div>'
+      + '<button class="ghost-btn" id="stp-add-regs">把这 ' + regs.length + ' 条正则收进来</button>';
     for (const r of regs) {
       const where = [];
       if (r.promptOnly) where.push('只改送进去的提示词');
@@ -3350,17 +3585,253 @@ function describeStPreset(data) {
     }
   }
   if (prompts.length) {
-    h += '<div class="stp-sub">提示词段（最多列 20 段）</div>';
-    for (const q of prompts.slice(0, 20)) {
-      h += '<div class="stp-line"><span>' + cut(q.role || 'system') + '</span><code>'
-        + cut(q.name || q.identifier || '(没写名字)') + '</code></div>';
+    // ⚠️ 提示词段是【给酒馆的模板引擎】用的，搬过来语义对不上 —— 所以本软件
+    //    不做"整套执行"，只让用户自己挑哪一段有用，转成世界书条目或人设补充。
+    //    这样他不用理解酒馆的模板语义，也能把预设里真正值钱的东西搬过来。
+    h += '<div class="stp-sub">提示词段（最多列 20 段，可单独转出来）</div>';
+    for (let i = 0; i < Math.min(prompts.length, 20); i++) {
+      const q = prompts[i];
+      const body = String(q.content == null ? '' : q.content).trim();
+      h += '<div class="stp-rule">'
+        + '<div class="stp-rule-name">' + cut(q.name || q.identifier || '(没写名字)')
+        + ' <span class="stp-where">' + cut(q.role || 'system') + '</span></div>'
+        + (body ? '<div class="stp-line"><span>内容</span><code>' + cut(body) + '</code></div>' : '')
+        + (body
+            ? '<div class="srx-tags">'
+              + '<button class="srx-del" data-sp-wb="' + i + '">转成世界书条目</button>'
+              + '<button class="srx-del" data-sp-persona="' + i + '">转成人设补充</button>'
+              + '</div>'
+            : '<div class="stp-where">这一段是空的，没东西可转</div>')
+        + '</div>';
     }
     if (prompts.length > 20) h += '<div class="stp-more">…还有 ' + (prompts.length - 20) + ' 段</div>';
   }
   const summary = '看完了：' + prompts.length + ' 段提示词'
-    + (regs.length ? '、' + regs.length + ' 条正则' : '') + '。本软件不执行它。';
+    + (regs.length ? '、' + regs.length + ' 条正则' : '')
+    + '。要用的自己点按钮收进去。';
   return { ok: true, html: h, summary };
 }
+// ============================================================
+//  酒馆聊天记录导入（v0.4.0）
+// ============================================================
+//
+// 为什么单独做这条：酒馆用户的行李里，角色卡能重下、世界书能重下，
+// 【聊天记录没了就是没了】。原来把一个 .jsonl 拖进来只会得到「文件格式不对」。
+//
+// ⚠️ 说话的人【不猜】、导进谁【不猜】—— 两件事都摆在预览里让用户自己认。
+//    猜错等于把几百条对话安到错的人头上，而且他不会发现。
+
+let _stChatParsed = null;
+
+/**
+ * 单选的选角色弹窗。
+ * 不复用 openCharPicker：那个是给"建角色组"用的，必填组名、还能全选，
+ * 拿来挑一个人会逼用户给一次性的东西起名字。
+ */
+function pickOneChar(title) {
+  return new Promise(resolve => {
+    const list = allChars.slice();
+    if (!list.length) { toast('还没有角色，先去建一个'); resolve(null); return; }
+    const m = $('modal');
+    $('modal-title').textContent = title || '导进哪个角色';
+    $('modal-ok').textContent = '就这个';
+    $('modal-cancel').textContent = '取消';
+    $('modal-text').innerHTML = '<p class="hint-text" style="margin:0 0 10px">导入会<b>接在现有聊天记录后面</b>，不会删掉已有的。</p>'
+      + '<div class="pick-list" id="pk-list">'
+      + list.map(c => '<div class="pick-row" data-pk="' + esc(c.id) + '">'
+          + '<span class="pk-box">✓</span><span class="pk-name">' + esc(c.name) + '</span></div>').join('')
+      + '</div>';
+    m.classList.remove('hidden');
+    let sel = null;
+    document.querySelectorAll('#pk-list .pick-row').forEach(r => {
+      r.onclick = () => {
+        sel = r.dataset.pk;
+        document.querySelectorAll('#pk-list .pick-row').forEach(x => x.classList.toggle('on', x.dataset.pk === sel));
+      };
+    });
+    const done = (v) => {
+      m.classList.add('hidden');
+      $('modal-ok').onclick = null;
+      $('modal-cancel').onclick = null;
+      resolve(v);
+    };
+    $('modal-cancel').onclick = () => done(null);
+    $('modal-ok').onclick = () => { if (!sel) { toast('先点一个角色'); return; } done(sel); };
+  });
+}
+
+/** 解析结果 → 报告（用户看完自己决定导不导） */
+function renderStChatReport(p, box) {
+  if (!box) return;
+  if (!p.ok) {
+    box.innerHTML = '<div class="stp-warn">读不了：' + esc(p.reason || '格式不认识') + '</div>';
+    return;
+  }
+  const fmt = (t) => {
+    if (!t) return '（没有时间）';
+    const d = new Date(t);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+      + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  };
+  const span = (p.from && p.to)
+    ? (fmt(p.from) + ' — ' + fmt(p.to) + '（' + Math.max(1, Math.round((p.to - p.from) / 86400000)) + ' 天）')
+    : '（这批记录里没有可用时间）';
+  let h = '<div class="stp-head">看完了</div>';
+  h += '<div class="stp-row">消息 <b>' + p.msgs.length + '</b> 条　时间跨度：' + esc(span) + '</div>';
+  h += '<div class="stp-sub">谁在说话</div>';
+  for (const s of p.senders) {
+    h += '<div class="stp-line"><span>' + (s.user ? '你' : '她') + '</span><code>'
+      + esc(s.name) + '　' + s.count + ' 条</code></div>';
+  }
+  if (p.senders.length > 2) {
+    h += '<div class="stp-warn">⚠️ 这份记录里有 <b>' + p.senders.length + '</b> 个说话的人。'
+      + '除「你」以外的所有人都会被当成<b>同一个角色</b>导进去 —— 本软件是一对一聊天，没有多人在场。</div>';
+  }
+  const notes = [];
+  if (p.badLines) notes.push(p.badLines + ' 行解析不了（已跳过）');
+  if (p.noText) notes.push(p.noText + ' 条没有正文（已跳过）');
+  if (p.noTime) notes.push(p.noTime + ' 条没有时间（按顺序每 60 秒排一个）');
+  if (notes.length) h += '<div class="stp-where">' + esc(notes.join('；')) + '</div>';
+  // ⚠️ 这句必须说在前面：导进来的旧记录会被当成"还没总结过的消息"，
+  //    下一次聊天就按设置里的节奏开始总结成长期记忆 —— 那是要花 API 额度的。
+  h += '<div class="stp-warn">导入后这些旧记录算「还没总结过的消息」—— '
+    + '下一次聊天就会按设置里的节奏开始把它们总结成长期记忆（<b>会消耗 API 额度</b>，几千条的话不少）。'
+    + '<br>不想要的话，先去「长期记忆」把自动总结关掉，或者只导入一部分。</div>';
+  h += '<button class="ghost-btn" id="stc-do">选一个角色，导进去</button>';
+  box.innerHTML = h;
+  const btn = box.querySelector('#stc-do');
+  if (btn) btn.onclick = async () => {
+    const cid = await pickOneChar('这些记录导进哪个角色');
+    if (!cid) return;
+    await importStChat(p, cid);
+  };
+}
+
+/**
+ * 真的导进去。
+ *
+ * 时间戳的处理（这里有个坑，说清楚）：
+ *   · 目标角色还是空的 → 原样保留文件里的时间
+ *   · 已有记录 → 如果这批的开始时间早于最后一條，整批往后平移到"最后一条之后"，
+ *     【相对间隔保持不变】。不平移的话两种时间会交错在一起，聊天记录读起来是乱的。
+ */
+async function importStChat(p, charId) {
+  const char = allChars.find(c => c.id === charId);
+  if (!char) { toast('这个角色不在了'); return; }
+  const existing = await msgs.list(charId, 0, true);
+  const lastTs = existing.length ? Math.max(...existing.map(m => Number(m.ts) || 0)) : 0;
+  const firstTs = (p.msgs.find(m => m.ts != null) || {}).ts;
+  let startTs;
+  let shifted = false;
+  if (!existing.length) {
+    startTs = firstTs || Date.now();
+  } else if (firstTs && firstTs > lastTs) {
+    startTs = firstTs;                       // 本来就是后来的，不动
+  } else {
+    startTs = lastTs + 60000;                // 往前挪一个空位，整批跟着走
+    shifted = true;
+  }
+  const list = toMessages(p, charId, startTs, uid);
+  let n = 0;
+  try { n = await msgs.addMany(list); }
+  catch (e) { toast('导入失败：' + ((e && e.message) || e) + '（一条都没写进去）', 5200); return; }
+  if (curCharId === charId) {
+    await renderMessages();
+    // 开场白标记：已经有记录了，就不该再补开场白
+    try { await kv.set('greeted:' + charId, true); } catch { /* 记不上最多下次补一条开场白 */ }
+  }
+  await renderCharList();
+  toast('已把 ' + n + ' 条记录导进「' + (char.name || '她') + '」'
+    + (shifted ? '（时间对齐到了现有记录之后）' : '') + '。回聊天页就能看到', 6000);
+  await renderStChatReportAfterImport(p, n);
+}
+
+async function renderStChatReportAfterImport(p, n) {
+  const box = $('stchat-report');
+  if (!box) return;
+  box.innerHTML = '<div class="bh-ok">✅ 导进去了 ' + n + ' 条。</div>'
+    + '<div class="bh-note">原来那些记录一条没动 —— 导入只会往后接。<br>'
+    + '这些旧记录还没被总结成长期记忆，下一次聊天会按节奏开始总结（要花 API 额度）。</div>';
+}
+
+/**
+ * 把预设报告上的几个转换按钮接上（v0.4.0）。
+ *
+ * 三个动作，全部【用户点了才发生】：
+ *   · 把这 N 条正则收进来  → 进「酒馆正则」，之后逐条开关，只改副本
+ *   · 某一段 → 世界书条目  → 落成这个角色的「一直生效」条目（进稳定前缀）
+ *   · 某一段 → 人设补充    → 接到当前角色的人设后面（这条要确认，人设是核心设定）
+ *
+ * ⚠️ 后两个动作改的是【用户自己的数据】，所以不猜、不批量、不默认全做。
+ *    尤其"转成人设"—— 一次误触就可能把好好的人设污染了，必须先问一句。
+ */
+function bindPresetActions(data, box) {
+  const regs = (data.extensions && Array.isArray(data.extensions.regex_scripts))
+    ? data.extensions.regex_scripts : [];
+  const prompts = Array.isArray(data.prompts) ? data.prompts : [];
+  const pname = String(data.name || data.preset_name || '酒馆预设');
+
+  const addRegs = box.querySelector('#stp-add-regs');
+  if (addRegs) addRegs.onclick = async () => {
+    const r = await addStRegex(regs, '预设：' + pname);
+    if (!r.added) { toast('这些正则的格式认不出来，没能收进来', 4000); return; }
+    addRegs.disabled = true;
+    addRegs.textContent = '已收进来 ' + r.added + ' 条（在「酒馆正则」里）';
+    toast('收了 ' + r.added + ' 条正则' + (r.off ? '，其中 ' + r.off + ' 条是关着的' : '')
+      + '。只改提示词和显示，不动聊天记录', 5200);
+  };
+
+  const toWb = async (q) => {
+    if (!curCharId || !curChar) { toast('先在角色列表里选一个角色'); return; }
+    const content = String(q.content == null ? '' : q.content).trim();
+    if (!content) { toast('这一段是空的'); return; }
+    const s = await wb.solo(curCharId);
+    const cur = s ? (s.entries || []) : [];
+    await wb.putSolo({ id: s ? s.id : uid(), charId: curCharId, entries: cur.concat([{
+      id: uid(),
+      title: String(q.name || q.identifier || '预设片段').slice(0, 120),
+      keys: [],
+      // 「一直生效」= 进稳定前缀，每轮都在。预设里的提示词段本来就是常驻指令，
+      // 转成需要触发词的条目反而会让它永远不生效。
+      pos: 'always',
+      on: true,
+      content: content.slice(0, 20000),
+    }]) });
+    if (_wbCtx && _wbCtx.kind === 'solo' && _wbCtx.id === curCharId) await renderWbEntries();
+    await refreshWbSubs().catch(() => {});
+    toast('已加成「' + (curChar.name || '她') + '」的世界书条目（一直生效）。在「世界书 → 单独角色」里能看到', 5200);
+  };
+
+  const toPersona = async (q) => {
+    if (!curCharId || !curChar) { toast('先在角色列表里选一个角色'); return; }
+    const add = String(q.content == null ? '' : q.content).trim();
+    if (!add) { toast('这一段是空的'); return; }
+    const who = curChar.name || '她';
+    const ok = await confirmBox('加进人设',
+      '<p>把这一段接到「' + esc(who) + '」的人设<b>后面</b>？</p>'
+      + '<p>人设是她的核心设定，加进去就每轮都会带着。原来的内容不会被删掉，只是变长。</p>'
+      + '<p class="hint-text">' + esc(add.slice(0, 160)) + (add.length > 160 ? '…' : '') + '</p>', '加进去');
+    if (!ok) return;
+    const now = typeof curChar.persona === 'string' ? curChar.persona : '';
+    await chars.put({ ...curChar, persona: now ? (now + '\n\n' + add) : add });
+    await loadChars();
+    // ⚠️ 必须把 curChar 换成刚读回来的那份（v0.4.0）：loadChars 只重填 allChars，
+    //    curChar 还指着【改之前】的那个对象。下一个保存动作（改参数、开开关…）
+    //    会拿着旧对象写回去 —— 刚加进去的那段人设当场被抹掉，而且没有任何提示。
+    if (curCharId) curChar = allChars.find(x => x.id === curCharId) || curChar;
+    toast('已加进「' + who + '」的人设。回角色编辑页能看到', 4600);
+  };
+
+  box.querySelectorAll('[data-sp-wb]').forEach(el => {
+    const q = prompts[Number(el.dataset.spWb)];
+    if (q) el.onclick = () => toWb(q);
+  });
+  box.querySelectorAll('[data-sp-persona]').forEach(el => {
+    const q = prompts[Number(el.dataset.spPersona)];
+    if (q) el.onclick = () => toPersona(q);
+  });
+}
+
 /**
  * 把酒馆（SillyTavern）的世界书条目转成本软件的格式（v0.3.1）。
  *
@@ -3374,54 +3845,24 @@ function describeStPreset(data) {
  *    所以拿不准的条目一律标 needsReview —— 落库、但不注入，等用户在世界书页里确认。
  */
 function fromSillyTavern(entriesObj) {
-  const out = [];
-  for (const k of Object.keys(entriesObj || {})) {
-    const st = entriesObj[k];
-    if (!st || typeof st !== 'object') continue;
-    const content = String(st.content || '').trim();
-    if (!content) continue;
-
-    // 触发词：老板酒馆叫 key，新版还有 keywords；都当字符串数组处理
-    const rawKeys = [].concat(st.key || [], st.keywords || [], st.keys || []);
-    const keys = rawKeys.map(x => String(x == null ? '' : x).trim()).filter(Boolean).slice(0, 64);
-
-    // ⚠️ 两套字段都认（v0.3.1 复查）：酒馆导出的和本软件自己导出的字段名不一样 ——
-    //    酒馆是 key / comment / disable / constant / position，
-    //    本软件是 keys / title / on / pos。
-    //    为什么必须都认：{ entries: [...] } 这种【数组】形态也要走这个函数
-    //    （组页的 importEntries 早就认数组了，全局导入原来不认，见下面那段），
-    //    而数组既可能是酒馆格式、也可能是本软件自己导出的。只认酒馆那套的话，
-    //    本软件导出的文件再导回来会【掉档位】：pos:'always' 变 front、on:false 变 true。
-    const isConst = st.constant === true || st.pos === 'always';
-    // position：0/1 = 角色卡前/后；2/3 = Author's Note 前/后（本软件没有 AN，一并当 front）；
-    //           4 = 按对话深度插入
-    const pos = isConst ? 'always'
-      : ((Number(st.position) === 4 || st.pos === 'tail') ? 'tail' : 'front');
-
-    // 读不懂的地方逐条记原因 —— 世界书页要把原因显示出来，用户才知道自己在确认什么
-    const why = [];
-    if (st.useRegex === true) why.push('触发词用的是正则');
-    if ((st.keysecondary || []).length || st.selective === true) why.push('带二次筛选条件');
-    if (Number(st.probability) > 0 && Number(st.probability) < 100) why.push('按概率随机触发');
-    // ⚠️ 只看 position===4，不看 depth（v0.3.1）：酒馆的 depth 默认就是 4，
-    //    可 position 不是 4 时它根本不参与计算 —— 拿 depth 当判据会把
-    //    【绝大多数正常条目】误判成待确认，那比不导入还烦人。
-    if (Number(st.position) === 4) why.push('按对话深度插入');
-    if (!isConst && !keys.length) why.push('没有触发词');
-
-    out.push({
-      id: uid(),
-      title: String(st.comment || st.name || st.title || ('条目 ' + (Number(k) + 1 || k))).slice(0, 120),
-      keys,
-      content: content.slice(0, 20000),
-      // disable:true = 用户在酒馆里把它关了（酒馆字段）；on:false 是本软件自己的字段
-      on: st.disable !== true && st.on !== false,
-      pos,
-      // 标了 needsReview 的条目不注入（worldbookHits / worldbookConst 里各有一道闸）
-      ...(why.length ? { needsReview: true, reviewWhy: why.join('、') } : {}),
-    });
-  }
-  return out;
+  // ⚠️ v0.4.0 起这里【不再自己写一套判据】，直接走 charcard 那套
+  //    （entriesFromList → extractEntries）。理由就是下面这段注释本身承诺的事：
+  //    "别让同一个文件从两个入口进来得到两种结果"。
+  //    原来两条路径各写各的，于是装饰器 / secondary_keys / use_regex 这些
+  //    新东西只在一条路上认得，另一条静默当成没有。
+  //
+  //    字段名它两套都认：酒馆的 key / comment / disable / constant / position /
+  //    keysecondary / useRegex，以及本软件自己的 keys / title / on / pos
+  //    （本软件导出的文件再导回来不能掉档位）。
+  //    ⚠️ useRegex 从 v0.4.0 起真的照做（hitKeys 按正则匹配），
+  //       所以它不再被标成「待确认」—— 有能力兑现了还标着，等于把能用的条目锁在门外。
+  const mctx = { char: (curChar && curChar.name) || '她', user: '你' };
+  const list = Array.isArray(entriesObj)
+    ? entriesObj.slice()
+    : Object.keys(entriesObj || {}).map(k => entriesObj[k]);
+  const conv = entriesFromList(list, mctx);
+  // 落库前补 id 和兜底标题（extractEntries 是给卡片用的，不带 id）
+  return conv.map((e, i) => ({ id: uid(), title: e.title || ('条目 ' + (i + 1)), ...e }));
 }
 async function openWbEntries(gid) {
   _wbCtx = { kind: 'group', id: gid };
@@ -3803,7 +4244,7 @@ function bindWorldbook() {
   if (newE2) newE2.onclick = () => openEntryEditor(-1);
   const impBtn = $('btn-wb-import');
   if (impBtn) impBtn.onclick = () => $('wb-import-file').click();
-  // 酒馆预设（v0.3.1）：只解析展示，不执行。理由见 describeStPreset 的注释。
+  // 酒馆预设：解析 + 展示，转换动作【由用户点】才发生。理由见 describeStPreset 的注释。
   const pBtn = $('btn-preset-import'), pFile = $('preset-import-file');
   if (pBtn && pFile) {
     pBtn.onclick = () => pFile.click();
@@ -3811,11 +4252,13 @@ function bindWorldbook() {
       const f = e.target.files && e.target.files[0];
       if (!f) return;
       try {
-        const rep = describeStPreset(JSON.parse(await f.text()));
+        const data = JSON.parse(await f.text());
+        const rep = describeStPreset(data);
         const box = $('preset-report');
         if (box) box.innerHTML = rep.ok ? rep.html
           : ('<div class="stp-warn">读不了：' + esc(rep.reason || '格式不认识') + '</div>');
         toast(rep.ok ? rep.summary : ('这不是酒馆预设：' + (rep.reason || '')), 5200);
+        if (rep.ok && box) bindPresetActions(data, box);
       } catch (err) {
         toast('读不了这个文件：' + ((err && err.message) || err), 4200);
       } finally { e.target.value = ''; }   // 允许重复导同一个文件
@@ -4129,10 +4572,11 @@ function canSearch(char, s) {
  * 失败时返回 { block:null, err:'...' } —— 不抛，让对话照常进行。
  */
 async function runSearch(query, P) {
-  if (!S.searchKey) return { block: null, err: '还没填搜索 Key（设置 → 联网搜索）' };
+  if (!searchKeyFor()) return { block: null, err: '还没填搜索 Key（设置 → 联网搜索）' };
   try {
     const re = await webSearch({
-      apiKey: S.searchKey,
+      provider: S.searchProvider,     // v0.4.0：多后端，默认 tavily
+      apiKey: searchKeyFor(),         // 智谱那条可以复用主 key（见 searchKeyFor）
       query,
       max: Number(P.searchCount) || 5,
       signal: abortCtl ? abortCtl.signal : undefined,
@@ -4444,7 +4888,8 @@ async function exportChatMarkdown() {
 /**
  * 发一条消息。
  *
- * @param opts.cont  true = 「续写」（v1.21.48）：不落用户消息、也不动输入框，
+ * @param {object} [opts]
+ * @param {boolean} [opts.cont]  true = 「续写」（v1.21.48）：不落用户消息、也不动输入框，
  *                   只让模型接着上一轮往下写。其余链路（历史 / 记忆 / 落库 / 渲染）完全一样。
  *
  * 为什么续写要做成 send 的一个分支、而不是另写一条生成路径：
@@ -4511,7 +4956,13 @@ async function send(opts) {
   // 与上面 um / apiMsgs / visibleText 是同一类错（跨 try 边界用到的变量一律提到函数顶部）。
   // ⚠️ added 必须声明在【函数顶部】：catch 里要做失败回滚，
 // 而 catch 看不到 try 块里的 const（v1.21.50 的 clockSnapshot 就是栽在这上面）。
-let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, added = [];
+// ⚠️ speaker 也必须在这里（v0.4.0，踩了本文件自己写过的那个坑）：
+//    try #1 里算出来的东西，try #2 里要用 —— 而 catch 也看不到 try 块里的 let。
+//    第一版就写在了 try #1 里，结果是
+//      a) 落库时 ReferenceError → 被 catch 兜住 → 把刚写好的回复整个回滚删掉
+//      b) 轮次永远不推 —— 表现是"她说了话，但下一条消息就没了、而且一直是同一个人"
+//    上面那段"跨 try 边界用到的变量一律在函数顶部 let 声明"的教训，这次自己又踩了一遍。
+let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, added = [], speaker = null;
   // 上下文预算（v1.21.54）：这几个同理 —— 撞超长后的重发发生在 try #2 里，
   // 而它们是在 try #1 里算出来的，块级作用域跨不过去（上面那段教训的又一例）。
   let ctxBudget = 0, histBudget = 0, ctxFit = null, ctxRetried = false, composeApiMsgs = null;
@@ -4584,7 +5035,15 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
     // 不管 clockState —— 于是发送失败后剧情时间永久前进（刷新也回不去），
     // 用户重发一次，时间【又】前进一天。
     clockSnapshot = tick ? { ...clockState } : null;
-    if (tick) { clockState = tick; await saveClock(); }
+    // ⚠️ v0.4.0 修：这里原来是 clockState = tick（【整个换掉】）。
+    //    detectClock 只返回 { day, phase, season, weather } 四个字段 ——
+    //    于是每写一句「（第二天）」这种话，就把 locked / hour / minute 一起冲掉：
+    //      · hour 没了 → 开了「精确时间」的话，顶部时间条的时分当场消失
+    //        （和 1450 行修过的"开场白没有钟点"是同一个病，那次只修了开场白）
+    //      · 而且 saveClock() 会把这个残缺对象【写进库】，刷新也回不来
+    //    本文件里其它 9 处赋值用的都是 {...clockState, ...xxx}，只有这一处不是 ——
+    //    这个不对称本身就说明是漏的，不是刻意。tsconfig 纳入 app.js 后第一次跑就抓到了。
+    if (tick) { clockState = { ...clockState, ...tick }; await saveClock(); }
 
     // 2) 准备请求（P = 本角色实际生效的参数）
     P = effSettings(myChar, S);
@@ -4627,6 +5086,12 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
       if (pastRaw[i] && pastRaw[i].story && typeof pastRaw[i].story.day === 'number') { prevStory = pastRaw[i].story; break; }
     }
 
+    // 群聊：这一轮谁说话（v0.4.0）。必须在拼 turnNote 之前定下来。
+    //   · 点名模式 / 文本里写了「@名字」或「名字：」→ 就是那个人
+    //   · 否则按 memberIds 的顺序轮到谁是谁
+    //   · 群里一个人都没了的话 speaker 为 null，退化成普通单聊（不炸）
+    speaker = isGroup(myChar) ? (pickSpeakerByText(myChar, visibleText) || groupSpeaker(myChar)) : null;
+
     // 会变化的内容（记忆 / 当前时间 / 本轮颜文字开关 / 命中的世界书）独立成一条，放到历史之后
     // 记忆召回的话题（v1.21.56）：用【本轮说的话 + 最近两条】。
     // 刻意不用上面那个 wbText —— 它带 6 条上下文，二元组命中会掺进太多噪声。
@@ -4637,6 +5102,8 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
       clockState, prevStory,
       // 临时场景（v1.21.47）：只进本轮段，不进稳定前缀
       scene: sceneOf(myChar),
+      // 群聊：这一轮只有这个人说话（v0.4.0）。单聊时是空串，那段提示不会出现。
+      speaker: speaker ? speaker.name : '',
     });
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -4679,7 +5146,10 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
       ctxFit = fit;   // 设置页的占用显示和降级提示都要读它
       return [
         { role: 'system', content: sysStable },
-        ...fit.kept.map(m => ({ role: m.role, content: m.content, images: m.images, imageNotes: m.imageNotes })),
+        // 提示词侧正则（v0.4.0）：同样只改这一份副本。当前这条用户消息是最新的一条（depth 0），
+        // 所以历史里最后一条的 depth 是 1，往前递增。
+        ...fit.kept.map((m, i) => ({ role: m.role, content: stRe(m.content, 'prompt', fit.kept.length - i),
+          images: m.images, imageNotes: m.imageNotes })),
         { role: 'system', content: turnNote },
         ...(searchBlock ? [{ role: 'system', content: searchBlock }] : []),
         // 续写（v1.21.48）：不写用户消息，改成一条【只在本次请求里存在】的指令。
@@ -4687,7 +5157,7 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
         // 但它能让模型明白「现在是我一个人往下写」，而不是「他没说话，我该等他」。
         // 不给这条指令的话，最后一条是 turnNote（system），模型常常回一个短反应就停。
         cont ? { role: 'user', content: CONT_NUDGE }
-             : { role: 'user', content: visibleText, images, imageNotes }
+             : { role: 'user', content: stRe(visibleText, 'prompt', 0), images, imageNotes }
       ];
     };
     histBudget = Math.max(0, ctxBudget - fixedTokens);
@@ -4896,10 +5366,17 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
       // 读出顺序变成「用户新消息插在她还没说完的话中间」。
       // 改成 base - (n-1-i)：整批仍在 base 及之前，不越过基准点。
       const am = { id: uid(), charId: myCharId, role: 'assistant', content: segs[i], story: storyStamp(), ts: tsBase - (segs.length - 1 - i) };
+      // 群聊：把说话的人记在这条消息上（v0.4.0）。
+      // 不记的话，重开 App 之后所有气泡都没有名字 —— 一段多人对话读起来就是一锅粥。
+      if (speaker) am.speakerId = speaker.id;
       if (i === 0 && usage) am.usage = usage;   // 这轮的用量记在第一条上
       await msgs.add(am);
       added.push(am);
     }
+    // 群聊：这一轮说完了，轮到下一个人（v0.4.0）。
+    // ⚠️ 放在落库【之后】—— 先推轮次再落库的话，落库失败会白推一格，
+    //    表现是"有人被跳过了"，而且没人看得出为什么。
+    if (speaker) await advanceGroupTurn(myChar, speaker);
     // 她说完自动读出来（v1.21.56，开关默认关）。
     // ⚠️ 放在【整段都落库之后】：分段发送时逐段念会一顿一顿的，连起来念才像说话。
     if (S.ttsOn) speak(segs.join(''));
@@ -6884,17 +7361,215 @@ function renderPresetList() {
 }
 
 // ================= 角色列表 =================
+// ============================================================
+//  群聊（v0.4.0）
+// ============================================================
+//
+// 设计上做了一个关键取舍：【群聊不是一条平行于角色的新数据通路，
+// 它就是一个"成员是一组人的角色"】—— characters 表里一条普通记录，
+// 多带 isGroup:true + memberIds[]。
+//
+// 为什么这么选：整套主流程都是围着 curCharId 建的 —— 消息、剧情时间、
+// 开场白、长期记忆、世界书、导出、备份、导入、归档。另起一条 groupId 通路
+// 等于把这十几处全部重写一遍，而且以后每加一个功能都要写两套、写漏一套就出静默 bug。
+// 把群聊当角色，上面这些【一行都不用改】就全对了：群有自己的一条聊天记录、
+// 自己的剧情时间、自己的开场白、自己的一份长期记忆。
+//
+// 代价（有意为之，不是漏做）：成员各自的长期记忆【不参与群聊】。
+// 把甲的私事塞进乙的嘴里，比"她们不知道"更糟。群聊用的是群自己那份共享记忆。
+
+function isGroup(c) { return !!(c && c.isGroup === true && Array.isArray(c.memberIds)); }
+
+/** 群成员（按 memberIds 的顺序；已经被删掉的成员自动跳过） */
+function groupMembers(c) {
+  if (!isGroup(c)) return [];
+  return c.memberIds.map(id => allChars.find(x => x.id === id)).filter(Boolean);
+}
+
+/**
+ * 把成员的设定拼成群的人设，写进 group.persona。
+ * 这样 buildStablePrompt 一行都不用改 —— 它本来就只是读 char.persona。
+ */
+function composeGroupPersona(c) {
+  const ms = groupMembers(c);
+  const lines = ['你们是「' + (c.name || '这个群') + '」里的人，此刻待在一起。在场的有：'];
+  ms.forEach((m, i) => {
+    const who = String(m.persona || '').replace(/[\r\n\t ]+/g, ' ').trim().slice(0, 400);
+    lines.push((i + 1) + '. ' + m.name + '：' + (who || '（没写设定）'));
+  });
+  const note = String(c.groupNote || '').trim();
+  if (note) lines.push('', '【这个群是怎么回事】', note);
+  return lines.join('\n');
+}
+
+/** 成员变了就重算人设。群聊的"设定"就是这么来的 —— 不用手写。 */
+async function refreshGroupPersona(c) {
+  if (!isGroup(c)) return c;
+  const next = composeGroupPersona(c);
+  if (c.persona !== next) { c.persona = next; await chars.put(c); }
+  return c;
+}
+
+/** 这一轮轮到谁（轮流模式下按 memberIds 的顺序转） */
+function groupSpeaker(c) {
+  const ms = groupMembers(c);
+  if (!ms.length) return null;
+  const i = Math.max(0, Number(c.turnIndex) || 0);
+  return ms[i % ms.length];
+}
+
+/** 发言模式：round（轮流）/ call（点名，认「@名字」和「名字：」） */
+function groupMode(c) { return c.speakMode === 'call' ? 'call' : 'round'; }
+
+function escRe(s) { return String(s).replace(/[.*+?^$(){}|[\]\\]/g, '\\$&'); }
+
+/** 从用户这句话里认人 */
+function pickSpeakerByText(c, text) {
+  const ms = groupMembers(c);
+  const t = String(text || '');
+  for (const m of ms) {
+    const n = String(m.name || '').trim();
+    if (!n) continue;
+    if (t.includes('@' + n)) return m;
+    try { if (new RegExp('^\\s*' + escRe(n) + '\\s*[:：]').test(t)) return m; } catch { /* 名字里有怪字符就算了 */ }
+  }
+  return null;
+}
+
+/** 说话的人存进消息里（界面要按这个显示名字和头像） */
+function speakerCharOf(m) {
+  if (!m || !m.speakerId) return null;
+  return allChars.find(x => x.id === m.speakerId) || null;
+}
+
+/** 群聊时把轮次往后推一格 */
+async function advanceGroupTurn(c, speaker) {
+  if (!isGroup(c) || !speaker) return;
+  const ms = groupMembers(c);
+  const i = ms.findIndex(x => x.id === speaker.id);
+  c.turnIndex = i >= 0 ? (i + 1) % ms.length : 0;
+  try { await chars.put(c); } catch { /* 记不上最多下一轮还是她，不致命 */ }
+  if (curChar && curChar.id === c.id) curChar = c;
+}
+
+/** 顶部那条"在场的人"：点谁，下一轮谁说 */
+function renderGroupRoster() {
+  const el = $('group-roster');
+  if (!el) return;
+  if (!isGroup(curChar)) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const ms = groupMembers(curChar);
+  const now = groupSpeaker(curChar);
+  el.classList.remove('hidden');
+  el.innerHTML = '<span class="gr-label">在场</span>'
+    + ms.map(m => '<span class="gr-chip' + (now && now.id === m.id ? ' on' : '') + '" data-gr="' + esc(m.id) + '">'
+        + esc(m.name) + '</span>').join('')
+    + '<span class="gr-label">' + (groupMode(curChar) === 'call' ? '点名' : '轮流') + '</span>';
+  el.querySelectorAll('[data-gr]').forEach(x => {
+    x.onclick = async () => {
+      const ms2 = groupMembers(curChar);
+      const i = ms2.findIndex(m => m.id === x.dataset.gr);
+      if (i < 0) return;
+      curChar.turnIndex = i;
+      try { await chars.put(curChar); } catch { /* 记不住只影响下一轮 */ }
+      renderGroupRoster();
+      toast('下一轮轮到「' + (ms2[i].name || '') + '」', 2000);
+    };
+  });
+}
+
+/**
+ * 新建一个群。
+ * ⚠️ 群不是"角色的复制品"，它自己的角色级参数一律【不设】——
+ *    全走全局设置（effSettings 读不到 char[k] 就落回全局，天然如此）。
+ *    这样群里改参数不会和成员各自的设置打架。
+ */
+function openGroupChatCreator() {
+  openCharPicker({
+    title: '新建群聊',
+    name: '',
+    selected: [],
+    excludeGroups: true,
+    pickName: '群聊名字',
+    namePlaceholder: '比如：周末茶会',
+    okText: '建群',
+    onOk: async (nm, ids) => {
+      if (ids.length < 2) { toast('至少要选两个人，不然就是单聊了', 3200); return; }
+      const g = {
+        id: uid(),
+        name: nm,
+        isGroup: true,
+        memberIds: ids,
+        groupNote: '',
+        speakMode: 'round',
+        turnIndex: 0,
+        avatar: null,
+        greeting: '（' + ids.map(i => (allChars.find(c => c.id === i) || {}).name || '').filter(Boolean).join('、') + ' 都在。）',
+        presetKey: 'blank',
+        createdAt: Date.now(),
+      };
+      g.persona = composeGroupPersona(g);
+      await chars.put(g);
+      await loadChars();
+      renderCharList();
+      await selectChar(g.id);
+      resetTo('chat');
+      toast('建好了「' + nm + '」。点顶部那排名字可以指定下一轮谁先说', 5000);
+    },
+  });
+}
+
+/**
+ * 编辑一个群：选成员（v0.4.0）。
+ *
+ * ⚠️ 群【不走】普通的角色编辑页 —— 那页能改人设，而群的人设是
+ *    从成员算出来的（refreshGroupPersona 每次载入都会覆盖它）。
+ *    让人在那里改一个"改了也没用"的字段，比不给入口更糟。
+ */
+function editGroupChat(gid) {
+  const g = allChars.find(x => x.id === gid);
+  if (!isGroup(g)) return;
+  openCharPicker({
+    title: '编辑群聊',
+    name: g.name || '',
+    selected: (g.memberIds || []).slice(),
+    excludeGroups: true,
+    pickName: '群聊名字',
+    namePlaceholder: '比如：周末茶会',
+    okText: '保存',
+    onOk: async (nm, ids) => {
+      if (ids.length < 2) { toast('至少要留两个人，不然就是单聊了', 3200); return; }
+      g.name = nm;
+      g.memberIds = ids;
+      await refreshGroupPersona(g);   // 人设跟着成员重算
+      await chars.put(g);
+      await loadChars();
+      if (curCharId === g.id) { curChar = allChars.find(x => x.id === g.id) || g; renderGroupRoster(); }
+      renderCharList();
+      // 成员里有人走了的话，轮次指针可能越界 —— 夹回范围内
+      if ((Number(g.turnIndex) || 0) >= ids.length) { g.turnIndex = 0; await chars.put(g); }
+      toast('已更新「' + nm + '」', 2600);
+    },
+  });
+}
+
 function renderCharList() {
   const box = $('char-list');
   box.innerHTML = allChars.map(c => {
     const p = PRESETS.find(p => p.key === c.presetKey);
-    const emoji = p ? p.emoji : '🙂';
+    // 群聊（v0.4.0）：头像用 👥，副标题写"几个人 + 在场名单"，
+    // 这样一眼能把它和单聊区分开 —— 不然它和普通角色卡长得一模一样。
+    const grp = isGroup(c);
+    const emoji = grp ? '👥' : (p ? p.emoji : '🙂');
     const av = c.avatar ? `<img src="${esc(c.avatar)}">` : emoji;
-    return `<div class="char-card ${c.id === curCharId ? 'on' : ''}" data-id="${esc(c.id)}">
+    const ms = grp ? groupMembers(c) : [];
+    const sub = grp
+      ? (ms.length + ' 个人：' + ms.map(m => m.name).join('、'))
+      : (esc((c.persona || '').replace(/[#*\n]/g, ' ').slice(0, 34)) + '…');
+    return `<div class="char-card ${c.id === curCharId ? 'on' : ''}${grp ? ' grp' : ''}" data-id="${esc(c.id)}">
       <div class="avatar-lg">${av}</div>
       <div class="info">
-        <b>${esc(c.name)}</b>
-        <small>${esc((c.persona || '').replace(/[#*\n]/g, ' ').slice(0, 34))}…</small>
+        <b>${esc(c.name)}${grp ? '<span class="tag-grp">群聊</span>' : ''}</b>
+        <small>${grp ? esc(sub) : sub}</small>
       </div>
       <span class="badge">编辑</span>
       <button class="icon-btn" data-edit="${esc(c.id)}">✎</button>
@@ -6903,7 +7578,13 @@ function renderCharList() {
 
   box.querySelectorAll('.char-card').forEach(el => {
     el.onclick = async (e) => {
-      if (e.target.dataset.edit) { openCharEdit(e.target.dataset.edit); return; }   // 内部自己切页
+      if (e.target.dataset.edit) {
+        // 群聊走【群编辑】（改成员），不进普通角色编辑页 —— 理由见 editGroupChat 的注释
+        const target = allChars.find(x => x.id === e.target.dataset.edit);
+        if (isGroup(target)) editGroupChat(e.target.dataset.edit);
+        else openCharEdit(e.target.dataset.edit);   // 内部自己切页
+        return;
+      }
       await selectChar(el.dataset.id);
       resetTo('chat');   // 选完角色就回主界面，栈也清干净
     };
@@ -7241,11 +7922,392 @@ function renderCtxNote() {
     + (pct >= 100 ? ' —— 已顶满，更早的历史会被丢掉。调大这里，或者把世界书/人设写短些。' : '');
 }
 
+// ============================================================
+//  酒馆正则（v0.4.0）
+// ============================================================
+//
+// 从酒馆的角色卡 / 预设文件里带过来的正则，用户可以在设置页逐条开关。
+//
+// ⚠️ 红线（和 stregex.js 头上那条是同一条）：只作用于副本 ——
+//   ① 送进模型的提示词（composeApiMsgs 里那一遍）
+//   ② 显示到屏幕上的字（msgHtml 里那一遍）
+//   存档里的原文一个字都不动。导出、备份、记忆、归档读的都是原文。
+//   所以关掉正则 = 看到原样，删掉正则 = 什么都没损失。
+//
+// 为什么默认开着（而不是"导入了但全关着"）：
+//   卡作者写这些正则就是想让它们生效（比如把 **粗体** 转成斜体、去掉 HTML 残渣）。
+//   默认关着等于把"行李"接过来又锁进柜子 —— 用户根本不知道它为什么没生效。
+//   风险可控：改坏了只影响副本，关掉即可；原文始终安全。
+//   作者自己在酒馆里关掉的那条（disabled: true）我们照样关着，不自作主张。
+let stRegexScripts = [];
+
+async function loadStRegex() {
+  try {
+    const v = await kv.get('stRegex', []);
+    stRegexScripts = Array.isArray(v) ? v : [];
+  } catch { stRegexScripts = []; }
+}
+
+async function saveStRegex() {
+  try { await kv.set('stRegex', stRegexScripts); }
+  catch (e) { toast('正则设置没存上：' + ((e && e.message) || e), 4000); }
+}
+
+/** 过一道正则 —— 只有这一个入口，两处副本都走它 */
+function stRe(text, mode, depth) {
+  if (!stRegexScripts.length) return text;   // 绝大多数人没有，走快路
+  return applyStRegex(text, stRegexScripts, mode, depth);
+}
+
+/** 设置页那块面板。sample 用最新一条回复，预览才看得出"这条到底改了什么" */
+async function renderStRegex() {
+  const box = $('stregex-list');
+  if (!box) return;
+  if (!stRegexScripts.length) {
+    box.innerHTML = '<div class="hint-text">还没有。从酒馆的角色卡或预设文件导入时会自动带过来。</div>';
+    return;
+  }
+  // 拿一段真实文本当预览底 —— 固定示例看不出"我这条会不会被改坏"
+  let sample = '';
+  try {
+    // ⚠️ 只要最近 30 条（v0.4.0 复查）：预览需要"一段真实文本"，
+    //    读全量的话，聊了几千条的人每次进设置页都要把整段历史从库里拉出来解析一遍。
+    const all = curCharId ? await msgs.list(curCharId, 30, true) : [];
+    const last = [...all].reverse().find(m => m && m.role === 'assistant' && m.content);
+    sample = last ? String(last.content) : '';
+  } catch { sample = ''; }
+  if (!sample) sample = '（还没有她的回复，这里先用一段示例）**动作** 和 <br> 和 [内心]';
+  sample = sample.slice(0, 220);
+
+  const on = stRegexScripts.filter(s => s.enabled === true).length;
+  const bar = '<div class="srx-bar">共 <b>' + stRegexScripts.length + '</b> 条，其中 <b>' + on + '</b> 条正在生效。'
+    + '<br>它们只改<b>送进模型的提示词</b>和<b>屏幕上的字</b>，不动存档原文 —— 关掉就能看到原样。</div>';
+  box.innerHTML = bar + stRegexScripts.map((s, i) => {
+    const tags = [];
+    if (s.display !== false && s.prompt !== false) tags.push('显示 + 提示词');
+    else if (s.prompt === false) tags.push('只改显示');
+    else tags.push('只改提示词');
+    if (s.minDepth != null || s.maxDepth != null) {
+      tags.push('深度 ' + (s.minDepth == null ? 0 : s.minDepth) + '~' + (s.maxDepth == null ? '不限' : s.maxDepth));
+    }
+    const pv = previewOne(s, sample);
+    return '<div class="srx-item' + (s.enabled === true ? '' : ' srx-off') + '" data-srx="' + i + '">'
+      + '<div class="srx-head">'
+      +   '<label class="srx-sw"><input type="checkbox" data-srx-on="' + i + '"'
+      +     (s.enabled === true ? ' checked' : '') + '> <span>' + esc(s.name || '(没写名字)') + '</span></label>'
+      +   '<button class="srx-del" data-srx-del="' + i + '">删掉</button>'
+      + '</div>'
+      + '<div class="srx-tags">' + tags.map(x => '<span class="srx-tag">' + esc(x) + '</span>').join('')
+      +   (s.source ? '<span class="srx-src">' + esc(s.source) + '</span>' : '') + '</div>'
+      + '<div class="srx-rule"><code>/' + esc(s.find) + '/' + esc(s.flags || '') + '</code> → <code>'
+      +   esc(s.replace === '' ? '（删掉匹配到的内容）' : s.replace) + '</code></div>'
+      + (s.note ? '<div class="srx-note">⚠️ ' + esc(s.note) + '</div>' : '')
+      + (s.enabled === true
+          // ⚠️ 顺序和 describeStPreset 那条一样：先截断、再 esc。
+          //    反过来的话 300 字符的刀会把结尾的 HTML 实体切断（…&amp; 切成 …&am），
+          //    屏幕上就显示出一个字面量 "&am"。正则的替换结果很容易超过 300 字符，正好踩这个。
+          ? '<div class="srx-pv"><span>效果预览</span><div class="srx-pv-b">' + esc(String(pv).slice(0, 300)) + '</div></div>'
+          : '')
+      + '</div>';
+  }).join('');
+
+  box.querySelectorAll('[data-srx-on]').forEach(el => {
+    el.onchange = async (ev) => {
+      const i = Number(el.dataset.srxOn);
+      if (!stRegexScripts[i]) return;
+      stRegexScripts[i] = { ...stRegexScripts[i], enabled: !!ev.target.checked };
+      await saveStRegex();
+      // ⚠️ 必须重绘消息：关掉/打开一条正则，屏幕上那段字要当场变回去/变过来，
+      //    不然用户以为开关没生效。只有【显示侧】的正则才需要重绘。
+      renderMessagesIfIdle().catch(() => {});
+      renderStRegex();
+    };
+  });
+  box.querySelectorAll('[data-srx-del]').forEach(el => {
+    el.onclick = async () => {
+      const i = Number(el.dataset.srxDel);
+      if (!stRegexScripts[i]) return;
+      const nm = stRegexScripts[i].name || '(没写名字)';
+      stRegexScripts.splice(i, 1);
+      await saveStRegex();
+      renderMessagesIfIdle().catch(() => {});
+      renderStRegex();
+      toast('已删掉正则「' + nm + '」（存档原文本来就没被动过）', 3200);
+    };
+  });
+}
+
+/**
+ * 主数据对账（v0.4.0）—— 只报【确定对不上】的那种。
+ *
+ * 背景：主数据在 WebView 的 IndexedDB 里，官方口径本来就是"临时数据"
+ * （README 里自己写着「有真实的全量清空案例」）。被清掉时页面不会报任何错，
+ * 用户看到的是"她失忆了 / 聊天记录全没了"，而 App 表现得像什么都没发生。
+ *
+ * ⚠️ 判据必须窄，宁可漏报也别误报 —— 误报一次，用户就再也不信这个提示了。
+ *    所以【两个条件同时成立】才算：
+ *      ① messages 表【整个】是空的（注意：清空某一个角色不会造成全局为空，
+ *         手动一条条删也删不到"整个表为空"以外的角色）
+ *      ② 记账还在，而且量级明显不是"刚装上试了两下"（sendCount 或各角色累计序号 >= 20）
+ *    单个角色被清空、或者用户手动把某人的消息删光 —— 这两个都不会触发，
+ *    因为别的角色的消息还在（条件①不成立）。
+ *
+ * @returns {Promise<{at:number, ok:boolean, reason?:string, chars:number, msgs:number, sendCount:number, seqSum:number}>}
+ */
+async function auditMainData() {
+  const out = { at: Date.now(), ok: true, chars: 0, msgs: 0, sendCount: 0, seqSum: 0 };
+  try {
+    const counts = await dbAdmin.counts();
+    out.chars = Number(counts.characters) || 0;
+    out.msgs = Number(counts.messages) || 0;
+    out.sendCount = Number(await kv.get('sendCount', 0)) || 0;
+    let seq = 0;
+    for (const e of await kv.entries()) {
+      if (String(e.k || '').startsWith('msgSeq:')) seq += Number(e.v) || 0;
+    }
+    out.seqSum = seq;
+  } catch { return out; }   // 数不出来就当没事，绝不在这里制造噪音
+  const bookkeeping = Math.max(out.sendCount, out.seqSum);
+  if (out.msgs === 0 && out.chars > 0 && bookkeeping >= 20) {
+    out.ok = false;
+    out.reason = 'messages-empty-but-bookkeeping-alive';
+  }
+  return out;
+}
+
+/** 对账 + 把结果落库 + 拉起引导条。返回对账结果 */
+async function renderDataBanner() {
+  const a = await auditMainData();
+  try { await kv.set('dataAudit', a); } catch { /* 记不上只是面板显示旧数据 */ }
+  const b = $('data-banner');
+  if (b) b.classList.toggle('hidden', a.ok);
+  return a;
+}
+
+/**
+ * 作者备注取哪种语言（V3 的 creator_notes_multilingual）。
+ * 有当前界面语言那份就用它，没有退回 creator_notes。
+ * 语言码按 ISO 639-1 的前两位比（卡里写 zh，我们内部可能写 zh-CN）。
+ */
+function pickCreatorNotes(card) {
+  const base = String(card.creator_notes || '');
+  const ml = card.creator_notes_multilingual;
+  if (!ml || typeof ml !== 'object') return base;
+  const want = String(getActiveLang ? getActiveLang() : 'zh').slice(0, 2).toLowerCase();
+  for (const k of Object.keys(ml)) {
+    if (String(k).slice(0, 2).toLowerCase() === want && typeof ml[k] === 'string' && ml[k].trim()) return ml[k];
+  }
+  return base;
+}
+
+/**
+ * 这次搜索该用哪个 key（v0.4.0）。
+ *
+ * 智谱那条后端可以【复用主 API key】—— 用户聊天本来就用智谱的话，
+ * 不该再逼他去注册一家搜索服务。别的后端没有这个便利，所以照实返回空，
+ * 由调用方提示"还没填搜索 Key"，而不是拿主 key 去撞一个 401。
+ */
+function searchKeyFor() {
+  const prov = S.searchProvider || 'tavily';
+  if (S.searchKey) return S.searchKey;
+  if (prov === 'zhipu' && S.provider === 'zhipu' && S.apiKey) return S.apiKey;
+  return '';
+}
+
+/** 搜索后端的界面联动：下拉换了，输入框提示和说明文字跟着换 */
+function renderSearchVendor() {
+  const sel = $('s-search-vendor');
+  if (!sel) return;
+  const prov = SEARCH_BACKENDS[S.searchProvider] ? S.searchProvider : 'tavily';
+  sel.value = prov;
+  const b = SEARCH_BACKENDS[prov];
+  const keyBox = $('s-search-key');
+  if (keyBox) keyBox.placeholder = b.hint + '（不填就用不了 /搜）';
+  const how = $('s-search-how');
+  if (how) {
+    const reuseOk = b.reuse && S.provider === 'zhipu' && S.apiKey;
+    how.innerHTML = '搜索用的是 <b>' + esc(b.label) + '</b>：<br>'
+      + b.where + ' → ' + b.how + '<br>'
+      + (reuseOk ? '<b>你聊天用的就是智谱，这一栏可以留空</b> —— 直接复用上面那个 key。<br>' : '')
+      + 'key 只存在你这台手机里，不会上传到任何地方。<br>'
+      // 说清楚哪条是实测过的：别让用户以为四条都跟 Tavily 一样验过
+      + (prov === 'tavily' ? '' : '（Tavily 那条是本机实测跑通的；其余几家是按各自官方文档接的，第一次用建议先点下面「测试一下能不能搜」。）');
+  }
+}
+
+/** 「3 分钟前」这种 */
+function fmtAgo(ts) {
+  if (!ts || !Number.isFinite(Number(ts))) return '';
+  const d = Date.now() - Number(ts);
+  if (d < 60000) return '刚刚';
+  const m = Math.floor(d / 60000);
+  if (m < 60) return m + ' 分钟前';
+  const hh = Math.floor(m / 60);
+  if (hh < 24) return hh + ' 小时前';
+  return Math.floor(hh / 24) + ' 天前';
+}
+
+/** 目录枚举值 → 人话。这几个值来自 Capacitor Filesystem 的 Directory 枚举 */
+function backupDirLabel(d) {
+  const map = { DOCUMENTS: '文档（能活过卸载）', EXTERNAL: '应用外部目录（卸载会没）', DATA: '应用私有目录（卸载会没）' };
+  return map[d] || (d || '（不知道）');
+}
+
+/** 备份里那份文件坏了没 —— 三种说法要分清楚，别一律说"坏了" */
+function verifyReasonText(reason) {
+  const map = {
+    'none': '还没找到任何自动备份',
+    'no-filesystem': '这个平台没有文件系统接口',
+    'read-failed': '文件读不出来（权限被回收 / 文件被删）',
+    'corrupt': '文件内容坏了（JSON 解析不过）',
+    'empty': '文件是空的或不是备份',
+  };
+  return map[reason] || ('读不出来（' + reason + '）');
+}
+
+/**
+ * 备份健康面板（v0.4.0）。
+ *
+ * 为什么要有它：自动备份、读回自检、目录降级提醒这三件事 v0.3.1 都做了，
+ * 但每一样都只在【启动那一下】弹一次 toast。用户手滑关掉就再也没有第二次机会看到，
+ * 而"我的备份靠不靠得住"是那种平时不看、出事才想起来看的状态。
+ * 所以这里把状态【常驻】下来，位置不对时那句「卸载会一起没」也直接写死在面板里。
+ */
+async function renderBackupHealth() {
+  const box = $('backup-health');
+  if (!box) return;
+  let h = null;
+  try { h = await kv.get('backupHealth', null); } catch { h = null; }
+  h = (h && typeof h === 'object') ? h : {};
+  const last = h.last || h.prev || null;
+  const dir = (last && last.dir) || (h.write && h.write.dir) || '';
+  const rows = [];
+
+  // ① 上次自动备份
+  if (h.write && h.write.ran) {
+    rows.push(['上次自动备份', (last && last.name ? last.name : h.write.name)
+      + '　' + fmtAgo(h.write.at)]);
+  } else if (h.write && !h.write.ran) {
+    rows.push(['上次自动备份', '⚠️ 没做成：' + (h.write.reason || '未知')
+      + (h.write.error ? '（' + h.write.error + '）' : '') + '　' + fmtAgo(h.write.at)]);
+  } else {
+    rows.push(['上次自动备份', '这台机器上还没跑过']);
+  }
+
+  // ② 位置
+  rows.push(['存放位置', dir ? backupDirLabel(dir) : '（还不知道）']);
+  if (dir) rows.push(['保留份数', (Number(last && last.count) || 0) + ' / 7']);
+
+  // ③ 最近一次自检
+  const chk = h.last || null;   // 只认"刚写完那次"的读回结果
+  const chkPrev = h.prev || null;
+  if (chk && chk.ok) {
+    rows.push(['最近一次自检', '✅ 读得回来　' + (chk.bytes || 0) + ' 字节 · 角色 '
+      + (chk.characters || 0) + ' · 消息 ' + (chk.messages || 0) + '　' + fmtAgo(chk.at)]);
+  } else if (chk && !chk.ok) {
+    rows.push(['最近一次自检', '❌ ' + verifyReasonText(chk.reason) + '　' + fmtAgo(chk.at)]);
+  } else if (chkPrev && chkPrev.ok) {
+    rows.push(['最近一次自检', '✅ 读得回来　（还没写过新的）' + (chkPrev.bytes || 0) + ' 字节　' + fmtAgo(chkPrev.at)]);
+  } else if (chkPrev && !chkPrev.ok && chkPrev.reason !== 'none') {
+    rows.push(['最近一次自检', '❌ ' + verifyReasonText(chkPrev.reason) + '　' + fmtAgo(chkPrev.at)]);
+  } else {
+    rows.push(['最近一次自检', '从没跑过']);
+  }
+
+  // ④ 主数据对账（v0.4.0）
+  let audit = null;
+  try { audit = await kv.get('dataAudit', null); } catch { audit = null; }
+  if (audit && typeof audit === 'object') {
+    rows.push(['主数据对账', audit.ok
+      ? ('✅ 对得上　角色 ' + (audit.chars || 0) + ' · 记录 ' + (audit.msgs || 0))
+      : ('❌ 记账里有 ' + Math.max(audit.sendCount || 0, audit.seqSum || 0)
+         + ' 条往来，但聊天记录表是空的 —— 像是被系统回收过')]);
+  }
+
+  let html = rows.map(([k, v]) =>
+    '<div class="bh-row"><span class="bh-k">' + esc(k) + '</span><span class="bh-v">' + esc(v) + '</span></div>').join('');
+  // ⚠️ 位置不在「文档」时，这句【常驻】写在面板里，不再只靠一次性 toast。
+  //    退到应用目录 = 卸载或「清除数据」时连备份一起没，正是备份要防的那两件事。
+  if (dir && dir !== 'DOCUMENTS') {
+    html += '<div class="bh-warn">⚠️ 备份写在<b>应用目录</b>里 —— '
+      + '卸载 App 或在系统设置里「清除数据」时，系统会把它和主数据<b>一起删掉</b>，'
+      + '正是备份要防的那两件事。<br>去「导出全部数据」手动存一份到别处（相册 / 网盘 / 电脑）。</div>';
+  }
+  box.innerHTML = html;
+
+  // 自检失败也要常驻说一句怎么办 —— toast 会消失，这句不会
+  const bad = (chk && !chk.ok && chk.reason !== 'none') || (!chk && chkPrev && !chkPrev.ok && chkPrev.reason !== 'none');
+  if (bad) {
+    box.insertAdjacentHTML('beforeend',
+      '<div class="bh-warn">⚠️ 最近那份自动备份读不回来，<b>别指望它</b>：'
+      + '去下面点「导出全部数据」手动存一份。</div>');
+  }
+}
+
+/**
+ * 恢复演练（v0.4.0）—— 只读，一个字节都不写。
+ *
+ * 为什么值得单独做个按钮：备份这东西的可用性，用户【平时不会验】，
+ * 出事时才发现是坏的已经晚了。所以给他一个"现在就试一下"的机会：
+ * 找到最近一份自动备份 → 真的读出来 → 走一遍导入用的那套统计 → 和本机比一比。
+ *
+ * ⚠️ 全程只调 readLatestBackup + surveyBackup + dbAdmin.counts，不碰任何写接口。
+ */
+async function backupDrill() {
+  const out = $('backup-drill-out');
+  if (!out) return;
+  const FS = capPlugin('Filesystem');
+  if (!FS) {
+    out.innerHTML = '<div class="bh-warn">这个平台没有文件系统接口，演练跑不了（网页版就是这样）。</div>';
+    return;
+  }
+  out.innerHTML = '<div class="bh-row"><span class="bh-v">正在读最近那份备份……</span></div>';
+  let r;
+  try { r = await readLatestBackup({ FS, directories: BACKUP_DIRS }); }
+  catch (e) { out.innerHTML = '<div class="bh-warn">读的时候出错了：' + esc((e && e.message) || e) + '</div>'; return; }
+  if (!r.ok) {
+    out.innerHTML = '<div class="bh-warn">❌ ' + esc(verifyReasonText(r.reason))
+      + (r.name ? '（' + esc(r.name) + '）' : '') + '</div>';
+    return;
+  }
+  const s = surveyBackup(r.data);
+  let local = { characters: 0, messages: 0, memories: 0 };
+  try { local = await dbAdmin.counts(); } catch { /* 数不出来也照样把备份那边报出来 */ }
+  const when = r.data.exportedAt ? new Date(r.data.exportedAt) : null;
+  const whenTxt = when && !isNaN(when.getTime())
+    ? (when.getFullYear() + '-' + String(when.getMonth() + 1).padStart(2, '0') + '-' + String(when.getDate()).padStart(2, '0')
+       + ' ' + String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0'))
+    : '（没写导出时间）';
+  const row = (k, a, b) => '<div class="bh-row"><span class="bh-k">' + esc(k) + '</span><span class="bh-v">备份 '
+    + a + '　·　本机 ' + b + '</span></div>';
+  out.innerHTML = '<div class="bh-ok">✅ 这份备份读得回来，内容也对得上：</div>'
+    + '<div class="bh-row"><span class="bh-k">文件</span><span class="bh-v">' + esc(r.name)
+      + '　' + (r.bytes || 0) + ' 字节　导出于 ' + esc(whenTxt) + '</span></div>'
+    + row('角色', s.chars, local.characters)
+    + row('聊天记录', s.msgs, local.messages)
+    + row('长期记忆', s.mems, local.memories)
+    + row('世界书条目', s.wbEntries, (local.wbGroups || 0) + (local.wbSolo || 0) + ' 组/份')
+    + '<div class="bh-note">这一步<b>只读</b>，没有改任何数据 —— 你现在的角色和聊天记录一个都没动。</div>';
+}
+
+/** 把一批酒馆正则收进来。返回真正收下的条数 */
+async function addStRegex(rawList, source) {
+  const added = parseStRegexList(rawList, source);
+  if (!added.length) return { added: 0, off: 0 };
+  stRegexScripts = stRegexScripts.concat(added);
+  await saveStRegex();
+  return { added: added.length, off: added.filter(s => s.enabled !== true).length };
+}
+
 function bindSettings() {
   // 草稿是弹窗自己的事：每次进设置页都从"已保存的值"重画一遍，
   // 免得上一轮没走取消/确定就退出去时把旧草稿带进来。
   phaseDraft = null;
   renderMyAvatar();
+  renderBackupHealth();   // 备份健康面板（v0.4.0）
+  const drillBtn = $('btn-backup-drill');
+  if (drillBtn) drillBtn.onclick = () => { backupDrill().catch(() => {}); };
+  renderStRegex();   // 酒馆正则面板（v0.4.0）：只渲染一次，自己的开关自己重绘
   renderClockRanges();
   refreshClockHint();
   $('s-apikey').value = S.apiKey;
@@ -7651,11 +8713,22 @@ function bindSettings() {
   $('s-search-on').checked = !!S.searchOn;
   $('s-search-key').value = S.searchKey || '';
   $('s-search-count').value = S.searchCount || 5;
+  // 搜索后端（v0.4.0）：原来是"只能 Tavily"，等于逼用户再注册一家。
+  const sv = $('s-search-vendor');
+  if (sv) {
+    sv.value = SEARCH_BACKENDS[S.searchProvider] ? S.searchProvider : 'tavily';
+    sv.onchange = async e => {
+      await saveSettings({ searchProvider: e.target.value });
+      renderSearchVendor();
+      paintSearchState();
+    };
+  }
+  renderSearchVendor();
 
   const paintSearchState = () => {
     const el = $('search-state');
     if (!el) return;
-    const hasKey = !!S.searchKey;
+    const hasKey = !!searchKeyFor();
     if (!S.searchOn) { el.textContent = '未启用'; el.className = 'search-state'; }
     else if (!hasKey) { el.textContent = '缺 Key'; el.className = 'search-state'; }
     else { el.textContent = '就绪'; el.className = 'search-state on'; }
@@ -7666,11 +8739,12 @@ function bindSettings() {
     await saveSettings({ searchOn: e.target.checked });
     paintSearchState();
     toast(e.target.checked
-      ? (S.searchKey ? '联网搜索已开，打 /搜 就能用' : '已开，但还要填搜索 Key')
+      ? (searchKeyFor() ? '联网搜索已开，打 /搜 就能用' : '已开，但还要填搜索 Key')
       : '联网搜索已关，恢复纯本地', 2600);
   };
   $('s-search-key').onchange = async e => {
     await saveSettings({ searchKey: e.target.value.trim() });
+    renderSearchVendor();
     paintSearchState();
   };
   $('s-search-count').onchange = e =>
@@ -7678,10 +8752,10 @@ function bindSettings() {
 
   $('btn-search-test').onclick = async () => {
     const btn = $('btn-search-test');
-    if (!S.searchKey) { toast('先填上面的搜索 Key', 2600); return; }
+    if (!searchKeyFor()) { toast('先选一家搜索后端并填上对应的 Key', 3000); return; }
     btn.disabled = true; btn.textContent = '测试中…';
     try {
-      const re = await webSearch({ apiKey: S.searchKey, query: '今天有什么新闻', max: 3 });
+      const re = await webSearch({ provider: S.searchProvider, apiKey: searchKeyFor(), query: '今天有什么新闻', max: 3 });
       const n = re.results.length;
       toast(n ? '能搜到，返回 ' + n + ' 条。打 /搜 就能用了' : '连上了但没结果，换个词试试', 3400);
     } catch (err) {
@@ -8233,8 +9307,15 @@ const BACKUP_KV_PREFIXES = [
   'memZeroRetry:', 'memNeedTidy:'
 ];
 
+// ⚠️ 有几个键【没有冒号】，前缀表装不下它们（v0.4.0）。
+//    酒馆正则那份表就是：用户从卡/预设里收进来、又逐条开关过的东西，
+//    是【他自己的设置】，换台机器导回去当然要跟着走 ——
+//    漏了它，"导出全部数据"就成了半个备份，而且没人会发现少了什么。
+const BACKUP_EXACT_KEYS = ['stRegex'];
+
 function isBackupKey(k) {
-  return BACKUP_KV_PREFIXES.some(p => String(k || '').startsWith(p));
+  const s = String(k || '');
+  return BACKUP_EXACT_KEYS.includes(s) || BACKUP_KV_PREFIXES.some(p => s.startsWith(p));
 }
 
 // ================= 角色卡（实验，v1.21.40）=================
@@ -8266,6 +9347,20 @@ async function importCharacterCard(card, avatarDataUrl = '') {
     // 卡里若带梦弦居自己的参数，以卡为准 —— 放在最后覆盖上面的默认值。
     // 老卡（别家导出的、或 v1.21.47 之前我们自己导的）没有这一段，返回空对象。
     ...readMkParams(card),
+
+    // —— V3 的那几样（v0.4.0）——
+    // 全都【存下来】而不是丢掉：现在用不上的，群聊做完/以后可能就用得上了，
+    // 而"导入时没存"是不可逆的 —— 用户不会为了这一项再导一次卡。
+    // ⚠️ 昵称：{{char}} 该被换成它而不是 name（规范明确写的），
+    //    卡里的正文（开场白/人设/世界书）在 charcard 里已经按它展开过了。
+    nickname: card.nickname || '',
+    // 只在群聊里用的开场白（3.x 群聊做完就能用上）
+    groupGreetings: Array.isArray(card.group_only_greetings) ? card.group_only_greetings.slice(0, 20) : [],
+    // 作者备注（多语言的取当前界面语言那份，没有就退回 creator_notes）
+    creatorNotes: pickCreatorNotes(card),
+    // 卡的出处（作者填的来源链接）
+    source: Array.isArray(card.source) ? card.source.slice(0, 5) : [],
+    cardSpec: (card.spec || '') + (card.specVersion ? ' ' + card.specVersion : ''),
   };
   await chars.put(c);
 
@@ -8276,11 +9371,36 @@ async function importCharacterCard(card, avatarDataUrl = '') {
       charId: c.id,
       // title / pos 一起带过来（v1.21.51）：原来只带 keys/content/on，
       // 卡片里写好的标题和档位导进来就没了。
+      // ⚠️ needsReview / reviewWhy 必须一起带过来（v0.4.0）。
+      //    charcard.js:148 那段注释承诺"别让同一个文件从两个入口进来得到两种结果"，
+      //    但这里逐字段重建条目时把这两个字段丢了 —— 于是 worldbookHits /
+      //    worldbookConst 那两道闸门（if (e.needsReview === true) continue）
+      //    永远看不到它，标了「待确认」的条目照常注入：
+      //      probability:30 的条目 → 变成每次都出现
+      //      useRegex 的条目       → 拿正则当字面量，基本不触发
+      //      带二次筛选的条目      → 主键一命中就出现
+      //    从【世界书】入口进来标记带得住，从【角色卡】入口进来就没了。
+      //    pos 的白名单清洗保留 —— 别把那次清洗一起丢了。
       entries: card.entries.map(en => ({ id: uid(), title: en.title, keys: en.keys, content: en.content,
-        on: en.on, pos: WBP_ORDER.indexOf(en.pos) >= 0 ? en.pos : 'front' })),
+        on: en.on, pos: WBP_ORDER.indexOf(en.pos) >= 0 ? en.pos : 'front',
+        ...(en.needsReview === true ? { needsReview: true, reviewWhy: en.reviewWhy || '' } : {}),
+        // ⚠️ useRegex / excludeKeys 也必须带过来（v0.4.0）—— 和上面 needsReview 是同一个坑：
+        //    这里逐字段重建，没列进来的字段全部消失。这两个决定【怎么匹配】，
+        //    丢了就等于把 V3 的正则触发词当成字面量、把 @@exclude_keys 当成没有。
+        ...(en.useRegex === true ? { useRegex: true } : {}),
+        ...(Array.isArray(en.excludeKeys) && en.excludeKeys.length ? { excludeKeys: en.excludeKeys } : {}) })),
     });
     wroteEntries = card.entries.length;
   }
+
+  // 酒馆正则（v0.4.0）：卡里的 extensions.regex_scripts。
+  // ⚠️ 原来只有【预设文件】那条路会读它，从【角色卡】进来是静默的 ——
+  //    用户看到的是一张"看起来导进来了、其实少了东西"的卡，而且没有任何提示。
+  //    和 1.1 那条 needsReview 是同一个病：信息在这条路上被丢掉了。
+  const cardRegs = (card.extensions && Array.isArray(card.extensions.regex_scripts))
+    ? card.extensions.regex_scripts : [];
+  let regGot = { added: 0, off: 0 };
+  if (cardRegs.length) regGot = await addStRegex(cardRegs, '卡：' + card.name);
 
   await loadChars();
   await selectChar(c.id);
@@ -8288,6 +9408,22 @@ async function importCharacterCard(card, avatarDataUrl = '') {
 
   const notes = [];
   if (wroteEntries) notes.push('世界书 ' + wroteEntries + ' 条');
+  // V3 的东西进来了多少 —— 逐条说，别让"导进来了但少了一半"没人知道
+  if (card.nickname && card.nickname !== card.name) notes.push('昵称「' + card.nickname + '」');
+  if (card.macrosUsed && card.macrosUsed.length) {
+    notes.push('展开 ' + card.macrosUsed.length + ' 种宏（' + card.macrosUsed.slice(0, 3).join(' ') + '…）');
+  }
+  if (card.group_only_greetings && card.group_only_greetings.length) {
+    notes.push('存下 ' + card.group_only_greetings.length + ' 条群聊开场白（等群聊功能做完就能用）');
+  }
+  if (regGot.added) {
+    notes.push('酒馆正则 ' + regGot.added + ' 条'
+      + (regGot.off ? '（其中 ' + regGot.off + ' 条是关着的）' : '')
+      + '，在「我的设置 → 酒馆正则」里');
+  } else if (cardRegs.length) {
+    // 有是有，但一条都没认出来 —— 如实说，别装作没有
+    notes.push('卡里有 ' + cardRegs.length + ' 条酒馆正则，但格式认不出来，没导入');
+  }
   // ⚠️ 备选开场白本项目没有对应概念 —— 如实说出来，别假装导进去了
   if (card.alternate_greetings && card.alternate_greetings.length) {
     notes.push('忽略 ' + card.alternate_greetings.length + ' 条备选开场白（本软件没有这个概念）');
@@ -8300,6 +9436,9 @@ async function importCharacterCard(card, avatarDataUrl = '') {
  * @param {'png'|'json'} kind
  */
 async function exportCharacterCard(kind) {
+  // 群聊不能导出成角色卡（v0.4.0）：卡里那份"人设"是从成员算出来的名单，
+  // 导出去别的软件读到的会是一段莫名其妙的文字。成员各自的卡还在他们自己那里。
+  if (isGroup(curChar)) { toast('群聊导不成角色卡 —— 成员各自的卡还在他们自己那里', 4600); return; }
   if (!curChar) { toast('先选一个角色'); return; }
   // 只导【该角色自己的】世界书。角色组（wbGroups）是全局的、可能横跨多个角色，
   // 塞进单张卡里对不上号，这里刻意不带。
@@ -9065,6 +10204,16 @@ async function applyImport(data, p, file) {
     bits.push(`${droppedSolo} 条世界书条目的角色本机没有，已跳过`);
   }
   if (kvN) bits.push(`记账 ${kvN} 项`);
+  // ⚠️ 导入完之后，【内存里】那几份从 kv 读出来的东西要重新读一遍（v0.4.0）。
+  //
+  // 起因：酒馆正则那份表（kv 的 stRegex）现在跟着备份走了，但界面用的是
+  //   loadStRegex() 在启动时读进内存的那一份 —— 不重读的话，用户「导入数据」之后
+  //   设置页显示的、聊天时生效的，还是【导入之前】那批正则。
+  //   表现是"导进来了但没生效"，而且没有任何报错。
+  //   （dataAudit 同理：导入会改写 messages 表，对账结论要重算，不然那条
+  //    "聊天记录表是空的"引导条会一直挂在屏幕上。）
+  try { await loadStRegex(); } catch { /* 读不回来最多正则列表是旧的，不挡导入完成 */ }
+  renderDataBanner().catch(() => {});
   toast(bits.length ? `导入完成（${bits.join('；')}）` : '导入完成', bits.length ? 4500 : 2200);
 }
 
@@ -9174,6 +10323,11 @@ function bindEvents() {
   // 聊天栏点她的头像/名字 → 直接进她的编辑页（不用绕「角色列表」）
   const openCurCharEdit = () => {
     if (!curCharId) { toast('还没选角色'); return; }
+    // ⚠️ 群聊要进「改成员」，不能进普通角色编辑页（v0.4.0）。
+    //    那页能改人设，而群的人设是每次载入从成员【算出来】的 ——
+    //    在那儿改完，下次进 App 就被覆盖回去，用户只会觉得"改了没用"。
+    //    角色列表里的 ✎ 早就绕开了这条路，头顶这个入口一开始漏了。
+    if (isGroup(curChar)) { editGroupChat(curCharId); return; }
     openCharEdit(curCharId);
   };
   $('chat-avatar').onclick = openCurCharEdit;
@@ -9181,6 +10335,9 @@ function bindEvents() {
   $('btn-chars-back').onclick = goBack;
   $('btn-new-char').onclick = () => openPresetPicker();
   $('btn-new-char2').onclick = () => openPresetPicker();
+  // 新建群聊（v0.4.0）：群就是"成员是一组人的角色"，所以入口和建角色并排
+  const ngBtn = $('btn-new-group');
+  if (ngBtn) ngBtn.onclick = () => openGroupChatCreator();
   $('btn-preset-back').onclick = () => { renderCharList(); goBack(); };
   $('btn-about-back').onclick = () => goBack();
   $('btn-about-copy').onclick = async () => {
@@ -9208,6 +10365,21 @@ function bindEvents() {
       if (!el) return;
       el.scrollIntoView({ block: 'center', behavior: 'smooth' });
       el.focus();
+    }, 400);
+  };
+
+  // 数据对账引导条（v0.4.0）：发现"记账还在、记录没了"时点它直达数据那一栏。
+  // ⚠️ 复用的 setTimeout 理由同上 —— 抽屉有 .34s 的滑出动画。
+  const db = $('data-banner');
+  if (db) db.onclick = () => {
+    openDrawer();
+    setTimeout(() => {
+      const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'settings');
+      if (b) b.click();
+      setTimeout(() => {
+        const el = $('backup-health');
+        if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 450);
     }, 400);
   };
   $('btn-set-back').onclick = () => { applyTheme(); updateStatus(); goBack(); };
@@ -9692,6 +10864,30 @@ function bindEvents() {
     if (!ok) e.target.checked = false;
   };
 
+  // 酒馆聊天记录（v0.4.0）：角色卡能重下、世界书能重下，聊天记录没了就是没了。
+  // 全流程：选文件 → 解析 → 报告（多少条 / 谁在说话 / 时间跨度）→ 用户挑角色 → 导入。
+  const stcBtn = $('btn-stchat-import'), stcFile = $('stchat-file');
+  if (stcBtn && stcFile) {
+    stcBtn.onclick = () => stcFile.click();
+    stcFile.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';   // 不重置的话再选同一个文件不触发 onchange
+      if (!f) return;
+      const box = $('stchat-report');
+      if (box) box.innerHTML = '<div class="bh-v">正在读……</div>';
+      try {
+        const p = parseStChat(await f.text());
+        _stChatParsed = p;
+        renderStChatReport(p, box);
+        if (!p.ok) toast('读不了这份聊天记录：' + (p.reason || '格式不认识'), 5000);
+        else toast('这份记录里有 ' + p.msgs.length + ' 条消息，看下面的报告', 5000);
+      } catch (err) {
+        if (box) box.innerHTML = '<div class="stp-warn">读不了：' + esc((err && err.message) || err) + '</div>';
+        toast('读不了这个文件：' + ((err && err.message) || err), 4200);
+      }
+    };
+  }
+
   // 角色卡（实验，v1.21.40）
   $('btn-cc-import').onclick = () => $('cc-import-file').click();
   $('cc-import-file').onchange = async (e) => {
@@ -9700,16 +10896,18 @@ function bindEvents() {
     if (!f) return;
     try {
       const buf = await f.arrayBuffer();
-      // 先认 PNG 签名再决定怎么读 —— 比看扩展名可靠：
-      // 有的站把卡片存成 .png 其实里面是纯 JSON，反之也有改名的。
-      const png = isPng(buf);
-      const card = png
-        ? extractCardFromPng(buf)
-        : parseCardJson(new TextDecoder('utf-8').decode(new Uint8Array(buf)));
-      // ⚠️ PNG 卡里嵌的那张图就是她的立绘，顺手当头像（v1.21.52）。
-      // 原来 importCharacterCard 里写死 avatar: null —— 自己导出的卡导回来头像没了，
-      // 每次都得重设一遍（JSON 卡没图，本来就该是空）。
-      await importCharacterCard(card, png ? ('data:image/png;base64,' + bytesToB64(new Uint8Array(buf))) : '');
+      // ⚠️ 一律【按文件头】判断是哪种容器，不看扩展名（v0.4.0）：
+      //    有的站把卡片存成 .png 其实里面是纯 JSON，反之也有改名的；
+      //    v0.4.0 又多了一种 .charx（zip 里放 card.json）。
+      //    parseCardAuto 三种都认，并且 PNG 里 ccv3 块优先于 chara 块。
+      const got = await parseCardAuto(buf);
+      // ⚠️ 头像：PNG 卡里嵌的那张图就是她的立绘（v1.21.52）。
+      //    原来 importCharacterCard 里写死 avatar: null —— 自己导出的卡导回来头像没了，
+      //    每次都得重设一遍。.charx 的 assets 里那张 icon 也一样（v0.4.0，parseCardAuto 取好）。
+      //    JSON 卡没图，本来就该是空。
+      const avatar = got.avatarDataUrl
+        || (got.kind === 'png' ? ('data:image/png;base64,' + bytesToB64(new Uint8Array(buf))) : '');
+      await importCharacterCard(got.card, avatar);
     } catch (err) {
       toast('导入失败：' + ((err && err.message) || err), 4200);
     }
@@ -9912,7 +11110,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.3.1';
+const WEB_VERSION_FALLBACK = '0.4.0';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
@@ -9942,6 +11140,8 @@ async function renderAppVersion() {
 
 async function init() {
   await loadSettings();
+  // 酒馆正则要在首屏渲染【之前】读出来 —— 它参与 msgHtml，晚一步会先看到没过滤的字（v0.4.0）
+  await loadStRegex();
   // 界面语言要【先于】一切渲染设好（v1.21.60）：applyI18n 刷的是 DOM 上的静态文本，
   // 抽屉菜单那些是拼出来的、渲染时自己会过 t()。
   setLang(S.lang);
@@ -9978,59 +11178,130 @@ async function init() {
   await loadChars();
   await ensureChar();
   renderCharList();
+  // 主数据对账（v0.4.0）：IndexedDB 被系统回收时页面不会报错，
+  // 用户只看到"她失忆了"。这里对一次账，对不上就把引导条拉起来。
+  renderDataBanner().catch(() => {});
 
   // 自动备份：一天最多一次（v1.21.40）。
   //
+  // ⚠️ v0.4.0：这一整趟抽成了 runBackupRoutine()，并且【回到前台时也跑】。
+  //    原来它只挂在下面这个 setTimeout 上 —— App 后台常驻几天不重启，
+  //    这几天里既没有备份也没有自检，而设置页那块面板会一直显示几天前的状态。
+  //    备份本身有"一天一次"的闸门（autoBackupIfDue 里的 not-due），不会重复写。
+  //
   // 延迟 5 秒再动，别和首屏抢 —— 它要读全部消息，角色多的时候是几 MB。
-  // 静默处理：自动的事不该弹 toast 打扰人，但失败一定要留下痕迹
-  // （console），否则"备份没做成"会一直没人知道，直到真的需要那份备份。
-  setTimeout(() => {
-    const FS = capPlugin('Filesystem');
-    // ⚠️ 先自检【上一份】能不能读回来（v0.3.1）—— 刻意放在自动备份之前：
-    //    验的是上次写的那份，而不是这次刚写的。这次刚写的大概率是好的，
-    //    会把历史坏档盖过去。写成功 ≠ 读得回来。
-    verifyLatestBackup({ FS }).then(chk => {
+  setTimeout(() => { runBackupRoutine().catch(() => {}); }, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    runBackupRoutine().catch(() => {});
+  });
+}
+
+// ============================================================
+//  备份健康（v0.4.0）
+// ============================================================
+//
+// 起因：自动备份 + 读回自检 + 目录降级提醒本来都有了（v0.3.1），
+// 但每一样都是【一次性 toast】—— 用户手滑关掉那个提示，就再也没有第二次机会看到。
+// 而"我的备份到底靠不靠得住"恰恰是那种【平时不看、出事才想起来看】的状态，
+// 它必须常驻在设置页上，而不是靠一次弹窗。
+//
+// 面板显示三件事（外加一条位置警告）：
+//   · 上次自动备份：哪一天、写进了哪个目录、多大、留了几份
+//   · 最近一次自检：读得回来吗、里面有多少角色 / 多少条消息
+//   · 位置不是 DOCUMENTS 时，「卸载会一起没」直接写在面板里
+let _backupRunning = false;
+
+async function runBackupRoutine() {
+  const FS = capPlugin('Filesystem');
+  if (!FS) return;
+  // ⚠️ 并发保护（v0.4.0）：这个函数现在挂在【两个】入口上（启动 5 秒后、每次回前台），
+  //    而它中间有一串 await。用户快速切出去再切回来，两趟就会叠在一起 ——
+  //    两趟都看到"今天还没备份"、都去写同一个文件名，最后写进去的那份可能不是完整的那份。
+  //    备份这件事最怕的就是"以为有" —— 所以宁可跳过一趟。
+  if (_backupRunning) return;
+  _backupRunning = true;
+  try { await _runBackupRoutineInner(FS); }
+  finally { _backupRunning = false; }
+}
+
+async function _runBackupRoutineInner(FS) {
+  const now = Date.now();
+  let h = null;
+  try { h = await kv.get('backupHealth', null); } catch { h = null; }
+  h = (h && typeof h === 'object') ? h : {};
+  // 回前台不必每次都把几 MB 的备份读回来：一小时内已经验过就跳过自检这一步。
+  // 备份那一步不用管 —— autoBackupIfDue 自己会看"到期了没"。
+  const freshEnough = h.at && (now - h.at) < 3600000;
+
+  // ① 先自检【上一份】：刻意放在写之前。这次刚写的大概率是好的，会把历史坏档盖过去。
+  if (!freshEnough) {
+    try {
+      const chk = await verifyLatestBackup({ FS });
+      h.prev = { ...chk, at: now };
       if (chk && chk.ok) {
         console.log('[备份自检] 最近一份可读：', chk.dir, chk.name, chk.bytes + ' 字节',
           '角色 ' + chk.characters + ' / 消息 ' + chk.messages);
       } else if (chk && chk.reason !== 'none' && chk.reason !== 'no-filesystem') {
         console.warn('[备份自检] 最近那份读不出来：', chk.reason, chk.name || '', chk.error || '');
-        // 同一个文件只提醒一次，别天天弹
-        kv.get('backupVerifyWarned', '').then(warned => {
-          if (warned === chk.name) return;
+        // 同一个文件只提醒一次，别天天弹（面板里那份状态是常驻的，不受这句影响）
+        const warned = await kv.get('backupVerifyWarned', '').catch(() => '');
+        if (warned !== chk.name) {
           kv.set('backupVerifyWarned', chk.name || chk.reason).catch(() => {});
           toast('⚠️ 最近那份自动备份读不出来（' + (chk.name || chk.reason)
             + '），别指望它 —— 快去「我的设置」里手动导出一次', 7000);
-        }).catch(() => {});
-      }
-    }).catch(() => { /* 自检失败绝不该挡住启动 */ });
-    autoBackupIfDue({ kv, FS, collect: collectBackupPayload }).then(async r => {
-      if (r.ran) {
-        console.log('[自动备份] 已写入', r.dir, r.name,
-          r.deleted && r.deleted.length ? ('，清理旧备份 ' + r.deleted.length + ' 份') : '');
-        // ⚠️ 退到"卸载即删"的目录时必须【说出来】（v1.21.54，审计发现）。
-        // DOCUMENTS 写不进去时（Android 10 及以下没给存储权限、或用户拒了授权），
-        // 备份会依次退到 EXTERNAL / DATA —— 那是 /Android/data/<包名>/files，
-        // 卸载应用或「清除数据」时系统会整目录删掉，正是备份要防的那两件事。
-        // 以前这里只有一行 console，用户以为有备份，换机时一无所有。
-        if (r.dir && r.dir !== 'DOCUMENTS') {
-          // 同一个目录只提醒一次，别天天弹
-          const warned = await kv.get('autoBackupDirWarned', '');
-          if (warned !== r.dir) {
-            try { await kv.set('autoBackupDirWarned', r.dir); } catch { /* 记不上就下次再提醒 */ }
-            toast('自动备份只能写进「' + r.dir + '」——卸载或清除数据时会跟着消失，快去设置里手动导出一次', 6500);
-          }
-        }
-      } else if (r.reason !== 'not-due' && r.reason !== 'no-filesystem') {
-        console.warn('[自动备份] 没做成：', r.reason, r.error || '');
-        // 写失败也让人知道（v1.21.54）：以前只有 console，而"备份没做成"
-        // 正是最该被知道、却最容易被忽略的一件事。
-        if (r.reason === 'write-failed') {
-          toast('自动备份没做成（多半是存储权限被拒或空间不足），到设置里手动导出一份吧', 6000);
         }
       }
-    }).catch(e => console.warn('[自动备份] 异常：', e));
-  }, 5000);
+    } catch { /* 自检失败绝不该挡住启动 */ }
+  }
+
+  // ② 到期就写一份
+  try {
+    const r = await autoBackupIfDue({ kv, FS, collect: collectBackupPayload });
+    if (r.ran) {
+      console.log('[自动备份] 已写入', r.dir, r.name,
+        r.deleted && r.deleted.length ? ('，清理旧备份 ' + r.deleted.length + ' 份') : '');
+      h.write = { ran: true, dir: r.dir, name: r.name, deleted: (r.deleted || []).length, at: now };
+      // ⚠️ 退到"卸载即删"的目录时必须【说出来】（v1.21.54，审计发现）。
+      // DOCUMENTS 写不进去时（Android 10 及以下没给存储权限、或用户拒了授权），
+      // 备份会依次退到 EXTERNAL / DATA —— 那是 /Android/data/<包名>/files，
+      // 卸载应用或「清除数据」时系统会整目录删掉，正是备份要防的那两件事。
+      // toast 只是一次性的，面板里那句常驻警告才是真正兜底的（见 renderBackupHealth）。
+      if (r.dir && r.dir !== 'DOCUMENTS') {
+        const warned = await kv.get('autoBackupDirWarned', '').catch(() => '');
+        if (warned !== r.dir) {
+          try { await kv.set('autoBackupDirWarned', r.dir); } catch { /* 记不上就下次再提醒 */ }
+          toast('自动备份只能写进「' + r.dir + '」——卸载或清除数据时会跟着消失，快去设置里手动导出一次', 6500);
+        }
+      }
+      // ③ 写完之后再验一次 —— 这次验的就是【刚写的那份】。
+      //    和①的分工：①验的是"上一份还活着吗"，③验的是"这次真的写进去了吗"。
+      //    写成功 ≠ 读得回来：存储写满、写到一半被杀，都会留下一份长度正常但内容截断的 JSON。
+      try {
+        const chk2 = await verifyLatestBackup({ FS });
+        h.last = { ...chk2, at: Date.now() };
+        if (chk2 && !chk2.ok && chk2.reason !== 'none') {
+          console.warn('[备份自检] 刚写的这份读不回来：', chk2.reason, chk2.error || '');
+        }
+      } catch { /* 同上，不挡 */ }
+    } else if (r.reason !== 'not-due' && r.reason !== 'no-filesystem') {
+      console.warn('[自动备份] 没做成：', r.reason, r.error || '');
+      h.write = { ran: false, reason: r.reason, error: r.error || '', at: now };
+      // 写失败也让人知道（v1.21.54）：以前只有 console，而"备份没做成"
+      // 正是最该被知道、却最容易被忽略的一件事。
+      if (r.reason === 'write-failed') {
+        toast('自动备份没做成（多半是存储权限被拒或空间不足），到设置里手动导出一份吧', 6000);
+      }
+    }
+  } catch (e) {
+    console.warn('[自动备份] 异常：', e);
+    h.write = { ran: false, reason: 'exception', error: String((e && e.message) || e), at: now };
+  }
+
+  h.at = Date.now();
+  try { await kv.set('backupHealth', h); } catch { /* 记不上只是面板显示旧数据，无害 */ }
+  // 设置页开着的话，面板当场跟着变（不然用户要退出去再进来才看到）
+  try { renderBackupHealth(); } catch { /* 面板还没渲染过就算了 */ }
 }
 
 init().catch(e => {

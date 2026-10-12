@@ -18,6 +18,7 @@ import puppeteer from 'puppeteer-core';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
@@ -156,7 +157,7 @@ for (let i=0;i<30;i++){ const m=await memTexts(); if(m.length) break; await slee
 
 console.log('\n=== ② 撤销整理：备份带 id，写回用原 id ===');
 {
-  const src = fs.readFileSync(path.join(WWW, 'js/app.js'), 'utf8');
+  const src = readCode(path.join(WWW, 'js/app.js'));
   t('备份里存了 id', /items: before\.map\(m => \(\{ id: m\.id/.test(src));
   t('写回时用原 id', src.includes('id: it.id || uid()'));
   t('删除按 id 比对', src.includes('const keepIds = hasIds ? new Set(bk.items.map(x => x.id)) : null'));
@@ -168,7 +169,7 @@ console.log('\n=== ③ 判据已重构，不再依赖水位 ===');
   // v1.20.15 起，summarizeIfNeeded 直接数 pendingNow.length，
   // sumCap / lastSum / memSumAt 的读取全部删掉了。
   // 详见 e2e-memsum.mjs（那套专门测这个）。
-  const src = fs.readFileSync(path.join(WWW, 'js/app.js'), 'utf8');
+  const src = readCode(path.join(WWW, 'js/app.js'));
   t('判据是 pendingNow.length', src.includes('if (pendingNow.length < (S.memSummarizeEvery || 50)) return;'));
   t('sumCap 已删除', !src.includes('const sumCap'));
   t('lastSum 已删除', !src.includes('const lastSum ='));

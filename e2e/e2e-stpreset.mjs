@@ -70,7 +70,10 @@ console.log('=== 1. 导入酒馆预设：报告里列全了 ===');
   t('列出了 find', rep.includes('findRegex') || rep.includes('（[^）]*）') || rep.includes('{{char}}'));
   t('列出了 replace', rep.includes('她'));
   t('标明了作用对象（只改显示 / 只改提示词）', rep.includes('只改') || rep.includes('都改'));
-  t('明确写了本软件不执行', rep.includes('不执行'));
+  // v0.4.0 起正则【真的能用了】（只作用于副本，存档原文不动），所以文案从
+  // "本软件不执行这些正则"改成"可以收进来、逐条开关"。断言跟着改成新的实话。
+  t('说清了这些正则可以收进来', rep.includes('收进来'));
+  t('并且说清了只改副本（不动聊天记录）', rep.includes('提示词') && rep.includes('屏幕上的字'));
   t('列出了提示词段名', rep.includes('主提示') && rep.includes('破限段'));
 
   const after = await snapshot();

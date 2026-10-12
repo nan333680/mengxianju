@@ -5,11 +5,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readCode } from './e2e-src.mjs';
 
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const tmp = R + '/_archive/_autobackup_undertest.mjs';
 fs.mkdirSync(R + '/_archive', { recursive: true });
-fs.writeFileSync(tmp, fs.readFileSync(R + '/www/js/autobackup.js', 'utf8'), 'utf8');
+fs.writeFileSync(tmp, readCode(R + '/www/js/autobackup.js'), 'utf8');
 const AB = await import(pathToFileURL(tmp).href);
 
 let pass = 0, fail = 0;

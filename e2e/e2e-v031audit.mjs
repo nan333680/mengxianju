@@ -20,11 +20,12 @@
 import puppeteer from 'puppeteer-core';
 import { seedChar } from './e2e-helper.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = R + '/www';
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const MIME = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
-const SRC = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const SRC = readCode(WWW + '/js/app.js');
 let pass = 0, fail = 0;
 const t = (n, ok, ex = '') => { if (ok) { pass++; console.log('  OK   ' + n); } else { fail++; console.log('  FAIL ' + n + (ex ? '  -> ' + ex : '')); } };
 

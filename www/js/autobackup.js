@@ -147,21 +147,20 @@ export async function autoBackupIfDue(o) {
 }
 
 /**
- * 启动自检：把最近一份自动备份【读回来】，确认它真的能解析（v0.3.1）。
+ * 把最近一份自动备份【读回来】，返回解析后的对象本身（v0.4.0）。
  *
- * 起因：autoBackupIfDue 每天写一份，却【从来不读回】—— 写成功 ≠ 那份文件是可用的。
- *   存储写满、写到一半被杀、SAF 授权被回收，都可能留下一份长度正常但内容截断的 JSON。
- *   而这份备份存在的唯一意义就是「出事时能读回来」，它自己坏掉却没人知道 ——
- *   等到真要用的时候才发现，那时已经晚了。
- *
- * 只验最近一份：它才是出事时你会去读的那一份。更早的坏掉不影响结论。
+ * 和 verifyLatestBackup 的分工：
+ *   · 这个函数负责「找到 + 读出来 + 确认它真是一份备份」，把 data 一起返回；
+ *   · verifyLatestBackup 在它之上只数几个数（自检日志 / 备份健康面板要用）。
+ * 拆开是因为【恢复演练】（设置页那个"检查我最近那份备份能不能用"）需要 data 本体，
+ * 好走一遍导入预览 —— 没有 data 就只能说"能读"，说不出"里面有什么"。
  *
  * @param {object} o
- * @param {{readdir: Function, readFile: Function}|null} o.FS Capacitor Filesystem 插件对象（可为 null）
+ * @param {{readdir: Function, readFile: Function}|null} o.FS
  * @param {string[]} [o.directories]
- * @returns {Promise<{ok:boolean, reason?:string, dir?:string, name?:string, bytes?:number, error?:string, characters?:number, messages?:number}>}
+ * @returns {Promise<{ok:boolean, reason?:string, dir?:string, name?:string, bytes?:number, count?:number, error?:string, data?:object}>}
  */
-export async function verifyLatestBackup(o) {
+export async function readLatestBackup(o) {
   const { FS, directories = BACKUP_DIRS } = o || {};
   if (!FS) return { ok: false, reason: 'no-filesystem' };
   const folder = '梦弦居备份';
@@ -196,31 +195,54 @@ export async function verifyLatestBackup(o) {
     if (!obj || typeof obj !== 'object' || !obj.exportedAt) {
       return { ok: false, reason: 'empty', dir, name: latest, bytes: raw.length };
     }
-    // ⚠️ messages 和 characters 的【形状不一样】（v0.3.1 复查时发现报数一直是 0）。
-    //
-    // 起因：这里原来对两者都写 Array.isArray(...)。characters 确实是数组
-    // （collectBackupPayload 里 payload.characters = await chars.all()），但 messages
-    // 是【按 charId 分组的对象】：payload.messages[c.id] = await msgs.list(...)。
-    // 于是 Array.isArray 对真实备份恒为 false，messages 永远算出 0 ——
-    // 自检日志每次都打印「消息 0」，看着像"这份备份里没有聊天记录"，
-    // 而这正是它要否认的那种事（写成功 ≠ 读得回来）。
-    //
-    // ⚠️ 上一版的测试没抓到它，因为 e2e 的 fixture 把 messages 写成了数组 ——
-    //    测试验的是一个不存在的形状。改这里时【两个形状都要认】，
-    //    免得哪天有人为了兼容老备份又把数组写回来。
-    let msgN = 0;
-    if (Array.isArray(obj.messages)) {
-      msgN = obj.messages.length;
-    } else if (obj.messages && typeof obj.messages === 'object') {
-      for (const k of Object.keys(obj.messages)) {
-        const arr = obj.messages[k];
-        if (Array.isArray(arr)) msgN += arr.length;
-      }
-    }
-    return { ok: true, dir, name: latest, bytes: raw.length,
-             characters: Array.isArray(obj.characters) ? obj.characters.length : 0,
-             messages: msgN };
+    // count = 这个目录里一共有几份自动备份（设置页的「保留份数 N / 7」要用）
+    return { ok: true, dir, name: latest, bytes: raw.length, count: mine.length, data: obj };
   }
   return { ok: false, reason: 'none' };
+}
+
+/**
+ * 启动自检：把最近一份自动备份【读回来】，确认它真的能解析（v0.3.1）。
+ *
+ * 起因：autoBackupIfDue 每天写一份，却【从来不读回】—— 写成功 ≠ 那份文件是可用的。
+ *   存储写满、写到一半被杀、SAF 授权被回收，都可能留下一份长度正常但内容截断的 JSON。
+ *   而这份备份存在的唯一意义就是「出事时能读回来」，它自己坏掉却没人知道 ——
+ *   等到真要用的时候才发现，那时已经晚了。
+ *
+ * 只验最近一份：它才是出事时你会去读的那一份。更早的坏掉不影响结论。
+ *
+ * @param {object} o
+ * @param {{readdir: Function, readFile: Function}|null} o.FS Capacitor Filesystem 插件对象（可为 null）
+ * @param {string[]} [o.directories]
+ * @returns {Promise<{ok:boolean, reason?:string, dir?:string, name?:string, bytes?:number, count?:number, error?:string, characters?:number, messages?:number}>}
+ */
+export async function verifyLatestBackup(o) {
+  const r = await readLatestBackup(o);
+  if (!r.ok) return r;
+  /** @type {any} */ const obj = r.data;   // 备份 JSON，字段名是历史约定，这里不设死类型
+  // ⚠️ messages 和 characters 的【形状不一样】（v0.3.1 复查时发现报数一直是 0）。
+  //
+  // 起因：这里原来对两者都写 Array.isArray(...)。characters 确实是数组
+  // （collectBackupPayload 里 payload.characters = await chars.all()），但 messages
+  // 是【按 charId 分组的对象】：payload.messages[c.id] = await msgs.list(...)。
+  // 于是 Array.isArray 对真实备份恒为 false，messages 永远算出 0 ——
+  // 自检日志每次都打印「消息 0」，看着像"这份备份里没有聊天记录"，
+  // 而这正是它要否认的那种事（写成功 ≠ 读得回来）。
+  //
+  // ⚠️ 上一版的测试没抓到它，因为 e2e 的 fixture 把 messages 写成了数组 ——
+  //    测试验的是一个不存在的形状。改这里时【两个形状都要认】，
+  //    免得哪天有人为了兼容老备份又把数组写回来。
+  let msgN = 0;
+  if (Array.isArray(obj.messages)) {
+    msgN = obj.messages.length;
+  } else if (obj.messages && typeof obj.messages === 'object') {
+    for (const k of Object.keys(obj.messages)) {
+      const arr = obj.messages[k];
+      if (Array.isArray(arr)) msgN += arr.length;
+    }
+  }
+  return { ok: true, dir: r.dir, name: r.name, bytes: r.bytes, count: r.count,
+           characters: Array.isArray(obj.characters) ? obj.characters.length : 0,
+           messages: msgN };
 }
 

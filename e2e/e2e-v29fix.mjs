@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -157,7 +158,7 @@ console.log('=== 新1：门槛必须放行"有队列待消费"的情况 ===');
   const q = await kvGet('memDeleted:c-v29');
   t('队列确实有货', Array.isArray(q) && q.length === 2, JSON.stringify(q));
   // 静态确认门槛含 qPending（这条是"代码里写了什么"，但门槛顺序只能靠源码读）
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
 // ⚠️ 断言更新（v1.21.35）：门槛多了 `&& !_needTidy`（重聊/重思考置的强制整理标记）。
 t('门槛含 !qPending.length', src.includes('!qPending.length && !_needTidy) return 0;'));
   t('qPending 在门槛之前读取',
@@ -182,7 +183,7 @@ console.log('=== 新2：手动整理路径不得把 20 条压成 1 条 ===');
     const arr = await new Promise(r => { const q = db.transaction('memories').objectStore('memories').index('charId').getAll('c-v29'); q.onsuccess = () => r(q.result); });
     db.close(); return arr.length;
   });
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('tooFew 判据按 reason 区分', src.includes("const tooFew = (reason === 'makeRoom' && memFull)"));
   const mkW = src.split("dedupeFor(charId, " + String.fromCharCode(39) + "makeRoom" + String.fromCharCode(39) + ")").length - 1;
   t("只有 summarizeChunk 传 makeRoom", mkW === 1, "出现 " + mkW + " 次");
@@ -193,7 +194,7 @@ console.log('=== 新2：手动整理路径不得把 20 条压成 1 条 ===');
 console.log('');
 console.log('=== 新4：parseMemJson 必须产出 untilHour/untilMinute ===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('parse 产出 untilHour', src.includes("untilHour: (x.kind === 'event' && x.untilHour !== null"));
   t('parse 产出 untilMinute', src.includes("untilMinute: (x.kind === 'event' && x.untilMinute !== null"));
   t('提示词格式含两个字段', src.includes('untilHour":null,"untilMinute":null'));
@@ -202,7 +203,7 @@ console.log('=== 新4：parseMemJson 必须产出 untilHour/untilMinute ===');
 console.log('');
 console.log('=== 其余静态确认 ===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   // ⚠️ 断言更新（v1.21.51）：续期取的还是全量 liveAll，但值从 content 快照换成了整条条目
   //    （要连 pos 一起回取，见 worldbookHits 里那段注释）。判据跟着改，语义不变。
   t('新7 用全量 liveAll', src.includes('const liveAll = new Map();')

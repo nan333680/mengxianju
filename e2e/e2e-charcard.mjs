@@ -6,14 +6,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readCode } from './e2e-src.mjs';
 
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
 // ⚠️ www/js/charcard.js 是 ESM 源码但扩展名是 .js，而 package.json 没有 "type":"module"，
 //    node 会按 CJS 解析它然后报 "Cannot use import statement"。复制成 .mjs 再 import。
+//
+// ⚠️ v0.4.0：charcard.js 现在会 import 兄弟文件（ccv3.js），复制时必须【连它一起复制】，
+//    否则 _archive 里那份会去 import 一个不存在的 ./ccv3.js，整套直接 ERR_MODULE_NOT_FOUND。
+//    这里做成"顺着 import 找兄弟、逐个复制并改写后缀"，以后再加依赖不用再改这段。
+//    注意：这里用【原样读】，不能用 readCode —— 抄过去是要【执行】的，剥了注释等于改了源码。
 const tmp = R + '/_archive/_charcard_undertest.mjs';
 fs.mkdirSync(R + '/_archive', { recursive: true });
-fs.writeFileSync(tmp, fs.readFileSync(R + '/www/js/charcard.js', 'utf8'), 'utf8');
+const srcDir = R + '/www/js';
+let ccSrc = fs.readFileSync(srcDir + '/charcard.js', 'utf8');
+const siblings = [...ccSrc.matchAll(/from '\.\/([A-Za-z0-9_]+)\.js'/g)].map(m => m[1]);
+for (const sib of siblings) {
+  const to = R + '/_archive/_' + sib + '_undertest.mjs';
+  fs.writeFileSync(to, fs.readFileSync(srcDir + '/' + sib + '.js', 'utf8'), 'utf8');
+  ccSrc = ccSrc.split("from './" + sib + ".js'").join("from './_" + sib + "_undertest.mjs'");
+}
+fs.writeFileSync(tmp, ccSrc, 'utf8');
 const CC = await import(pathToFileURL(tmp).href);
 
 let pass = 0, fail = 0;

@@ -30,6 +30,10 @@
     <button class="clock-bar scene-bar" id="chat-scene" title="这一段对话发生在哪">场景</button>
   </div>
 
+  <!-- 群聊的在场名单（v0.4.0）：只在群聊里出现。点一个名字 = 下一轮让她说。
+       它随对话内容变吗？不 —— 只随成员和轮次变，而且不进提示词，纯界面。 -->
+  <div class="group-roster hidden" id="group-roster"></div>
+
   <!-- 没填 API Key 时的引导条（v1.21.40）。有 Key 就 hidden —— 见 app.js 的 updateStatus()。
        为什么要有它：v1.21.40 起不再预置 Key（预置的那把反编译就能拿走），
        不引导的话新装用户装上是废的。 -->
@@ -37,6 +41,14 @@
     <span class="sb-ico">🔑</span>
     <span class="sb-txt">还没填 API Key，填完才能开始聊天</span>
     <span class="sb-go">去填写 ›</span>
+  </button>
+
+  <!-- 数据对账引导条（v0.4.0）：IndexedDB 被系统回收时页面不报任何错，
+       用户只看到"她失忆了"。对账发现对不上就把这条拉起来，指去恢复备份。 -->
+  <button class="setup-banner danger hidden" id="data-banner">
+    <span class="sb-ico">⚠️</span>
+    <span class="sb-txt" data-i18n-en="The message store is empty while the send counters are still there - it looks like the system reclaimed it. Check your backup.">聊天记录表是空的，但收发记账还在 —— 像是被系统回收过。去看看备份 ›</span>
+    <span class="sb-go" data-i18n-en="Check now">去检查 ›</span>
   </button>
 
   <main id="messages" class="messages"></main>
@@ -70,6 +82,8 @@
   <main class="scroll">
     <div id="char-list" class="char-list"></div>
     <button class="ghost-btn" id="btn-new-char2">＋ 创建新角色</button>
+    <!-- 群聊（v0.4.0）：就是一个"成员是一组人的角色"，所以它排在角色列表【同一张表】里 -->
+    <button class="ghost-btn" id="btn-new-group" data-i18n-en="New group chat (2+ people in one room)">👥 新建群聊（两个以上的人一起聊）</button>
   </main>
 </div>
 
@@ -544,12 +558,24 @@
             <span data-i18n-en="Enable web search">启用联网搜索</span>
           </label>
 
+          <!-- 搜索后端（v0.4.0）：原来是"只能 Tavily"，等于逼用户再注册一家。
+               智谱那条可以复用主 key，选它且 key 留空就用上面的。 -->
+          <label class="field">
+            <span data-i18n-en="Search backend">搜索用哪家</span>
+            <select id="s-search-vendor">
+              <option value="tavily">Tavily</option>
+              <option value="zhipu" data-i18n-en="Zhipu GLM (can reuse the same key)">智谱 GLM（可用同一个 key）</option>
+              <option value="exa">Exa</option>
+              <option value="brave">Brave Search</option>
+            </select>
+          </label>
+
           <label class="field">
             <span data-i18n-en="Search API key">搜索 API Key</span>
             <input id="s-search-key" type="password" placeholder="tvly-...（不填就用不了 /搜）">
           </label>
 
-          <p class="hint-text" style="margin:0" data-i18n-en-html="Search uses <b>Tavily</b> - free to sign up, 1000 calls a month, no card required:<br> <b>tavily.com</b> - sign up - copy the key (it starts with <code>tvly-</code>) - paste it above.<br> The key stays on this phone and is never uploaded anywhere.">
+          <p class="hint-text" id="s-search-how" style="margin:0">
             搜索用的是 <b>Tavily</b>，注册免费、每月 1000 次，不用绑卡：<br>
             <b>tavily.com</b> → 注册 → 复制 key（<code>tvly-</code> 开头）→ 粘到上面。<br>
             key 只存在你这台手机里，不会上传到任何地方。
@@ -570,11 +596,12 @@
       </div>
     </section>
 
-    <!-- 酒馆预设（v0.3.1）：只解析展示，不执行 —— 见 app.js 的 describeStPreset。 -->
+    <!-- 酒馆预设：解析 + 展示；转换动作由用户点了才发生 —— 见 app.js 的 describeStPreset。 -->
     <section class="group">
       <h3 data-i18n-en="SillyTavern preset">酒馆预设</h3>
-      <p class="hint-text" data-i18n-en-html="Look inside a preset exported from SillyTavern.<br> <b>This app does not run it</b> - it only tells you what is in there.">
-        导入酒馆导出的预设 JSON，看看里面有什么。<b>本软件不执行它</b>，只做展示。
+      <p class="hint-text" data-i18n-en-html="Look inside a preset exported from SillyTavern. Nothing happens by itself - you pick what is worth keeping.<br> Regex rules can be imported (they only rewrite the prompt copy and the screen). A prompt segment can be turned into a world book entry or appended to her persona.">
+        导入酒馆导出的预设 JSON，看看里面有什么。<b>它自己不会生效</b>，要什么由你点。<br>
+        里面的正则可以收进来（只改提示词和显示两处副本）；某一段提示词可以转成世界书条目或加进人设。
       </p>
       <button class="ghost-btn" id="btn-preset-import" data-i18n-en="Import a SillyTavern preset">导入酒馆预设 JSON</button>
       <input id="preset-import-file" type="file" accept=".json,application/json" hidden>
@@ -701,15 +728,38 @@
       <p class="hint-text"><b>自动备份</b>一天最多一次，明文 JSON，放在「文档 → 梦弦居备份」里、留最近 7 份。
         写公共目录是为了让它能<b>活过卸载和「清除数据」</b>——放进应用专属目录的话，卸载时会被系统连包一起删掉，那备份就白做了。
         代价是这份文件<b>是明文、别的 App 也可能看到</b>：介意就备份完自己挪走，或改用下面的「导出全部数据」自己保管。</p>
+      <div id="backup-health" class="bh"></div>
+      <button class="ghost-btn" id="btn-backup-drill" data-i18n-en="Check whether my latest backup is usable">检查我最近那份备份能不能用</button>
+      <p class="hint-text" data-i18n-en="Reads the newest automatic backup and tells you what is inside. Read-only - nothing is changed.">
+        点一下会真的把最近那份自动备份读出来，告诉你里面有多少角色 / 记录。<b>只读，什么都不改</b>。</p>
+      <div id="backup-drill-out"></div>
     </section>
     <section class="group">
       <h3><span data-i18n-en="Character cards">角色卡</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h3>
       <p class="hint-text" data-i18n-en-html="Interoperates with SillyTavern / chub.ai cards. Importing <b>creates a new</b> character.<br> Name - name, description - persona, first message - greeting, the lorebook on the card - her world book.">和 SillyTavern / chub.ai 的卡片互通，导入会<b>新建</b>一个角色。<br>
         名字 → 名字，人物设定 → 人物设定，开场白 → 开场白，卡里的世界书 → 该角色的世界书。</p>
-      <button class="ghost-btn" id="btn-cc-import" data-i18n-en="Import character card (.json / .png)">导入角色卡（.json / .png）</button>
-      <input id="cc-import-file" type="file" accept=".json,.png,application/json,image/png" hidden>
+      <button class="ghost-btn" id="btn-cc-import" data-i18n-en="Import character card (.json / .png / .charx)">导入角色卡（.json / .png / .charx）</button>
+      <input id="cc-import-file" type="file" accept=".json,.png,.charx,application/json,image/png" hidden>
       <button class="ghost-btn" id="btn-cc-export-png" data-i18n-en="Export as PNG card">把当前角色导出为 PNG 卡</button>
       <button class="ghost-btn" id="btn-cc-export-json" data-i18n-en="Export as JSON card">把当前角色导出为 JSON 卡</button>
+    </section>
+    <section class="group">
+      <h3><span data-i18n-en="Regex scripts">酒馆正则</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h3>
+      <p class="hint-text" data-i18n-en-html="Regex rules carried over from SillyTavern cards or presets. They only rewrite <b>the copy sent to the model</b> and <b>the text drawn on screen</b> - the saved messages are never touched, so turning one off shows you the original again.">从酒馆的角色卡或预设文件里带过来的正则（<code>findRegex</code> / <code>replaceString</code>）。<br>
+        它们只改两处<b>副本</b>：送进模型的提示词、屏幕上显示的字。<b>存档原文一个字都不动</b> ——
+        关掉就能看到原样，删掉也不会丢任何聊天记录。</p>
+      <div id="stregex-list"></div>
+    </section>
+    <section class="group">
+      <h3 data-i18n-en="SillyTavern chat logs">酒馆聊天记录</h3>
+      <p class="hint-text" data-i18n-en-html="Import a .jsonl exported from SillyTavern. Cards and world books can be re-downloaded, <b>chat logs cannot</b> - so this is the one piece of luggage worth carrying over. You pick which character it goes to; nothing is guessed.">
+        导入酒馆导出的聊天记录（<code>.jsonl</code>）。角色卡能重下、世界书能重下，
+        <b>聊天记录没了就是没了</b> —— 这是最该接住的那件行李。<br>
+        导进哪个角色由你选，说话的人是谁也先摆给你看，<b>不猜</b>。
+      </p>
+      <button class="ghost-btn" id="btn-stchat-import" data-i18n-en="Import SillyTavern chat log (.jsonl)">导入酒馆聊天记录（.jsonl）</button>
+      <input id="stchat-file" type="file" accept=".jsonl,.json,application/json" hidden>
+      <div id="stchat-report"></div>
     </section>
     <div class="ver">梦弦居 <span id="app-ver">…</span> · 模型默认 deepseek-flash</div>
     <div class="gap"></div>

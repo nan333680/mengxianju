@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
 import http from 'http';
+import { readCode } from './e2e-src.mjs';
 
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = R + '/www';
@@ -18,12 +19,12 @@ let pass = 0, fail = 0;
 const t = (n, ok, ex = '') => { if (ok) { pass++; console.log('  OK   ' + n); } else { fail++; console.log('  FAIL ' + n + (ex ? '  -> ' + ex : '')); } };
 
 console.log('=== 1. 静态：角色上的字段 vs 卡片能带回来的字段 ===');
-const src = fs.readFileSync(R + '/www/js/app.js', 'utf8');
+const src = readCode(R + '/www/js/app.js');
 const start = src.indexOf('async function saveCharEdit()');
 const dataAt = src.indexOf('const data = {', start);
 const body = src.slice(dataAt, src.indexOf('\n  };', dataAt));
 const charKeys = [...new Set([...body.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:/g)].map(m => m[1]))].sort();
-const cardSrc = fs.readFileSync(R + '/www/js/charcard.js', 'utf8');
+const cardSrc = readCode(R + '/www/js/charcard.js');
 const mkStart = cardSrc.indexOf('const MK_CARD_KEYS = [');
 const mkBlock = cardSrc.slice(mkStart, cardSrc.indexOf('];', mkStart));
 const mkKeys = [...new Set([...mkBlock.matchAll(/'([a-zA-Z][a-zA-Z0-9]*)'/g)].map(m => m[1]))];

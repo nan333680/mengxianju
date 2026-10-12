@@ -19,6 +19,10 @@
     "www/js/persona.js",
     "www/js/autobackup.js",
     "www/js/charcard.js",
-    "www/js/exportmd.js"
+    "www/js/exportmd.js",
+    "www/js/stregex.js",
+    "www/js/api.js",
+    "www/js/db.js",
+    "www/js/app.js"
   ]
 }

@@ -764,7 +764,7 @@ export function rankMemories(memories, topic, limit = 24) {
 
 export function buildTurnNote(char, s, ctx = {}) {
   const { memories = [], useKaomoji = false, clock = null, clockLocked = false, rolling = '',
-          clockState = null, prevStory = null, scene = '', topic = '' } = ctx;
+          clockState = null, prevStory = null, scene = '', topic = '', speaker = '' } = ctx;
   const parts = [];
   // ⚠️ 世界书放在【本轮段最前面】（v1.20.20 调整）。
   //
@@ -789,6 +789,19 @@ export function buildTurnNote(char, s, ctx = {}) {
     parts.push(`# 相关设定\n（这些是背景设定，供你理解世界，不必主动复述，聊到相关话题时自然地用。）\n\n${body}`);
   }
 
+
+  // 群聊：这一轮轮到谁说话（v0.4.0）。
+  // ⚠️ 只在这一轮段里说 —— 轮次每轮都在变，放进稳定前缀等于每轮让缓存作废。
+  const spk = String(speaker || '').trim();
+  if (spk) {
+    parts.push('# 这一轮谁说话\n'
+      + '这是一个有好几个人的场合，你只是其中一个人。'
+      + '**这一轮只写「' + spk + '」一个人的反应**：\n'
+      + '· 不要替别人说话，也不要写别人的动作、心理和台词\n'
+      + '· 不要写「某某说：」这种报幕，直接写内容\n'
+      + '· 别人插话、打断都不该由你来写 —— 这一轮只有你\n'
+      + '· 轮到你之前发生的事你都看见了，可以接话，但别复述');
+  }
 
   // 临时场景（v1.21.47）：用户当下给这一段对话设的场景。
   // ⚠️ 它只在【本轮段】里 —— 改得很勤，放进稳定前缀就是每改一次让整段重新计费。

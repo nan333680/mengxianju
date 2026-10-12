@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -101,7 +102,7 @@ t('旧判据对 f3 误判为 true（回归证据）', verdict.旧判据_f3 === t
 
 console.log('');
 console.log('=== 新1：首条 assistant 也能拿到 regen 入口 ===');
-const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const src = readCode(WWW + '/js/app.js');
 // ⚠️ 断言更新（v1.21.30）：复审新3 判定「菜单给首条开 regen 口子」是错的 ——
 // 因为 regen 分支只允许 lastId === id，菜单给了入口却点不动（"给了入口却用不了"）。
 // 现在菜单与分支一致：只在 isLast 时给 regen。
@@ -115,7 +116,7 @@ t('rewind 只看 !isLast（不再排除首条），且非生成中', src.include
 
 console.log('');
 console.log('=== 新6：判据取含归档的列表 ===');
-t('isGreetingMsg 用 list(curCharId, 0, true)', src.includes('const all = await msgs.list(curCharId, 0, true);   // 含归档'));
+t('isGreetingMsg 用 list(curCharId, 0, true)', src.includes('const all = await msgs.list(curCharId, 0, true);'));
 t('旧的恒真式已删', !/if \(idx !== 0\) return false;/.test(src), '');
 
 console.log('');
@@ -138,7 +139,7 @@ t('非破坏性时仍只在没有才写', src.includes('if (destructive || !prev
 
 console.log('');
 console.log('=== 新4：purgeChar 清所有 solo ===');
-const db = fs.readFileSync(WWW + '/js/db.js', 'utf8');
+const db = readCode(WWW + '/js/db.js');
 t('用 soloAll 遍历', db.includes('for (const s of await wb.soloAll()) {'));
 t('旧的只删第一条已删', !db.includes('const s = await wb.solo(charId);'));
 

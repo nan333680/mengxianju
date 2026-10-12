@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -185,7 +186,7 @@ console.log('=== 5. 角色页三态：默认跟随全局 + 弹窗多一个选项
     return el ? el.textContent.trim() : null;
   });
   console.log('   角色页入口（未进编辑页时为 null，属正常）: ' + JSON.stringify(chk));
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
 // ⚠️ 断言更新（v1.21.32）：改为【绕开 P 直接读角色】—— 复审 #4 指出：
 // 走 P 会被 effSettings 填上全局值，三态恒为"角色自己的选择"，保存一次就永久切断跟随。
 t('角色页三态绕开 P 读角色本身', src.includes("(c && c.detailDrive) ? c.detailDrive : 'global'"));
@@ -220,7 +221,7 @@ console.log('=== 7. 「重新思考」要退回剧情时间（用户实测反馈
     db.close(); return v ? v.v.day : null;
   });
   // 真实调用：页面内的 regenerate() 不在 window 上（module），改用等价的库态断言 + 源码契约
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('regenerate 里有 clockState 退回', src.includes('if (lastUser.story && typeof lastUser.story.day === \'number\' && !isRealClock()) {'));
   t('退回后写了 saveClock', /lastUser\.story[\s\S]{0,300}await saveClock\(\)/.test(src));
   t('退回在 msgs.del 之前', src.indexOf('lastUser.story && typeof lastUser.story.day') < src.indexOf('await msgs.del(lastUser.id);'));
@@ -231,13 +232,13 @@ console.log('');
 console.log('=== 6. 滑杆防误触 ===');
 {
   const has = await page.evaluate(() => typeof window.bindRangeGuard === 'function' || document.body.innerHTML.length > 0);
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('bindRangeGuard 已定义', src.includes('function bindRangeGuard() {'));
   t('bindEvents 里调用了它', src.includes('  bindRangeGuard();'));
 // ⚠️ 断言更新（v1.21.32）：防误触重写为【记原值 + 回滚】，
 // 不再只加 no-drag（那是事后补救，值已经被原生改掉了）。
 t('垂直滑动时锁住并回滚原值', src.includes("locked.classList.add('no-drag');") && src.includes('locked.value = preVal;'));
-  t('CSS 有 .no-drag 规则', fs.readFileSync(WWW + '/css/style.css','utf8').includes('input[type="range"].no-drag { pointer-events: none; }'));
+  t('CSS 有 .no-drag 规则', readCode(WWW + '/css/style.css').includes('input[type="range"].no-drag { pointer-events: none; }'));
   // 真机行为：模拟一次竖向滑动
   const res = await page.evaluate(async () => {
     const el = document.querySelector('input[type="range"]');

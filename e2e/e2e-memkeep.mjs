@@ -26,6 +26,7 @@ import puppeteer from 'puppeteer-core';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
@@ -127,7 +128,7 @@ async function snap() {
 // —— 源码级检查：三个"退回重来"的分支里不该出现 noteDeleted ——
 console.log('\n=== 1. 源码：三个退回操作【都要】清记忆 ===');
 {
-  const src = fs.readFileSync(path.join(WWW, 'js/app.js'), 'utf8');
+  const src = readCode(path.join(WWW, 'js/app.js'));
   const lines = src.split('\n');
   // 找到每个操作分支的行号
   // ⚠️ 必须只匹配【分支开头】那种行 —— 代码里还有个
@@ -183,7 +184,7 @@ console.log('\n=== 1. 源码：三个退回操作【都要】清记忆 ===');
   t('重新思考调了清理', hasNote(body.regen));
   t('删除单条也调了清理', hasNote(body.del));
   const purgeBody = (() => {
-    const all = fs.readFileSync(WWW + '/js/app.js', 'utf8').split('\n');
+    const all = readCode(WWW + '/js/app.js').split('\n');
     const i = all.findIndex(l => l.includes('async function purgeRemoved('));
     if (i < 0) return '';
     let end = i + 1;
@@ -226,7 +227,7 @@ await setup();
 
 console.log('\n=== 3. 清理指令用【配对判据】，不是模糊措辞 ===');
 {
-  const src = fs.readFileSync(path.join(WWW, 'js/app.js'), 'utf8');
+  const src = readCode(path.join(WWW, 'js/app.js'));
   t('判据是"只能从被删内容得到"', src.includes('是不是【只能】从被删的那几句里得到'));
   t('明确了"拿不准一律留着"', src.includes('拿不准的时候【一律留着】'));
   t('禁止因话题相关就删', src.includes('禁止】因为"话题相关"就删'));
@@ -237,7 +238,7 @@ console.log('\n=== 3. 清理指令用【配对判据】，不是模糊措辞 ===
 
 console.log('\n=== 4. 弹窗文案如实描述 ===');
 {
-  const src = fs.readFileSync(path.join(WWW, 'js/app.js'), 'utf8');
+  const src = readCode(path.join(WWW, 'js/app.js'));
   // rewind 的弹窗原来写"她记住的事不会动"，但代码会清 —— 已改
   t('从这里重聊的弹窗没说"不会动"', !src.includes('她记住的事不会动'));
   t('弹窗说明了记忆会被清', src.includes('记忆也会一起清掉'));

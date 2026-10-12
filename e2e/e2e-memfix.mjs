@@ -19,6 +19,7 @@ import puppeteer from 'puppeteer-core';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
@@ -213,7 +214,7 @@ console.log('\n=== 3. 兜底：content 为空时从 reasoning_content 里抠 JSO
 
 console.log('\n=== 4. 整理文案不再劝人白点 ===');
 {
-  const src = fs.readFileSync(path.join(WWW, 'js/app.js'), 'utf8');
+  const src = readCode(path.join(WWW, 'js/app.js'));
   // 只检查【代码行】，排除注释 —— 说明修改原因的注释里会引用旧文案，那是正常的。
   const codeLines = src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
   t('代码里去掉了「再点一次通常会好一些」', !codeLines.includes('再点一次通常会好一些'));

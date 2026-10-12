@@ -3,6 +3,7 @@ import { pickImportMode, seedChar } from './e2e-helper.mjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
@@ -37,7 +38,7 @@ await seedChar(page, '测试角色', { greeting: '' });   // 空开场白：不�
 await page.reload({waitUntil:'networkidle0'}); await sleep(500);
 await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
 
-const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const src = readCode(WWW + '/js/app.js');
 
 console.log('=== 1. 天气识别不再被单字误判（实测判定）===');
 // 把天气规则从源码里抠出来，在页面里跑（detectClock 依赖模块内变量，够不到）

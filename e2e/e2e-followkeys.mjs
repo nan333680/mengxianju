@@ -8,6 +8,7 @@
 //   3) 三条写入路径（编辑页保存 / 广播 / 导入卡）+ 空库边界（源码契约）
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = R + '/www';
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -140,7 +141,7 @@ console.log('=== 2. 迁移之后，改全局档位对该角色真的生效 ===')
 console.log('');
 console.log('=== 3. 三条写入路径 + 空库边界（源码契约）===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('FOLLOW_KEYS 定义了这两个键', src.includes("const FOLLOW_KEYS = ['descLevel', 'detailDrive'];"));
   t('编辑页保存：跟随全局时删键', src.includes('for (const k of FOLLOW_KEYS) if (data[k] === undefined) delete nextC[k];'));
   t('广播：先删键再写这一页的值', src.includes('for (const k of FOLLOW_KEYS) delete nextC[k];'));

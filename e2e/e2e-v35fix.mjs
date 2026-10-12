@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -151,7 +152,7 @@ console.log('=== P0-1 模型返回 0 条时，那批消息不得进 memSummed（
 console.log('');
 console.log('=== P0-3 重聊/重思考：先清完记忆再重新生成 ===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('tidyNow 被 await', src.includes('await tidyNow();'));
   t('置了强制标记', src.includes("await kv.set('memNeedTidy:' + curCharId, true);"));
   t('门槛认得这个标记', src.includes('&& !_needTidy) return 0;'));
@@ -161,7 +162,7 @@ console.log('=== P0-3 重聊/重思考：先清完记忆再重新生成 ===');
 console.log('');
 console.log('=== P1-1 队列去重 + 诊断键 ===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('noteDeleted 去重', src.includes('const merged = [...new Set(old.concat(clean))];'));
   // ⚠️ 断言更新（v1.21.36）：memQueueLen 已按复审 #7 删除 ——
   // 它是死键（renderMemHealth 一直直接数 memDeleted，从不读它）。
@@ -172,7 +173,7 @@ console.log('=== P1-1 队列去重 + 诊断键 ===');
 console.log('');
 console.log('=== P1-2 滚动摘要长度引导 ===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('给了下限（不是一个上限）', src.includes('ROLLING_MAX_CHARS * 0.5'));
   t('明确不要为短丢信息', src.includes('不要为了短而丢掉信息'));
   t('明确不要越写越短', src.includes('不要越写越短'));

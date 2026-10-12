@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -159,7 +160,7 @@ t('旧判据在该场景确实失效（回归证据）', r.旧判据 === false, 
 
 console.log('');
 console.log('=== 3. 源码静态断言（判据真的按"它前面"算）===');
-const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const src = readCode(WWW + '/js/app.js');
 t('isGreetingMsg 用 slice(0, idx)', src.includes('return !all.slice(0, idx).some(x => x.role === \'user\');'));
 t('旧的整表判据已删干净', !src.includes('return !all.some(x => x.role === \'user\');'));
 t('solo 无条件认领（抽成 putSoloClaimed）', src.includes('async function putSoloClaimed(nid, rec)'));

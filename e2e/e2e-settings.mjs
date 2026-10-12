@@ -106,6 +106,8 @@ console.log('   实际栏目: ' + JSON.stringify(groups));
 // v1.21.61 起设置页拆成两个：「全局设置」管她和全局（接口/描写/写字台/记忆/联网/时段），
 // 「我的设置」管你自己（头像/外观/数据/角色卡）。所以这里只看全局那页的 h3。
 // v0.3.1 加了第 5 个栏目「酒馆预设」（酒馆预设导入的入口，见 CHANGELOG 2.2）
+// v0.4.0 又加了「酒馆正则」（从卡/预设带过来的正则，逐条开关）
+//        和「酒馆聊天记录」（.jsonl 导入）—— 都在「我的设置」这页里
 // 「我的设置」那页单独确认
 await page.evaluate(() => document.getElementById('btn-set-back').click()); await sleep(400);
 await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); }); await sleep(400);
@@ -113,7 +115,9 @@ await page.evaluate(() => document.getElementById('btn-settings').click()); awai
 await page.evaluate(() => { const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'mine'); if (b) b.click(); }); await sleep(700);
 const mineGroups = await page.$$eval('#view-mine .group h3', els => els.map(e => e.textContent.trim()));
 console.log('   我的设置栏目: ' + JSON.stringify(mineGroups));
-t('我的设置页栏目正确（我的头像/外观/数据/角色卡 实验）', JSON.stringify(mineGroups) === JSON.stringify(['我的头像','外观','数据','角色卡 实验']), JSON.stringify(mineGroups));
+t('我的设置页栏目正确（我的头像/外观/数据/角色卡/酒馆正则/酒馆聊天记录）',
+  JSON.stringify(mineGroups) === JSON.stringify(['我的头像','外观','数据','角色卡 实验','酒馆正则 实验','酒馆聊天记录']),
+  JSON.stringify(mineGroups));
 t('「我的设置」页里没有接口那些全局项', mineGroups.indexOf('记忆管理') < 0 && !(await page.$('#view-mine #api-fold')));
 t('「接口」收成了折叠头', (await page.$$eval('#view-settings #api-fold', els => els.length)) === 1);
 t('「时段划分」收成了折叠头', (await page.$$eval('#view-settings #clock-fold', els => els.length)) === 1);

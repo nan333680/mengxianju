@@ -12,6 +12,7 @@ import puppeteer from 'puppeteer-core';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
@@ -127,7 +128,7 @@ async function sendOnce() {
 
 console.log('\n=== 1. 源码：判据不再读 memSumAt ===');
 {
-  const src = fs.readFileSync(path.join(WWW, 'js/app.js'), 'utf8');
+  const src = readCode(path.join(WWW, 'js/app.js'));
   t('判据是 pendingNow.length', src.includes('if (pendingNow.length < (S.memSummarizeEvery || 50)) return;'));
   t('不再有 sumCap', !src.includes('const sumCap'));
   t('不再有 lastSum 计算', !src.includes('const lastSum ='));

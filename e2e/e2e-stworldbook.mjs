@@ -115,13 +115,15 @@ console.log('=== 1. 导入酒馆格式：认它，并把能确定的字段映射
   t('constant:true → 一直生效', by('铁律').pos === 'always');
   t('常驻条目不需要确认', by('铁律').review === false);
   t('disable:true → 条目是关的', by('酒馆里关着的').on === false);
-  t('useRegex → 待确认', by('正则触发').review === true);
+  // ⚠️ v0.4.0：use_regex 【真的照做】了（hitKeys 按正则匹配），所以它不再被标成"读不懂"。
+//    有能力兑现还标着，等于把能用的条目锁在门外。
+t('useRegex → 不再待确认（v0.4.0 起真的按正则匹配）', by('正则触发').review === false);
   t('二次筛选 → 待确认', by('二次筛选').review === true);
   t('概率触发 → 待确认', by('概率触发').review === true);
   t('position 4 → 待确认', by('深度插入').review === true);
   t('没有触发词 → 待确认', by('没有触发词').review === true);
   t('待确认的条目都带原因', (res || []).filter(e => e.review).every(e => e.why.length > 0));
-  t('恰好 5 条待确认', (res || []).filter(e => e.review).length === 5,
+  t('恰好 4 条待确认（use_regex 那条现在能用了，不标）', (res || []).filter(e => e.review).length === 4,
     String((res || []).filter(e => e.review).length));
   t('列表上出现了「待确认」标记', await page.evaluate(async () => {
     const btn = document.getElementById('btn-wb-global');

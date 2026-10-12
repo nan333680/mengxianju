@@ -863,7 +863,10 @@ input + .hint-text{ margin-top:8px; }
 .stp-line code{ flex:1; min-width:0; word-break:break-all; background:var(--bg2); border-radius:5px; padding:2px 6px; }
 .stp-where{ font-size:11.5px; color:var(--fg3); margin-top:5px; }
 .stp-more{ font-size:12px; color:var(--fg3); }
-.wb-list-empty{'
+/* ⚠️ 这里原来写成了 .wb-list-empty{' —— 多一个单引号，选择器非法，
+   整条规则被 CSS 解析器丢掉（"还没有条目"那块一直是无样式的裸文字）。
+   静默失效：没有任何报错，看上去就像"本来就没设计样式"。v0.4.0 修。 */
+.wb-list-empty{
   padding:22px 14px; text-align:center; font-size:12.5px; color:var(--fg3);
   border:1px dashed var(--line); border-radius:12px; margin-bottom:14px;
 }
@@ -1090,3 +1093,101 @@ input[type="range"] { touch-action: pan-y; }
 .setup-banner .sb-ico{ font-size:17px; flex:0 0 auto; }
 .setup-banner .sb-txt{ flex:1 1 auto; }
 .setup-banner .sb-go{ color:var(--pri2); font-weight:600; flex:0 0 auto; white-space:nowrap; }
+
+/* ===== 酒馆正则（v0.4.0）=====
+   从酒馆的卡 / 预设里带过来的正则，逐条开关。
+   它们只改副本（提示词 / 屏幕），存档原文不动 —— 这句话在面板上也写着，样式跟着这个语气走。 */
+.srx-bar{
+  font-size:12.5px; line-height:1.65; color:var(--fg2);
+  background:var(--bg2); border:1px solid var(--line); border-radius:10px;
+  padding:9px 11px; margin-bottom:10px;
+}
+.srx-bar b{ color:var(--pri2); }
+.srx-item{
+  border:1px solid var(--line); border-radius:10px; padding:9px 11px; margin-bottom:9px;
+  background:var(--bg2);
+}
+.srx-item.srx-off{ opacity:.62; }
+.srx-head{ display:flex; align-items:center; gap:8px; }
+.srx-sw{ display:flex; align-items:center; gap:7px; flex:1; min-width:0; font-size:13px; font-weight:600; }
+.srx-sw span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.srx-del{
+  flex:0 0 auto; font-size:11.5px; padding:3px 9px; border-radius:7px;
+  background:var(--bg3); border:1px solid var(--line); color:var(--fg2);
+}
+.srx-del:active{ opacity:.6; }
+.srx-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:7px; }
+.srx-tag{
+  font-size:10.5px; padding:1px 6px; border-radius:5px; white-space:nowrap;
+  background:rgba(139,124,246,.14); color:var(--pri2); border:1px solid rgba(139,124,246,.35);
+}
+.srx-src{ font-size:10.5px; color:var(--fg3); align-self:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:52%; }
+.srx-rule{ font-size:11.5px; margin-top:8px; line-height:1.7; word-break:break-all; }
+.srx-rule code{ background:var(--bg3); border-radius:5px; padding:2px 6px; color:var(--fg2); }
+.srx-note{ font-size:11.5px; color:#e0a33a; margin-top:7px; line-height:1.55; }
+.srx-pv{ margin-top:8px; }
+.srx-pv > span{ font-size:11px; color:var(--fg3); }
+.srx-pv-b{
+  font-size:11.5px; color:var(--fg2); line-height:1.6; margin-top:4px;
+  background:var(--bg3); border-radius:7px; padding:7px 9px;
+  max-height:110px; overflow:hidden; white-space:pre-wrap; word-break:break-word;
+}
+
+/* ===== 备份健康面板（v0.4.0）=====
+   常驻在设置页的「数据」那一栏里。以前这些状态只在启动时弹一次 toast，
+   手滑关掉就再也看不到 —— 而"备份靠不靠得住"正是平时不看、出事才想起来看的东西。 */
+.bh{ margin-top:10px; border:1px solid var(--line); border-radius:10px; background:var(--bg2); padding:4px 0; }
+.bh:empty{ display:none; }
+.bh-row{ display:flex; gap:10px; padding:7px 11px; font-size:12.5px; line-height:1.5; align-items:baseline; }
+.bh-row + .bh-row{ border-top:1px solid var(--line); }
+.bh-k{ flex:0 0 88px; color:var(--fg3); }
+.bh-v{ flex:1; min-width:0; color:var(--fg2); word-break:break-word; }
+.bh-warn{
+  margin:8px 11px 8px; padding:8px 10px; border-radius:8px; font-size:12px; line-height:1.6;
+  color:#e0a33a; background:rgba(224,163,58,.1); border:1px solid rgba(224,163,58,.35);
+}
+.bh-warn b{ color:#e0a33a; }
+.bh-ok{ margin:8px 11px 4px; font-size:12.5px; color:#63c98a; }
+.bh-note{ margin:8px 11px; font-size:11.5px; color:var(--fg3); line-height:1.55; }
+
+/* 数据对账引导条（v0.4.0）：长得像「填 Key」那条，但语气更重 ——
+   它说的是"你的东西可能没了"，不该看起来像一条普通提示。 */
+.setup-banner.danger{
+  background:linear-gradient(90deg, rgba(242,85,90,.22), rgba(242,85,90,.06));
+  border-color:var(--danger);
+}
+.setup-banner.danger .sb-go{ color:#ff9095; }
+.setup-banner.danger .sb-txt{ font-weight:600; }
+
+/* ===== 群聊（v0.4.0）===== */
+.tag-grp{
+  font-size:10.5px; font-weight:400; margin-left:6px; padding:1px 6px; border-radius:5px;
+  background:rgba(139,124,246,.16); color:var(--pri2); border:1px solid rgba(139,124,246,.35);
+}
+.char-card.grp .avatar-lg{ background:rgba(139,124,246,.12); }
+.group-roster{
+  display:flex; align-items:center; gap:6px; flex-wrap:nowrap; overflow-x:auto;
+  padding:6px 12px 8px; font-size:12px;
+}
+.group-roster.hidden{ display:none; }
+.group-roster .gr-label{ color:var(--fg3); flex:0 0 auto; font-size:11px; }
+.group-roster .gr-chip{
+  flex:0 0 auto; padding:3px 10px; border-radius:999px; cursor:pointer;
+  background:var(--bg3); border:1px solid var(--line); color:var(--fg2); white-space:nowrap;
+}
+.group-roster .gr-chip.on{
+  background:rgba(139,124,246,.18); border-color:var(--pri); color:var(--pri2); font-weight:600;
+}
+/* 群聊气泡上的说话人名字 */
+.msg .who{ font-size:11px; color:var(--fg3); margin-bottom:3px; }
+
+/* 消息版本切换（v0.4.0）：有两个以上版本时才出现 */
+.msg .swipe{
+  display:flex; align-items:center; gap:8px; margin-top:7px;
+  font-size:11.5px; color:var(--fg3);
+}
+.msg .swipe button{
+  width:26px; height:22px; line-height:20px; text-align:center; border-radius:6px;
+  background:var(--bg3); border:1px solid var(--line); color:var(--fg2); font-size:13px;
+}
+.msg .swipe button:active{ opacity:.6; }

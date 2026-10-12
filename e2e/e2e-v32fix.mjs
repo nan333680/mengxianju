@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -161,7 +162,7 @@ console.log('=== #4 detailDrive「跟随全局」不得被保存动作污染 ===
 console.log('');
 console.log('=== #7 low 档下高驱动降级（prompt 不自相矛盾）===');
 {
-  const src = fs.readFileSync(WWW + '/js/persona.js', 'utf8');
+  const src = readCode(WWW + '/js/persona.js');
 // ⚠️ 断言更新（v1.21.34）：降级范围从"只挡 high/max"放宽到"除 off/low 外全挡" ——
 // 复审 新4 指出 mid 的「动作链 + 具体感受」同样是结构要求，与 low 的 8 字上限物理冲突。
 // ⚠️ 断言更新（v1.21.36）：改用【显式字数映射】而不是硬编码 low 特例（复审 #6）。
@@ -174,7 +175,7 @@ t('有降级逻辑（按字数预算）', src.includes('DRIVE_CAP') && src.inclu
 console.log('');
 console.log('=== #1 regen 护栏 / #2 #3 #9 #10 #11 ===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
   t('#1 regen 有删除范围护栏', src.includes('const remainForRegen = allNow.filter(x => !afterIds.includes(x.id));'));
   t('#1 无 user 时拒绝并提示', src.includes('这条前面没有能重发的消息了'));
   t('#2 判据用 wipe', src.includes('const scoped = !p.wipe && !p.wbAll;'));

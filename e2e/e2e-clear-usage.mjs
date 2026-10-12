@@ -3,6 +3,7 @@ import { seedChar, seedChars } from './e2e-helper.mjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
@@ -46,7 +47,7 @@ await page.evaluate(() => {
 });
 await sleep(1500);
 
-const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const src = readCode(WWW + '/js/app.js');
 const openSettings = async () => {
   // 先退到聊天页：栈底是 chat，其它页面连点返回即可。
   // ⚠️ 只在 view-chat 时点 ⚙ 是不够的 —— 从角色列表/编辑页进来时

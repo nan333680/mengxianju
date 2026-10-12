@@ -1,5 +1,7 @@
+import { parseDecorators, expandMacros, isZip, readCharx, findAsset, bytesToDataUrl, mimeOf } from './ccv3.js';
+
 /**
- * 角色卡（Character Card V2）导入 / 导出 —— v1.21.40
+ * 角色卡（Character Card V2 / V3）导入 / 导出 —— v1.21.40
  *
  * 这是个【实验性】功能，刻意做成独立文件：
  *   · 不动 app.js 的现有逻辑，只由它 import 三个入口函数；
@@ -11,10 +13,20 @@
  *   WebView 里没有 node_modules，裸模块名 import 会让整个 app 挂掉
  *   （app.js 第 6-9 行专门写了这条教训）。所以 PNG 和 CRC32 只能自己写。
  *
- * 规范：github.com/malfoyslastname/character-card-spec-v2
- *   V2 卡是 { spec:'chara_card_v2', spec_version:'2.0', data:{...} }
- *   V1 卡（老卡）就是字段平铺，没有 data 外壳 —— 两种都要认。
- *   PNG 卡：把卡片 JSON 以 base64 塞进名为 "chara" 的 tEXt chunk。
+ * 规范：
+ *   V2: github.com/malfoyslastname/character-card-spec-v2
+ *     { spec:'chara_card_v2', spec_version:'2.0', data:{...} }
+ *   V3: github.com/kwaroran/character-card-spec-v3 （v0.4.0 起支持）
+ *     { spec:'chara_card_v3', spec_version:'3.0', data:{...} }
+ *     V3 多出来的：assets / group_only_greetings / nickname /
+ *     creator_notes_multilingual / source / 世界书条目里的 use_regex 和 @@ 装饰器。
+ *   V1 卡（老卡）就是字段平铺，没有 data 外壳 —— 三种都要认。
+ *
+ *   PNG 卡：把卡片 JSON 以 base64 塞进 tEXt chunk。
+ *     keyword 有两个：老的是 "chara"，V3 加的是 "ccv3"。
+ *     ⚠️ 一张 V3 卡【两个块都可能带】，而且规范没说谁在前 ——
+ *       原来这里是"谁先出现返回谁"，于是先读到兼容用的 V2 那份就少一堆东西。
+ *       现在整张图扫完，ccv3 优先、chara 兜底。
  */
 
 // ============================================================
@@ -87,20 +99,45 @@ export function normalizeCard(raw) {
   const d = (raw.data && typeof raw.data === 'object') ? raw.data : raw;
   const name = String(d.name || '').trim();
   if (!name) throw new Error('卡片里没有 name 字段');
+  // V3 的 nickname：{{char}} 该被换成它，而不是 name（规范明确这么写）。
+  // 我们把它当"显示/替换用的名字"，真名仍是 name。
+  const nickname = String(d.nickname || '').trim();
+  // ⚠️ 宏要在【导入时】就展开（v0.4.0）。
+  //    起因：卡里的开场白写着 "{{char}} 抬起头"、人设里写着 "{{user}} 是 {{char}} 的…"，
+  //    而全 www 树原来一处都不处理 —— 导进来的角色张口就是字面的 "{{char}}"，
+  //    用户看到的是满屏大括号。这是 V2 时代就有的坑，不是 V3 才有的。
+  //    {{user}} 本软件没有"我的名字"这个设置项，统一换成「你」（说清楚，不假装有）。
+  const mctx = { char: nickname || name, user: '你', seed: name };
+  const mac = (v) => expandMacros(String(v == null ? '' : v), mctx);
+  const macrosUsed = [];
+  const macCount = (v) => { const m = String(v == null ? '' : v).match(/\{\{[^}]*\}\}/g); if (m) macrosUsed.push(...m); };
+  for (const k of ['description', 'personality', 'scenario', 'first_mes', 'mes_example',
+    'system_prompt', 'post_history_instructions', 'creator_notes']) macCount(d[k]);
+  if (Array.isArray(d.alternate_greetings)) d.alternate_greetings.forEach(macCount);
   return {
     spec: String(raw.spec || (raw.data ? 'chara_card_v2' : 'v1')),
+    specVersion: String(d.spec_version || raw.spec_version || ''),
     name,
-    description: String(d.description || ''),
-    personality: String(d.personality || ''),
-    scenario: String(d.scenario || ''),
-    first_mes: String(d.first_mes || ''),
-    mes_example: String(d.mes_example || ''),
-    creator_notes: String(d.creator_notes || ''),
-    system_prompt: String(d.system_prompt || ''),
-    post_history_instructions: String(d.post_history_instructions || ''),
-    alternate_greetings: Array.isArray(d.alternate_greetings) ? d.alternate_greetings.map(String) : [],
+    nickname,
+    description: mac(d.description),
+    personality: mac(d.personality),
+    scenario: mac(d.scenario),
+    first_mes: mac(d.first_mes),
+    mes_example: mac(d.mes_example),
+    creator_notes: mac(d.creator_notes),
+    system_prompt: mac(d.system_prompt),
+    post_history_instructions: mac(d.post_history_instructions),
+    alternate_greetings: Array.isArray(d.alternate_greetings) ? d.alternate_greetings.map(v => mac(v)) : [],
     tags: Array.isArray(d.tags) ? d.tags.map(String) : [],
-    entries: extractEntries(d.character_book),
+    // —— 下面这几个是 V3 才有的，全都【原样带出来】，由 app.js 决定怎么用 ——
+    group_only_greetings: Array.isArray(d.group_only_greetings) ? d.group_only_greetings.map(String) : [],
+    creator_notes_multilingual: (d.creator_notes_multilingual && typeof d.creator_notes_multilingual === 'object')
+      ? d.creator_notes_multilingual : {},
+    source: Array.isArray(d.source) ? d.source.map(String) : (d.source ? [String(d.source)] : []),
+    assets: Array.isArray(d.assets) ? d.assets.filter(a => a && typeof a === 'object') : [],
+    creation_date: Number.isFinite(Number(d.creation_date)) ? Number(d.creation_date) : null,
+    macrosUsed: [...new Set(macrosUsed)],
+    entries: extractEntries(d.character_book, mctx),
     // ⚠️ v1.21.47：extensions 必须带出来。
     // 我们自己导出的卡把角色级参数（表达方式 / 外貌 / 「他的设定」/ 临时场景）
     // 挂在 extensions.mengxianju 上，而这里原来是【直接丢掉】的 ——
@@ -117,13 +154,27 @@ export function parseCardJson(text) {
   return normalizeCard(raw);
 }
 
-/** character_book.entries → 本项目世界书条目的形状 { title, keys, content, on, pos } */
-function extractEntries(book) {
+/**
+ * character_book.entries → 本项目世界书条目的形状 { title, keys, content, on, pos }。
+ *
+ * v0.4.0 起按 V3 规范多认这些东西：
+ *   · content 开头的 @@ 装饰器 —— 【剥掉】再当正文（规范：回填成 V2 时要去掉），
+ *     能照做的照做（activate / dont_activate / additional_keys / exclude_keys /
+ *     position），做不到的如实记在 decoNote 里
+ *   · secondary_keys（V3）—— V2 叫 keysecondary，两边都认
+ *   · enabled（V3）/ disable（V2，取反）
+ *   · priority / insertion_order —— 只用于排序，不构成"读不懂"
+ *   · 正文里的宏（{{char}} / {{user}} / {{random}} …）
+ */
+function extractEntries(book, mctx) {
   if (!book || !Array.isArray(book.entries)) return [];
   const out = [];
   for (const e of book.entries) {
     if (!e || typeof e !== 'object') continue;
-    let content = String(e.content || '').trim();
+    // 装饰器写在 content 最前面。先剥下来，剩下的才是正文。
+    const dc = parseDecorators(e.content);
+    let content = String(dc.text || '').trim();
+    if (mctx) content = expandMacros(content, mctx);
     if (!content) continue;                                  // 空条目没意义，别塞进去占位
     // 限长（v1.21.53）：卡是外面来的东西，一条塞几 MB 会撑爆提示词和存储
     if (content.length > 20000) content = content.slice(0, 20000);
@@ -139,28 +190,90 @@ function extractEntries(book) {
     else if (Array.isArray(e.key)) keys = e.key;
     else if (typeof e.key === 'string') keys = [e.key];
     keys = keys.map(k => String(k || '').trim().slice(0, 64)).filter(Boolean).slice(0, 64);
+    // 装饰器里的 @@additional_keys：规范说它【追加】到 keys 上
+    if (dc.act.addKeys && dc.act.addKeys.length) {
+      const more = dc.act.addKeys.map(k => String(k).trim().slice(0, 64)).filter(Boolean);
+      keys = [...new Set(keys.concat(more))].slice(0, 64);
+    }
     // 标题：先认 SillyTavern 的 comment / name，再认我们自己导出的那份（v1.21.51）
     const mk = (e.extensions && e.extensions.mengxianju) || {};
-    const title = String(e.comment || e.name || mk.title || '').trim();
-    // 「一直生效」不需要触发词。两个来源：我们自己导出的档位，或 ST 的 constant: true
-    const always = mk.pos === 'always' || e.constant === true;
-    const pos = always ? 'always' : (mk.pos === 'tail' ? 'tail' : 'front');
+    // 档位：优先我们自己导出的那一层（extensions.mengxianju.pos），
+    // 但也认条目上直接写的 pos —— 手写的世界书文件/数组形态常常就是平铺的。
+    const mkPos = mk.pos || e.pos || '';
+    const title = String(e.comment || e.name || mk.title || e.title || '').trim();
+    // 「一直生效」不需要触发词。三个来源：我们自己导出的档位、ST 的 constant: true、
+    // V3 的 @@activate 装饰器。
+    const always = mkPos === 'always' || e.constant === true || dc.act.always === true;
+    // @@position：规范里的 before_char / after_char 恰好对上我们的 front / tail，
+    // 能对上就照做 —— 这是少数几个我们真能兑现的装饰器。
+    const decoPos = (dc.act.position === 'before_char' || dc.act.position === 'before') ? 'front'
+      : (dc.act.position === 'after_char' || dc.act.position === 'after') ? 'tail' : '';
+    // position：0/1 = 角色卡前/后；2/3 = Author's Note 前/后（本软件没有 AN，一并当 front）；
+    //           4 = 按对话深度插入 —— 我们做不了深度插入，落到 tail 并在下面报出来
+    const deep = Number(e.position) === 4;
+    // @@position 的值我们只认 before/after；别的（比如 at_depth）照样算"做不到"
+    const decoPosBad = dc.act.position !== undefined && !decoPos;
+    const pos = always ? 'always'
+      : (decoPos || ((mkPos === 'tail' || deep) ? 'tail' : 'front'));
     // 读不懂触发条件的，标 needsReview —— 和世界书文件那条导入路径（fromSillyTavern）
     // 用同一套判据，别让同一个文件从两个入口进来得到两种结果。
     const why = [];
-    if (e.useRegex === true) why.push('触发词用的是正则');
-    if ((e.keysecondary || []).length || e.selective === true) why.push('带二次筛选条件');
+    // ⚠️ use_regex 从 v0.4.0 起【真的照做】（hitKeys 里按正则匹配），
+    //    所以它不再是一条"读不懂"。原来它在这里被标成待确认 —— 那是当时的实话，
+    //    现在有能力兑现了还标着，就等于把能用的条目锁在门外。
+    const useRegex = e.use_regex === true || e.useRegex === true;
+    // ⚠️ V3 把 keysecondary 改名成 secondary_keys（v0.4.0 补）——
+    //    只认老名字的话，V3 卡的二次筛选条件会被【当成没有】，
+    //    于是"主键一命中就出现"，而不是"两个条件都满足才出现"。
+    const sec = Array.isArray(e.secondary_keys) ? e.secondary_keys
+      : (Array.isArray(e.keysecondary) ? e.keysecondary : []);
+    if (sec.length || e.selective === true) why.push('带二次筛选条件');
     if (Number(e.probability) > 0 && Number(e.probability) < 100) why.push('按概率随机触发');
     if (Number(e.position) === 4) why.push('按对话深度插入');
+    // 装饰器里我们【做不到】的那些：把它们明说出来，别装作这张卡是干净的。
+    // 只报"会影响生效时机"的 —— 那才是 needsReview 要防的事。
+    if (dc.act.onlyAfter != null) why.push('@@activate_only_after ' + dc.act.onlyAfter + '（按对话条数才生效）');
+    if (dc.act.onlyEvery != null) why.push('@@activate_only_every ' + dc.act.onlyEvery);
+    if (dc.act.keepAfter) why.push('@@keep_activate_after_match');
+    if (dc.act.dontAfter) why.push('@@dont_activate_after_match');
+    if (dc.unsupported.length) why.push('用了本软件做不到的装饰器：' + dc.unsupported.map(x => '@@' + x).join(' '));
+    if (decoPosBad) why.push('用了本软件做不到的装饰器：@@position ' + dc.act.position);
+    if (dc.unknown.length) why.push('有认不出来的装饰器：' + dc.unknown.map(x => '@@' + x).join(' '));
     // ⚠️ 没有触发词又不是常驻 = 永远不会生效。
     //    v0.3.1 起【不再静默丢掉】（原来这里直接 continue）：标 needsReview 落库，
     //    世界书页会显示「待确认」，用户能点「一直生效」或补触发词。
     //    理由同 fromSillyTavern —— 静默丢弃和静默错设定一样糟，用户看不到任何提示。
     if (!keys.length && !always) why.push('没有触发词');
-    out.push({ title, keys, content, on: e.enabled !== false, pos,
+    // ⚠️ on:false 也要认（v0.4.0 统一判据时漏掉的，被 e2e-stworldbook 抓回来）。
+    //    三种写法都是"这条关着"：本软件自己的 on:false、酒馆的 disable:true、V3 的 enabled:false。
+    //    只认后两种的话，本软件自己导出的备份再导回来，【关掉的条理会自己打开】。
+    out.push({ title, keys, content,
+               on: e.enabled !== false && e.disable !== true && e.on !== false && dc.act.off !== true, pos,
+               ...(useRegex ? { useRegex: true } : {}),
+               // 排除词能兑现（匹配时看到它就跳过），所以单独带出来
+               ...(dc.act.excludeKeys && dc.act.excludeKeys.length ? { excludeKeys: dc.act.excludeKeys } : {}),
                ...(why.length ? { needsReview: true, reviewWhy: why.join('、') } : {}) });
   }
   return out;
+}
+
+/**
+ * 一组世界书条目（对象或数组都行）→ 本软件的条目形状。
+ *
+ * ⚠️ 这个函数存在的意义就是【两个入口同一套判据】（v0.4.0）：
+ *    从角色卡进来的、和从世界书文件进来的，走的是同一段代码。
+ *    charcard.js 里那句"别让同一个文件从两个入口进来得到两种结果"从 v0.3.1 起
+ *    一直写在注释里，但两条路径其实是各写各的 —— 于是 needsReview 在卡那条路上
+ *    被丢掉、keysecondary / use_regex / 装饰器只在一半的地方认。现在只有一份。
+ *
+ * @param {Array|object} listOrMap
+ * @param {object} [mctx] 宏上下文 { char, user, seed }
+ */
+export function entriesFromList(listOrMap, mctx) {
+  let list = [];
+  if (Array.isArray(listOrMap)) list = listOrMap;
+  else if (listOrMap && typeof listOrMap === 'object') list = Object.keys(listOrMap).map(k => listOrMap[k]);
+  return extractEntries({ entries: list }, mctx);
 }
 
 // ============================================================
@@ -184,11 +297,19 @@ function latin1(u8, from, to) {
 }
 
 /**
- * 从 PNG 里取出 "chara" / "ccv3" 的 tEXt（或 zTXt/iTXt）内容并解析成卡片。
+ * 从 PNG 里取出 "chara" / "ccv3" 的 tEXt（或 iTXt）内容并解析成卡片。
  *
  * PNG 结构：8 字节签名，然后是一串 chunk：
  *   [长度 4B 大端][类型 4B][数据][CRC 4B]
  * tEXt 的数据是：keyword \0 text  （两边都是 Latin1；卡片本体是 base64 所以是纯 ASCII）
+ *
+ * ⚠️ v0.4.0 改：**整张图扫完再决定用哪个块**。
+ *    规范里 V3 卡【可以同时带 chara 和 ccv3】，而且没说谁在前 ——
+ *    ccv3 是完整版，chara 是为了兼容老软件而回填的 V2 版（规范明确要求
+ *    回填时把所有 @@ 装饰器删掉）。原来这里是"谁先出现就返回谁"，
+ *    遇到 chara 在前的那种卡就读到那份阉割版，装饰器、secondary_keys、
+ *    use_regex 一整批设定无声无息地没了。
+ *    现在的顺序：ccv3 能用就用 ccv3，不行再退回 chara。
  */
 export function extractCardFromPng(buf) {
   const u8 = new Uint8Array(buf);
@@ -196,6 +317,8 @@ export function extractCardFromPng(buf) {
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   let off = 8;
   let fallback = null;
+  const found = { chara: null, ccv3: null };   // 存解析后的卡片
+  const bad = { chara: null, ccv3: null };     // 存解析失败的原因
   while (off + 8 <= u8.length) {
     const len = dv.getUint32(off);
     const type = latin1(u8, off + 4, off + 8);
@@ -208,20 +331,60 @@ export function extractCardFromPng(buf) {
       for (let k = ds; k < de; k++) { if (u8[k] === 0) { nul = k; break; } }
       if (nul > ds) {
         const kw = latin1(u8, ds, nul);
-        if (kw === 'chara' || kw === 'ccv3') {
+        if ((kw === 'chara' || kw === 'ccv3') && !found[kw]) {
           const raw = latin1(u8, nul + 1, de);
           // iTXt 的正文前面还挂着 压缩标志/语言/译文名，这里只认最简单的形态，
           // 认不出来就记下来当 fallback —— 别因为一个怪 chunk 就把整张卡判死。
-          try { return parseCardJson(decodeB64Utf8(raw)); }
-          catch (e) { if (!fallback) fallback = e; }
+          try { found[kw] = parseCardJson(decodeB64Utf8(raw)); }
+          catch (e) { bad[kw] = e; if (!fallback) fallback = e; }
         }
       }
     }
-    if (type === 'IEND') break;
+    // ⚠️ 不能读到 IEND 就 break —— 有的卡把 chara 写在 IEND 后面（不合规但真的存在），
+    //    而我们要的是"扫完整张图"。IEND 之后没有合法 chunk，但循环本来就会因
+    //    长度越界自然停下，所以这里只跳过 IEND 继续走，不多花多少时间。
     off = de + 4;
   }
+  if (found.ccv3) return found.ccv3;
+  if (found.chara) return found.chara;
   if (fallback) throw fallback;
-  throw new Error('这张 PNG 里没有角色数据（找不到 chara 块）');
+  if (bad.ccv3 || bad.chara) throw new Error('这张 PNG 里的角色数据读不出来');
+  throw new Error('这张 PNG 里没有角色数据（找不到 chara / ccv3 块）');
+}
+
+/**
+ * 认一个文件到底是哪种卡，然后交给对应的解析器（v0.4.0）。
+ *
+ * 三种容器：PNG（tEXt 块）、CHARX（zip 里有 card.json）、纯 JSON 文本。
+ * ⚠️ 顺序不能反：CHARX 和 PNG 都可能被改名成任意扩展名，
+ *    所以一律【按文件头判断】，不看扩展名。
+ *
+ * @param {ArrayBuffer} buf
+ * @returns {Promise<{card:object, avatarDataUrl:string, kind:string, assets:Array}>}
+ */
+export async function parseCardAuto(buf) {
+  const u8 = new Uint8Array(buf);
+  if (isPng(u8)) {
+    return { card: extractCardFromPng(buf), avatarDataUrl: '', kind: 'png', assets: [] };
+  }
+  if (isZip(u8)) {
+    const { json, files } = await readCharx(buf);
+    const card = parseCardJson(json);
+    // V3 的 assets：挑一张 icon 类型的当头像。
+    // 规范里 ccdefault: 表示"用默认图"，我们没有默认图，跳过它。
+    let avatarDataUrl = '';
+    const list = Array.isArray(card.assets) ? card.assets : [];
+    const icon = list.find(a => String(a.type || '') === 'icon' && a.uri && !/^ccdefault:/i.test(a.uri))
+      || list.find(a => a.uri && !/^ccdefault:/i.test(a.uri));
+    if (icon) {
+      const bytes = findAsset(files, icon.uri);
+      if (bytes) avatarDataUrl = bytesToDataUrl(bytes, mimeOf(icon.name || icon.uri));
+    }
+    return { card, avatarDataUrl, kind: 'charx', assets: files.map(f => f.name) };
+  }
+  // 剩下的当 JSON 文本 —— 用 TextDecoder 而不是 atob，因为可能是 UTF-8 带 BOM
+  const text = new TextDecoder('utf-8').decode(u8).replace(/^\uFEFF/, '');
+  return { card: parseCardJson(text), avatarDataUrl: '', kind: 'json', assets: [] };
 }
 
 /** 在 IHDR 之后插入一个 tEXt chunk，返回新的字节数组 */
@@ -375,6 +538,14 @@ export function buildCardV2(char, entries, opts) {
   const list = Array.isArray(entries)
     ? entries.filter(e => e && e.content && ((e.keys || []).length || e.pos === 'always'))
     : [];
+  // V3 的那几样我们自己也存了（昵称 / 群聊开场白），导出时要带上 ——
+  // 不带的话"导进来存下来"就成了单程票，换台机器导回去又没了。
+  // 规范说 V3 卡要 spec:'chara_card_v3' + spec_version:'3.0'，
+  // 所以只有真带了 V3 字段时才写 V3，否则老老实实 V2（别的软件对 V2 最友好）。
+  const nick = String(char.nickname || '').trim();
+  const grp = Array.isArray(char.groupGreetings) ? char.groupGreetings.map(String).filter(Boolean) : [];
+  const isV3 = !!(nick || grp.length);
+  /** @type {any} */
   const data = {
     name: String(char.name || '').trim() || '未命名',
     // 名称的对应关系：卡片 description ↔ 本项目 persona（都是"她是谁"）
@@ -391,6 +562,14 @@ export function buildCardV2(char, entries, opts) {
     tags: [],
     creator: '',
     character_version: '',
+    // 只有 V3 才写的字段：规范要求它们存在，写空数组也比不写强
+    ...(isV3 ? {
+      nickname: nick,
+      group_only_greetings: grp,
+      source: Array.isArray(char.source) ? char.source.slice(0, 5) : [],
+      assets: [],
+      creation_date: 0,
+    } : {}),
     // v1.21.47：把我们自己的角色级参数挂在这里。别的软件读卡时忽略它，
     // 我们自己导回来则完整还原（含「他的设定 / 他的居处」和临时场景）。
     // 头像（v1.21.53）：JSON 卡没有别的地方存图，只能塞在这儿。
@@ -416,7 +595,9 @@ export function buildCardV2(char, entries, opts) {
       })),
     };
   }
-  return { spec: 'chara_card_v2', spec_version: '2.0', data };
+  return isV3
+    ? { spec: 'chara_card_v3', spec_version: '3.0', data }
+    : { spec: 'chara_card_v2', spec_version: '2.0', data };
 }
 
 function loadImage(src) {

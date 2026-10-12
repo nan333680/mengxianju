@@ -260,6 +260,22 @@ export const msgs = {
     t.objectStore('messages').put(m);
     return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
   },
+  /**
+   * 批量写入（v0.4.0，导入酒馆聊天记录用）。
+   *
+   * 为什么要它：一份酒馆导出的聊天记录动辄几千条，逐条 add 就是几千个事务 ——
+   * 在手机上实测会卡到几十秒，中途退出还会留下半份记录（而且没人知道导到哪了）。
+   * 一个事务写完，要么全进要么全不进。
+   */
+  async addMany(list) {
+    const arr = (list || []).filter(m => m && m.id);
+    if (!arr.length) return 0;
+    const db = await openDB();
+    const t = db.transaction('messages', 'readwrite');
+    const s = t.objectStore('messages');
+    for (const m of arr) s.put(m);
+    return new Promise((res, rej) => { t.oncomplete = () => res(arr.length); t.onerror = () => rej(t.error); });
+  },
   async del(id) {
     const db = await openDB();
     const t = db.transaction('messages', 'readwrite');

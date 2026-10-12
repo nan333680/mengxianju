@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -130,20 +131,20 @@ console.log('=== #2 rewind 护栏判据（[a0,u1,a1] 对 a0 必须拦）===');
 console.log('');
 console.log('=== #3 summarizeChunk 的 room 口径 ===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
 // ⚠️ 断言更新（v1.21.32）：口径统一为【总量】—— 复审 #6 指出 limit 只扣 mine、
 // 不约束总量，导致 mine=10 时 room=10 直接写满、总记忆净增冲穿上限。
-t('limit 口径改成总量', src.includes('const totalCap = (S.memLimit || 20) - _mineN;   // 非 mine 部分最多能有多少'));
+t('limit 口径改成总量', src.includes('const totalCap = (S.memLimit || 20) - _mineN;'));
 t('room 受总量约束', src.includes('const room = Math.max(0, totalCap - curWritable);'));
-t('curWritable 在压缩【后】才算', src.includes('const curWritable = writableOf(cur);   // ← 压缩【之后】才算'), '（第一版写成常量，压缩后没重算 → room 恒 0 → 归档永远失败，e2e-archive2 抓到）');
+t('curWritable 在压缩【后】才算', src.includes('const curWritable = writableOf(cur);'), '（第一版写成常量，压缩后没重算 → room 恒 0 → 归档永远失败，e2e-archive2 抓到）');
 }
 
 console.log('');
 console.log('=== 其余静态确认 ===');
 {
-  const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
-  const api = fs.readFileSync(WWW + '/js/api.js', 'utf8');
-  const per = fs.readFileSync(WWW + '/js/persona.js', 'utf8');
+  const src = readCode(WWW + '/js/app.js');
+  const api = readCode(WWW + '/js/api.js');
+  const per = readCode(WWW + '/js/persona.js');
   t('#1a 备份存全量', src.includes('items: listAll.map(m => ({ id: m.id'));
   t('#1b 撤销保护 mine', src.includes('const removable = _guardMine ? nowList.filter(m => !m.mine) : nowList;'));
   t('新6 tooFew 比例下限', src.includes('|| (destructive && items.length < Math.max(2, Math.floor(list.length * 0.25)))'));

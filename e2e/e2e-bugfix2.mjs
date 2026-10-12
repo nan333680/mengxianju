@@ -3,6 +3,7 @@ import { seedChar, seedChars } from './e2e-helper.mjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
@@ -142,7 +143,7 @@ await page.click('#btn-set-back'); await sleep(500);
   await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });
   await sleep(500);
 
-const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const src = readCode(WWW + '/js/app.js');
 
 console.log('=== 1. 记忆 untilDay=null 不再被当成过期 ===');
 t('源码里显式排除了 null', /x\.untilDay !== null && x\.untilDay !== ''/.test(src));

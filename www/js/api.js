@@ -516,15 +516,48 @@ export async function fetchBalance(opts) {
 }
 
 /**
- * 联网搜索（Tavily）。返回 { answer, results:[{title,url,content}] }
+ * 联网搜索。返回 { answer, results:[{title,url,content}] }
  *
  * ⚠️ 只在用户明确打了「/搜」时才调用 —— 默认纯本地，不自动联网。
  * key 由用户自己填，不预置在包里（写死的 key 反编译就能拿走）。
+ *
+ * v0.4.0：从"只能 Tavily"扩成多后端。理由不是"竞品有"，
+ * 而是原来那条路【必须让用户再注册一家、再填一个 key】——
+ * 而"陪伴向"的用户里，最容易被这一步劝退的恰恰是不折腾的人。
+ * 所以：能复用主 API key 的（智谱）就不用再填。
  */
-export async function webSearch(opts) {
-  const { apiKey, query, max = 5, signal } = opts;
-  if (!apiKey) throw new Error('还没填搜索 API Key');
+export const SEARCH_BACKENDS = {
+  tavily: {
+    label: 'Tavily',
+    hint: 'tvly-...',
+    where: 'tavily.com',
+    how: '注册免费、每月 1000 次，不用绑卡。key 是 <code>tvly-</code> 开头。',
+    reuse: false,
+  },
+  zhipu: {
+    label: '智谱 GLM（可用同一个 key）',
+    hint: '智谱的 key',
+    where: 'open.bigmodel.cn',
+    how: '如果你聊天用的就是智谱，这里<b>留空也行</b> —— 直接复用上面那个 key。',
+    reuse: true,
+  },
+  exa: {
+    label: 'Exa',
+    hint: 'exa-...',
+    where: 'exa.ai',
+    how: '按次计费，注册后在 Dashboard 拿 key。',
+    reuse: false,
+  },
+  brave: {
+    label: 'Brave Search',
+    hint: 'Brave 的 subscription token',
+    where: 'brave.com/search/api',
+    how: '有免费档（每月若干次），不用绑卡就能开。',
+    reuse: false,
+  },
+};
 
+function searchTimeout(signal, ms) {
   const ctl = new AbortController();
   const onOuter = () => ctl.abort();
   if (signal) {
@@ -532,8 +565,23 @@ export async function webSearch(opts) {
     else signal.addEventListener('abort', onOuter, { once: true });
   }
   // 搜索本身要快。15 秒不回来就放弃，别把整轮对话拖死。
-  const timer = setTimeout(() => ctl.abort(new Error('搜索超时（15 秒）')), 15000);
+  const timer = setTimeout(() => ctl.abort(new Error('搜索超时（15 秒）')), ms || 15000);
+  return { ctl, done: () => clearTimeout(timer) };
+}
 
+/** 后端各自的报错说清楚一点，别让他以为是网络不好 */
+function searchHttpError(provider, res, detail) {
+  if (res.status === 401 || res.status === 403) {
+    return new Error((SEARCH_BACKENDS[provider] || {}).label + ' 的 key 无效（' + res.status + '）');
+  }
+  if (res.status === 402 || res.status === 429 || res.status === 432) {
+    return new Error((SEARCH_BACKENDS[provider] || {}).label + ' 的额度用完了（' + res.status + '）');
+  }
+  return new Error('搜索失败 ' + res.status + (detail ? ': ' + detail : ''));
+}
+
+async function searchTavily({ apiKey, query, max, signal }) {
+  const { ctl, done } = searchTimeout(signal);
   let res;
   try {
     res = await fetch('https://api.tavily.com/search', {
@@ -548,27 +596,123 @@ export async function webSearch(opts) {
       }),
       signal: ctl.signal
     });
-  } finally { clearTimeout(timer); }
-
+  } finally { done(); }
   if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.text()).slice(0, 200); } catch {}
-    // 401/432 是 key 的问题，单独说清楚，别让他以为是网络不好
-    if (res.status === 401 || res.status === 432 || res.status === 403) {
-      throw new Error('搜索 Key 无效或已用完（' + res.status + '）');
-    }
-    throw new Error('搜索失败 ' + res.status + (detail ? ': ' + detail : ''));
+    let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 拿不到就算了 */ }
+    throw searchHttpError('tavily', res, detail);
   }
-
   const j = await res.json();
   return {
-    answer: (j.answer || '').trim(),
+    answer: String(j.answer || '').trim(),
     results: (j.results || []).slice(0, max).map(r => ({
-      title: (r.title || '').trim(),
-      url: r.url || '',
-      content: (r.content || '').trim(),
+      title: String(r.title || '').trim(), url: r.url || '', content: String(r.content || '').trim(),
     })),
   };
+}
+
+async function searchExa({ apiKey, query, max, signal }) {
+  const { ctl, done } = searchTimeout(signal);
+  let res;
+  try {
+    res = await fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+      body: JSON.stringify({ query, numResults: max, contents: { text: { maxCharacters: 1200 } } }),
+      signal: ctl.signal,
+    });
+  } finally { done(); }
+  if (!res.ok) {
+    let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
+    throw searchHttpError('exa', res, detail);
+  }
+  const j = await res.json();
+  return {
+    // Exa 不返回"摘要"，交给模型自己看片段
+    answer: '',
+    results: (j.results || []).slice(0, max).map(r => ({
+      title: String(r.title || '').trim(),
+      url: r.url || '',
+      content: String((r.text || r.summary || '')).trim(),
+    })),
+  };
+}
+
+async function searchBrave({ apiKey, query, max, signal }) {
+  const { ctl, done } = searchTimeout(signal);
+  const url = 'https://api.search.brave.com/res/v1/web/search?count=' + Math.max(1, Math.min(20, max))
+    + '&q=' + encodeURIComponent(query);
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { 'Accept': 'application/json', 'X-Subscription-Token': apiKey },
+      signal: ctl.signal,
+    });
+  } finally { done(); }
+  if (!res.ok) {
+    let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
+    throw searchHttpError('brave', res, detail);
+  }
+  const j = await res.json();
+  const list = ((j.web && j.web.results) || []).slice(0, max);
+  return {
+    answer: String((j.summarizer && j.summarizer.text) || '').trim(),
+    results: list.map(r => ({
+      title: String(r.title || '').trim(),
+      url: r.url || '',
+      content: String(r.description || '').trim(),
+    })),
+  };
+}
+
+async function searchZhipu({ apiKey, query, max, signal }) {
+  const { ctl, done } = searchTimeout(signal);
+  let res;
+  try {
+    res = await fetch('https://open.bigmodel.cn/api/paas/v4/web_search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+      body: JSON.stringify({
+        search_engine: 'search_std',
+        search_query: query,
+        count: Math.max(1, Math.min(50, max)),   // 官方参数名就是 count（默认 10）
+      }),
+      signal: ctl.signal,
+    });
+  } finally { done(); }
+  if (!res.ok) {
+    let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
+    throw searchHttpError('zhipu', res, detail);
+  }
+  const j = await res.json();
+  const list = (j.search_result || []).slice(0, max);
+  return {
+    answer: '',
+    results: list.map(r => ({
+      title: String(r.title || '').trim(),
+      url: r.link || r.url || '',
+      content: String(r.content || '').trim(),
+    })),
+  };
+}
+
+/**
+ * 联网搜索（多后端，v0.4.0）。
+ *
+ * @param {object} o
+ * @param {string} [o.provider] tavily | zhipu | exa | brave，不认的一律按 tavily
+ * @param {string} o.apiKey
+ * @param {string} o.query
+ * @param {number} [o.max]
+ * @param {AbortSignal} [o.signal]
+ */
+export async function webSearch(opts) {
+  const { provider, apiKey, query, max = 5, signal } = opts || {};
+  if (!apiKey) throw new Error('还没填搜索 API Key');
+  const p = (provider && SEARCH_BACKENDS[provider]) ? provider : 'tavily';
+  if (p === 'exa') return searchExa({ apiKey, query, max, signal });
+  if (p === 'brave') return searchBrave({ apiKey, query, max, signal });
+  if (p === 'zhipu') return searchZhipu({ apiKey, query, max, signal });
+  return searchTavily({ apiKey, query, max, signal });
 }
 
 /** 把搜索结果拼成一段给模型看的资料。只在这一轮注入，不写进历史。 */

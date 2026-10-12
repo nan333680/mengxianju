@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -181,7 +182,7 @@ const wbPayload = { version:1, kind:'worldbook', exportedAt:Date.now(),
   groups:[{ id:'g1', name:'组1', members:[], entries:[] }], solo:[{ id:'s1', charId:'c-v28', entries:[{ id:'e1', title:'T', keys:['k'], content:'C' }] }] };
 fs.writeFileSync('C:\\A-DSH-Apk\\_check\\wbonly.json', JSON.stringify(wbPayload));
 // 静态确认校验放宽（这条确实是"代码里写了什么"，但入口校验本身就只取决于源码）
-const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const src = readCode(WWW + '/js/app.js');
 t('两处入口校验都放宽了', (src.match(/!data\.characters && !data\.groups/g)||[]).length === 2);
 
 console.log('');

@@ -1,0 +1,56 @@
+# CI —— 每次推上来立刻知道坏没坏（v0.4.0）
+#
+# 为什么要有它：在这个仓库里，判断"刚改的东西有没有把别处弄坏"原来只有一条路 ——
+# 手动跑全量回归，33 分钟。于是改一行小东西的人（也就是作者自己）会倾向于"先不跑"，
+# 而那正是静默 bug 溜进来的方式。
+#
+# 定位说清楚：
+#   · 这里【不是】给陌生人看信用的，是给作者自己用的"改完立刻知道"。
+#   · 全量 114 套需要真实模型的 key（DSH_API_KEY），不进 CI。
+#     这里只跑【不需要任何 key】的那一批 —— 它们自己假造 API 或者压根不联网。
+#   · GitHub 的 windows 镜像自带 Chrome，而且路径正好是各套件里写死的那个
+#     （C:\Program Files\Google\Chrome\Application\chrome.exe），所以直接能用。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 装依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 静态检查（语法错 / 文件齐不齐 / 版本号一致）
+        run: node tools/ci-check.mjs
+
+      # 这一批全部【不需要真 key】：要么是纯函数（node 直接 import），
+      # 要么自己拦截请求假造一个模型回复。
+      - name: e2e（不依赖真实 key 的 14 套）
+        shell: pwsh
+        run: |
+          $suites = @(
+            'e2e-stregex','e2e-stchat','e2e-ccv3','e2e-autobackup',
+            'e2e-v040card','e2e-v040fix','e2e-group',
+            'e2e-nav','e2e-menu','e2e-empty','e2e-appearance','e2e-ellipsis',
+            'e2e-i18n','e2e-privacy'
+          )
+          $fail = 0
+          foreach ($s in $suites) {
+            Write-Host "--- $s"
+            node "e2e/$s.mjs"
+            if ($LASTEXITCODE -ne 0) { $fail++ }
+          }
+          Write-Host "失败的套件数：$fail / $($suites.Count)"
+          if ($fail -gt 0) { exit 1 }

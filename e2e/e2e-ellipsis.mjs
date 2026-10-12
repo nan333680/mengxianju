@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
@@ -22,8 +23,8 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 let pass=0, fail=0;
 const t=(n,ok,ex='')=>{ if(ok){pass++;console.log('  OK   '+n);}else{fail++;console.log('  FAIL '+n+(ex?'  -> '+ex:''));} };
 
-const personaSrc = fs.readFileSync(WWW + '/js/persona.js', 'utf8');
-const appSrc = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const personaSrc = readCode(WWW + '/js/persona.js');
+const appSrc = readCode(WWW + '/js/app.js');
 
 console.log('=== 1. 提示词层的硬约束（对所有角色生效）===');
 t('有「绝不允许整条只有省略号」', personaSrc.includes('【绝不允许】整条消息只有一个省略号'));

@@ -3,6 +3,7 @@ import { seedChar } from './e2e-helper.mjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { readCode } from './e2e-src.mjs';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 
@@ -82,7 +83,7 @@ await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只�
 
 console.log('=== 1. 默认值：指示器开着 ===');
 // app.js 是 ES module，内部常量在页面里够不到 —— 直接读源码验证默认值
-const src = fs.readFileSync(WWW + '/js/app.js', 'utf8');
+const src = readCode(WWW + '/js/app.js');
 t('DEFAULTS 里 showTyping 默认为 true', /showTyping:\s*true/.test(src));
 t('showTyping 已进 CHAR_KEYS（角色可单独设）', /'showTyping'/.test(src));
 t('占位气泡会读 showTyping 决定加不加 no-dots', /P\.showTyping === false \? ' no-dots'/.test(src));

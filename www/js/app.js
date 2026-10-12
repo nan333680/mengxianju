@@ -109,7 +109,13 @@ const DEFAULTS = {
   myProfile: "【我是谁】\n普通上班族。工作日朝九晚六，通勤要花上一段，白天基本不在线，晚上和周末才真正有空。\n\n【日常状态】\n日子过得平常，没什么大事。下班回来常常是累的，话比白天少 —— 那不是冷淡，是电量低。\n偶尔加班，偶尔什么都不想干，第二天一般就恢复了。\n\n【怎么跟我说话】\n· 不用一直找话题，安静一会儿也没关系。\n· 有事说事，别绕圈子。别催我、别教育我、别替我做决定。\n· 我说话偏直白，不爱绕弯子，那不是不耐烦。\n· 我忙或累的时候回得慢、回得短，别往心里去。\n\n【我在意的】\n被记住小事 比 被夸 更让我高兴\n不用刻意热闹 比 硬找话说 更舒服\n你是什么样就什么样 比 一直顺着我 更好\n\n这只是一份通用说明。相处久了，以你真正了解到的我为准。",
   // 「世界书」总开关（v1.15.2 起）：关掉就完全不注入任何世界书条目。
   // 三套库（角色组 / 单独角色）都受它控制。
-  worldbookOn: false,
+  //
+  // ⚠️ 默认改成【开】（v0.4.1.3）。起因（用户实测原话：「导入没用…提示导入成功了但没显示」）：
+  //    默认关着时，导入世界书文件会报「已导入 1 个角色组」却【一条都不注入】；
+  //    而且世界书页那两个入口当时是灰的、点了没反应 —— 他连内容都看不到。
+  //    空库注入的是空字符串，所以开着对没建过条目的人零成本；
+  //    真手动关过它的人（kv 里存了 false）不受这次改动影响。
+  worldbookOn: true,
   // 「我的居住环境」：全局一份。他住的地方长什么样。
   // 加它的原因：模型没有环境设定时会自由发挥——凭空编窗外、编房间、编天气，
   // 跟用户实际的情况打架（长期记忆也拦不住，记忆记的是"事件"不是"环境"）。
@@ -1438,7 +1444,10 @@ function msgHtml(m, depth = 0) {
   // （用户明确要的：看不到时间比看到"真实时间"更不误导）
   const st = fmtStory(m.story);
   const time = st ? `<span class="story-time">${st}</span>` : '';
-  return `<div class="msg ${isMe ? 'me' : 'ai'}" data-id="${esc(m.id)}">${av}<div class="bub">${inner}<div class="t">${time}${tok}</div></div></div>`;
+  // 旁白（v0.4.1 小说式一幕）：没有说话人，样式上也和"谁说的"区分开 ——
+  // 不然一段环境描写会看起来像某个人在说话。
+  const narr = m.narration === true && !isMe;
+  return `<div class="msg ${isMe ? 'me' : 'ai'}${narr ? ' narr' : ''}" data-id="${esc(m.id)}">${av}<div class="bub">${inner}<div class="t">${time}${tok}</div></div></div>`;
 }
 
 let _archOpen = false;   // 归档区的展开状态（重绘后要保住）
@@ -1629,7 +1638,12 @@ function attachMsgActions() {
       _avTimer = setTimeout(() => {
         _avTimer = null;
         if (navigator.vibrate) { try { navigator.vibrate(15); } catch {} }
-        openCharEdit(curCharId);
+        // ⚠️ 走 openEditFor（v0.4.0 复查，群聊诊断文档 缺陷 2）：
+        //    原来这里直接 openCharEdit(curCharId) —— 群里长按头像就进了【普通角色编辑页】，
+        //    而那页能改人设，群的人设每次载入都会被 composeGroupPersona 覆盖。
+        //    用户得到的是"改了没用"，正是 CHANGELOG 里判定为"比不给入口更糟"的那类。
+        //    顶栏那条路当时修了，气泡这条漏了 —— 同一个坑的第二个入口。
+        openEditFor(curCharId);
       }, 1200);
     }, { passive: true });
     av.addEventListener('touchend', (e) => { stop(e); clearTimeout(_avTimer); });
@@ -1638,7 +1652,7 @@ function attachMsgActions() {
     // 桌面端右键也认（方便在电脑上调试）
     av.addEventListener('contextmenu', (e) => {
       e.preventDefault(); e.stopPropagation();
-      openCharEdit(curCharId);
+      openEditFor(curCharId);   // 同上：群里不能进普通编辑页
     });
   });
 }
@@ -2285,6 +2299,10 @@ async function regenerate() {
   // 每点一次还在上面再叠一层。
   // 规则：删掉那条用户消息，就把它的整段回复（它后面的 assistant）一起带走。
   const followers = all.slice(lastIdx + 1).filter(m => m && m.role !== 'user' && m.id);
+  // 群里重新生成 = 让【刚才那个人】重说一遍，不能换人（v0.4.0 复查，用户拍板 A）。
+  // 指针在上一轮结束时已经推到了下一个人，不显式带上就会换个人重说 ——
+  // "换一个版本"也走这条路，所以两处一起修好了。
+  const sameSpk = isGroup(curChar) ? await lastSpeakerCharId(curCharId) : '';
   // ⚠️ 退回剧情时间（v1.21.31 修，用户实测反馈）。
   //
   // 起因（复现）：「我设定下午 4 点发了消息，重新思考了几次后她会提到上午或者前一天的事物」。
@@ -2326,7 +2344,9 @@ async function regenerate() {
   await noteDeleted([lastUser.content].concat(followers.map(m => m.content || '')).filter(Boolean));
   await kv.set('memNeedTidy:' + curCharId, true);   // 让它下次整理务必跑一趟
   await renderMessages();
-  send();
+  // ⚠️ 把 sameSpk 带过去（v0.4.0 复查，用户拍板续写/重生成走 A）：
+  //    群聊时它让"重新生成"仍然由【刚才那个人】重说 —— 不带的话指针已经推到下一个人了。
+  send({ sameSpeaker: sameSpk });
 }
 
 // 每帧最多真正滚一次。流式输出时每个 chunk 都会调它，以前是一次调用排一个
@@ -2414,7 +2434,7 @@ async function foldIntoRolling(charId, msgs) {
   // 会把它当成一段第一人称文本，复述时转成第三人称 ——
   // 角色O的长期记忆全变成第三人称就是这么来的。滚动摘要同样受害，
   // 只是它混在一段叙述里，不像记忆条目那么显眼，一直没被发现。
-  const body = msgs.map(m => (m.role === 'user' ? '他：' : who + '：') + (m.content || '[图片]')).join('\n');
+  const body = msgs.map(m => memLabel(m, who) + (m.content || '[图片]')).join('\n');
 
   // 摘要由模型生成；失败就退回"保留原文末尾"的兜底，
   // 绝不能让摘要为空 —— 空了等于这批内容彻底消失，比不生成还糟。
@@ -3211,15 +3231,24 @@ async function renderWorldbook() {
   const on = S.worldbookOn !== false;
   const box = $('s-wb-on');
   if (box) box.checked = on;
-  // 「全局设置 / 单独角色」只在总开关打开时可点（关着是灰的）
-  for (const id of ['btn-wb-global', 'btn-wb-solo']) {
-    const el = $(id);
-    if (!el) continue;
-    el.disabled = !on;
-    el.classList.toggle('disabled', !on);
-  }
+  // ⚠️ 关着的时候【不再把入口置灰】（v0.4.1.3）。
+  //    起因（用户实测）：导入世界书报了"已导入 1 个角色组"，但关着总开关时
+  //    这两个入口是 disabled、点了一点反应都没有，用户的原话是「提示导入成功了但没显示」——
+  //    其实是根本进不去。管理界面和"是否注入"是两件事：关着也该能看、能改。
   const eg = $('wb-entry-group');
   if (eg) eg.classList.toggle('disabled', !on);
+  // 关着时在入口上方插一条醒目提示（原来只有开关下面一行小字，导入完看不到东西也不知道为什么）
+  const anchor = eg || $('s-wb-on');
+  let warn = $('wb-off-warn');
+  if (!on && anchor && anchor.parentNode) {
+    if (!warn) {
+      warn = document.createElement('div');
+      warn.id = 'wb-off-warn';
+      warn.className = 'wb-off-warn';
+      anchor.parentNode.insertBefore(warn, anchor);
+    }
+    warn.innerHTML = '世界书总开关<b>关着</b> —— 下面这些设定一条都不会注入。要用就先把上面的开关打开。';
+  } else if (warn) warn.remove();
   // 副标题：让用户不点进去也知道有多少东西
   try {
     const gs = await wb.groups();
@@ -3378,6 +3407,21 @@ function bindGroupDrag(box) {
 // ---------- 弹窗：选角色（新建组 / 组列自定义 共用同一个） ----------
 // ★ 两处复用同一个弹窗组件，只是标题和初始选中不同（用户明确要求）
 //   opts = { title, name, selected:[charId], onOk(name, ids), onDelete }
+/**
+ * querySelector 的「随便给我什么」版本。
+ * ⚠️ 纯粹为了消类型噪音：JSDoc 下 querySelector 一律返回 Element，
+ *    而 extraHtml 里的控件要读 value / checked / files —— 每个都标注一遍太吵。
+ * @returns {any}
+ */
+function qs(root, sel) { return root ? root.querySelector(sel) : null; }
+
+/**
+ * getElementById 的「随便给我什么」版本。同上：读弹窗控件时用它，
+ * 免得每个 .value / .checked 都要标注一次类型。
+ * @returns {any}
+ */
+function elv(id) { return document.getElementById(id); }
+
 function openCharPicker(opts) {
   const o = opts || {};
   let sel = new Set(o.selected || []);
@@ -3395,6 +3439,9 @@ function openCharPicker(opts) {
     return '<div class="pick-row' + (on ? ' on' : '') + '" data-pk="' + esc(c.id) + '">'
       + '<span class="pk-box">✓</span>'
       + '<span class="pk-name">' + esc(c.name) + '</span>'
+      // 齿轮 = 二级设置（v0.4.1.1）：点进"她在这个群里是什么样"。
+      // 没传 onMemberCfg 的调用方（普通选人）不画它，免得出现一个点了没反应的图标。
+      + (o.onMemberCfg ? '<span class="pk-gear" data-cfg="' + esc(c.id) + '">⚙</span>' : '')
       + '</div>';
   }).join('');
   // 复用通用 modal：它有 modal-title / modal-text / modal-ok / modal-cancel
@@ -3407,7 +3454,10 @@ function openCharPicker(opts) {
     + '<div class="pick-list" id="pk-list">' + rows + '</div>'
     + '<label class="field" style="margin-bottom:0"><span>' + esc(o.pickName || '组列名称') + '</span>'
     + '<input type="text" id="pk-name" placeholder="' + esc(o.namePlaceholder || '比如：周末茶会') + '" value="' + esc(o.name || '') + '"></label>'
-    + (o.onDelete ? '<button class="danger-btn" id="pk-del" style="margin-top:14px">删除这个组</button>' : '');
+    // extraHtml（v0.4.1）：群聊要在同一个弹窗里再放两个字段（这个群是怎么回事 / 小说式一幕）。
+    // 刻意不给它单独做一页 —— 那个页面的复杂度是后面几期的事，现在先把该有的入口接上。
+    + (o.extraHtml || '')
+    + (o.onDelete ? '<button class="danger-btn" id="pk-del" style="margin-top:14px">' + esc(o.delText || '删除这个组') + '</button>' : '');
   m.classList.remove('hidden');
 
   const allBtn = $('pk-all');
@@ -3432,6 +3482,17 @@ function openCharPicker(opts) {
       syncAll();
     };
   });
+  // 齿轮：进"她在本群的设置"。stopPropagation 是必须的 ——
+  // 不然点齿轮会顺带把这个人从群里勾掉/勾上（父行有点击处理器）。
+  document.querySelectorAll('#pk-list .pk-gear').forEach((el) => {
+    const gEl = /** @type {any} */ (el);
+    gEl.onclick = (ev) => {
+      ev.stopPropagation();
+      if (o.onMemberCfg) o.onMemberCfg(gEl.dataset.cfg, sel);
+    };
+  });
+  // onRendered：extraHtml 里那些控件要在这里接线（openCharPicker 不管它们）
+  if (o.onRendered) { try { o.onRendered($('modal-text')); } catch (e) { console.error('[选人弹窗] onRendered 出错：', e); } }
   const done = (v) => {
     m.classList.add('hidden');
     $('modal-ok').onclick = null;
@@ -3444,8 +3505,9 @@ function openCharPicker(opts) {
     const nm = ($('pk-name').value || '').trim();
     if (!nm) { toast('先给它起个名字吧'); return; }
     const ids = [...sel];
+    const box = $('modal-text');   // 第三个参数：调用方要读 extraHtml 里那几个字段
     done(true);
-    if (o.onOk) await o.onOk(nm, ids);
+    if (o.onOk) await o.onOk(nm, ids, box);
   };
   const delBtn = $('pk-del');
   if (delBtn && o.onDelete) {
@@ -4216,14 +4278,13 @@ function bindWorldbook() {
     toast(e.target.checked ? '已启用世界书' : '已关闭世界书');
   };
 
+  // ⚠️ 关着总开关也允许进去看/改（v0.4.1.3，理由见 renderWorldbook 里那段）
   const toGlobal = $('btn-wb-global');
   if (toGlobal) toGlobal.onclick = async () => {
-    if (S.worldbookOn === false) return;   // 灰的时候不响应
     await renderWbGroups(); showView('wbglobal');
   };
   const toSolo = $('btn-wb-solo');
   if (toSolo) toSolo.onclick = () => {
-    if (S.worldbookOn === false) return;
     openSoloPicker();
   };
 
@@ -4295,12 +4356,14 @@ function bindWorldbook() {
       // 换机导入时旧 id 在本机不存在，直接写库等于写了一批幽灵引用。
       const { map: idMap, ghosts } = await buildCharIdMapFrom(data);
       const fix = (id) => (idMap.has(id) ? idMap.get(id) : id);
-      let ng = 0, ns = 0, skipped = 0;
+      let ng = 0, ns = 0, skipped = 0, ghostGroups = 0;
       for (const g of (gs || [])) {
         if (!g || !g.id) continue;
         const members = (g.members || []).map(fix).filter(id => !ghosts.has(id));
         skipped += (g.members || []).length - members.length;
         await wb.putGroup({ ...g, members });
+        // 成员一个都没认领上：组留下了，但它【对谁都不生效】—— 要在提示里说清（v0.4.1.3）
+        if (!members.length && (g.members || []).length) ghostGroups++;
         ng++;
       }
       for (const x of so) {
@@ -4319,11 +4382,18 @@ function bindWorldbook() {
         await putSoloClaimed(fix(x.charId), x);
         ns++;
       }
+      // ⚠️ 总开关关着就【顺手打开】（v0.4.1.3）。
+      //    起因（用户实测）：导入报成功、世界书却一条不注入，因为总开关默认是关的。
+      //    会点「导入世界书文件」的人，就是要用它。
+      let turnedOn = false;
+      if (S.worldbookOn === false) { await saveSettings({ worldbookOn: true }); turnedOn = true; }
       await renderWorldbook();
       await refreshWbSubs();
       // ⚠️ 如实报告跳过的，不再报假成功（原来无论如何都说"已导入 N 个"）
       toast('已导入 ' + ng + ' 个角色组、' + ns + ' 个角色的单独设定'
-            + (skipped ? '（跳过 ' + skipped + ' 个本机不存在的角色）' : ''), 4000);
+            + (skipped ? '（跳过 ' + skipped + ' 个本机不存在的角色）' : '')
+            + (ghostGroups ? '；其中 ' + ghostGroups + ' 个组本机没有对应角色，暂时对谁都不生效' : '')
+            + (turnedOn ? '；世界书原来是关着的，已帮你打开' : ''), 5600);
     } catch (err) {
       toast('导入失败：' + ((err && err.message) || err), 4000);
     } finally { e.target.value = ''; }   // 允许重复导同一个文件
@@ -4456,10 +4526,23 @@ function bindEntryIO() {
         // ⚠️ 酒馆世界书（v0.3.1）：{ entries: { "0": {...}, "1": {...} } } —— entries 是
         //    【对象】不是数组。这里原来直接弹 toast 让用户自己转格式，现在【认它】。
         else if (data.entries && typeof data.entries === 'object') incoming = fromSillyTavern(data.entries);
-        else if (data.groups && data.groups[0] && Array.isArray(data.groups[0].entries)) {
-          incoming = data.groups.reduce((acc, g) => acc.concat(g.entries || []), []);
-        } else if (data.solo && data.solo[0] && Array.isArray(data.solo[0].entries)) {
-          incoming = data.solo.reduce((acc, s) => acc.concat(s.entries || []), []);
+        // ⚠️ 整份世界书文件（{groups, solo}）从这里进来时，按【当前在哪个页面】挑（v0.4.1.3）。
+        //    起因（用户实测）：在「博丽灵梦 的设定」页点 ⤓ 导入自己的世界书文件，
+        //    进来的却是【角色组】那 8 条 —— 旧代码先命中 data.groups 那一支就返回了，
+        //    solo 里那 34 条一条都进不来（实测：导入后 solo 仍是 34 条，等于白导）。
+        else if (data.groups || data.solo) {
+          const gs0 = Array.isArray(data.groups) ? data.groups : [];
+          const ss0 = Array.isArray(data.solo) ? data.solo : [];
+          let pick = [];
+          if (_wbCtx.kind === 'solo') {
+            pick = ss0.filter(s => s && s.charId === _wbCtx.id);
+            if (!pick.length) pick = ss0;             // 认不出是哪个角色 → 退回归并全部 solo
+          } else {
+            pick = gs0.filter(g => g && g.id === _wbCtx.id);
+            if (!pick.length) pick = gs0;             // 不是这一组 → 退回全部组
+          }
+          if (!pick.length) pick = gs0.concat(ss0);   // 两边都没有 → 全并（老行为兜底）
+          incoming = pick.reduce((acc, x) => acc.concat((x && x.entries) || []), []);
         }
         // 常驻档（pos === 'always'）不需要触发词，别把它一起滤掉（v1.21.51）
         // ⚠️ 待确认的条目同样不能滤（v0.3.1）：它们正是因为"没读懂触发条件"才被标出来，
@@ -4891,6 +4974,9 @@ async function exportChatMarkdown() {
  * @param {object} [opts]
  * @param {boolean} [opts.cont]  true = 「续写」（v1.21.48）：不落用户消息、也不动输入框，
  *                   只让模型接着上一轮往下写。其余链路（历史 / 记忆 / 落库 / 渲染）完全一样。
+ * @param {string} [opts.sameSpeaker]  群聊专用（v0.4.0 复查）：这一轮必须由这个成员说。
+ *                   重新生成 / 换一个版本时由调用方传进来 —— 它们会先删掉旧回复，
+ *                   所以必须在【删之前】把"刚才是谁说的"取好，不能等 send() 自己去读。
  *
  * 为什么续写要做成 send 的一个分支、而不是另写一条生成路径：
  * 这条路径上挂着几十个已经踩过的坑（时间标记、记忆节奏、滚动摘要失效、
@@ -4898,6 +4984,10 @@ async function exportChatMarkdown() {
  */
 async function send(opts) {
   const cont = !!(opts && opts.cont);
+  // 群里重新生成 / 换版本时，由调用方把"刚才说话的那个人"传进来（v0.4.0 复查）。
+  // ⚠️ 必须在【删消息之前】取好再传 —— regenerate() 先删掉旧回复再调 send()，
+  //    那时候再去读"上一条回复是谁"读到的是更早的那条了。
+  const sameSpeaker = (opts && opts.sameSpeaker) || '';
   // ⚠️ 没有角色就别往下走（v1.21.60）。
   // 全新安装进来是空的（不再自动建角色），此时点发送会带着 myCharId = null
   // 一路走到请求组装，回复落库时 charId 也是 null —— 变成一条看不见、导不出、
@@ -4963,6 +5053,8 @@ async function send(opts) {
 //      b) 轮次永远不推 —— 表现是"她说了话，但下一条消息就没了、而且一直是同一个人"
 //    上面那段"跨 try 边界用到的变量一律在函数顶部 let 声明"的教训，这次自己又踩了一遍。
 let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, added = [], speaker = null;
+// 这一轮他是不是点名了某个人（@名字 / 名字：）—— 小说式一幕里要告诉她"你被点名了，必须接话"
+let namedInText = false;
   // 上下文预算（v1.21.54）：这几个同理 —— 撞超长后的重发发生在 try #2 里，
   // 而它们是在 try #1 里算出来的，块级作用域跨不过去（上面那段教训的又一例）。
   let ctxBudget = 0, histBudget = 0, ctxFit = null, ctxRetried = false, composeApiMsgs = null;
@@ -5090,7 +5182,26 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
     //   · 点名模式 / 文本里写了「@名字」或「名字：」→ 就是那个人
     //   · 否则按 memberIds 的顺序轮到谁是谁
     //   · 群里一个人都没了的话 speaker 为 null，退化成普通单聊（不炸）
-    speaker = isGroup(myChar) ? (pickSpeakerByText(myChar, visibleText) || groupSpeaker(myChar)) : null;
+    if (isGroup(myChar)) {
+      // 群里"这一轮谁说话"的判据（v0.4.0 复查，用户拍板走 A）：
+      //   ① 明确指定了同一个人（重新生成 / 换一个版本）→ 就是她
+      //   ② 续写（⟳）→ 刚才那个人继续说（按钮文案写的就是"让她接着往下写"）
+      //   ③ 话里点名（@甲 / 甲：）→ 那个人
+      //   ④ 都没有 → 轮到谁是谁
+      // ⚠️ ② 原来是没有的：cont 时 visibleText 是空的，pickSpeakerByText 认不出人，
+      //    于是直接落到 groupSpeaker(指针) —— 而指针在上一轮结束时【已经推过了】，
+      //    结果"续写"实际是"换个人说"，和按钮文案正好相反。
+      let spk = sameSpeaker ? (allChars.find(x => x.id === sameSpeaker) || null) : null;
+      if (!spk && cont) {
+        const lastId = await lastSpeakerCharId(myCharId);
+        if (lastId) spk = allChars.find(x => x.id === lastId) || null;
+      }
+      // 他这一句是不是冲着某个人说的（@名字 / 名字：）——小说式一幕里要告诉她
+      // "你被点名了，必须接话"，比只说"这一轮从你起头"强得多。
+      const namedCh = spk ? null : pickSpeakerByText(myChar, visibleText);
+      speaker = spk || namedCh || groupSpeaker(myChar);
+      namedInText = !!namedCh;
+    } else speaker = null;
 
     // 会变化的内容（记忆 / 当前时间 / 本轮颜文字开关 / 命中的世界书）独立成一条，放到历史之后
     // 记忆召回的话题（v1.21.56）：用【本轮说的话 + 最近两条】。
@@ -5102,8 +5213,14 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
       clockState, prevStory,
       // 临时场景（v1.21.47）：只进本轮段，不进稳定前缀
       scene: sceneOf(myChar),
-      // 群聊：这一轮只有这个人说话（v0.4.0）。单聊时是空串，那段提示不会出现。
+      // 群聊：这一轮轮到谁（v0.4.0）。单聊时是空串，那段提示不会出现。
       speaker: speaker ? speaker.name : '',
+      // v0.4.1 小说式一幕：开不开、在场都有谁（用来约束【名字】只能用这几个）
+      narrative: !!(isGroup(myChar) && myChar.narrative !== false),
+      memberNames: isGroup(myChar) ? groupMembers(myChar).map(m => m.name) : [],
+      named: namedInText,
+      // 篇幅档位（v0.4.1.1）：直接决定这一幕花多少 token
+      sceneLen: myChar.sceneLen || 'mid',
     });
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -5148,8 +5265,13 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
         { role: 'system', content: sysStable },
         // 提示词侧正则（v0.4.0）：同样只改这一份副本。当前这条用户消息是最新的一条（depth 0），
         // 所以历史里最后一条的 depth 是 1，往前递增。
-        ...fit.kept.map((m, i) => ({ role: m.role, content: stRe(m.content, 'prompt', fit.kept.length - i),
-          images: m.images, imageNotes: m.imageNotes })),
+        ...fit.kept.map((m, i) => {
+          // ⚠️ 前缀加在 stRe【之后】（v0.4.0 复查）：用户自己的正则该怎么作用还怎么作用，
+          //    否则正则一改就可能把前缀吃掉、或者被前缀干扰而匹配不上。
+          const body = stRe(m.content, 'prompt', fit.kept.length - i);
+          const tag = isGroup(myChar) ? speakerTag(m) : '';
+          return { role: m.role, content: tag ? tag + body : body, images: m.images, imageNotes: m.imageNotes };
+        }),
         { role: 'system', content: turnNote },
         ...(searchBlock ? [{ role: 'system', content: searchBlock }] : []),
         // 续写（v1.21.48）：不写用户消息，改成一条【只在本次请求里存在】的指令。
@@ -5344,14 +5466,21 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
       console.warn('[生成] 模型回了空白/纯标点，已用兜底接话替换：' + FB);
     }
 
-    // 4) 分段发送
-    const segs = P.splitMessages ? splitMessages(full, S.splitMax || 3) : [full];
+    // 4) 拆成要落库的几段
+    //    群聊「小说式一幕」（v0.4.1）：按【名字】拆成几条消息，各自挂各自的说话人；
+    //    没有名字的段落当旁白，不挂人。
+    //    单聊 / 关掉小说模式：还是老样子（由「分段发送」开关决定要不要拆）。
+    const narr = !!(isGroup(myChar) && myChar.narrative !== false);
+    const pieces = (narr && speaker)
+      ? splitBySpeaker(full, groupMembers(myChar), speaker)
+      : (P.splitMessages ? splitMessages(full, S.splitMax || 3) : [full])
+          .map(x => ({ text: x, speakerId: speaker ? speaker.id : '', narration: false }));
 
     // 先把消息全部落库成功，再移除气泡——避免「气泡没了但回复也没出现」
     added = [];
     // 同批分段共用一个基准时间，逐段 +i（见下面 ts 的说明）
     const tsBase = Date.now();
-    for (let i = 0; i < segs.length; i++) {
+    for (let i = 0; i < pieces.length; i++) {
       // 用发送时那张卡的 id 落库：生成期间切了角色，这条也只回到她名下，
       // 不会跑到新角色的聊天记录里。
       // ⚠️ ts 必须【逐段递增】（v1.21.24 修，审计第 5 条）。
@@ -5365,10 +5494,13 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
       // 若这 2~3ms 窗口内恰有别的消息落库，其 ts 会落在分段中间 →
       // 读出顺序变成「用户新消息插在她还没说完的话中间」。
       // 改成 base - (n-1-i)：整批仍在 base 及之前，不越过基准点。
-      const am = { id: uid(), charId: myCharId, role: 'assistant', content: segs[i], story: storyStamp(), ts: tsBase - (segs.length - 1 - i) };
+      const piece = pieces[i];
+      const am = { id: uid(), charId: myCharId, role: 'assistant', content: piece.text, story: storyStamp(), ts: tsBase - (pieces.length - 1 - i) };
       // 群聊：把说话的人记在这条消息上（v0.4.0）。
       // 不记的话，重开 App 之后所有气泡都没有名字 —— 一段多人对话读起来就是一锅粥。
-      if (speaker) am.speakerId = speaker.id;
+      // v0.4.1：小说式一幕里每一段有自己的说话人；没有名字的段落标成旁白。
+      if (piece.speakerId) am.speakerId = piece.speakerId;
+      else if (piece.narration) am.narration = true;
       if (i === 0 && usage) am.usage = usage;   // 这轮的用量记在第一条上
       await msgs.add(am);
       added.push(am);
@@ -5376,10 +5508,16 @@ let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, add
     // 群聊：这一轮说完了，轮到下一个人（v0.4.0）。
     // ⚠️ 放在落库【之后】—— 先推轮次再落库的话，落库失败会白推一格，
     //    表现是"有人被跳过了"，而且没人看得出为什么。
-    if (speaker) await advanceGroupTurn(myChar, speaker);
+    // v0.4.1：小说式一幕里可能好几个人开口 —— 轮次从【最后开口的那个人】往后推。
+    // 不从锚点推的话，下一轮又从头开始，"刚刚才说过的人"会立刻被轮到。
+    if (speaker) {
+      const lastSpoken = [...pieces].reverse().find(x => x.speakerId);
+      const adv = lastSpoken ? (allChars.find(x => x.id === lastSpoken.speakerId) || speaker) : speaker;
+      await advanceGroupTurn(myChar, adv);
+    }
     // 她说完自动读出来（v1.21.56，开关默认关）。
     // ⚠️ 放在【整段都落库之后】：分段发送时逐段念会一顿一顿的，连起来念才像说话。
-    if (S.ttsOn) speak(segs.join(''));
+    if (S.ttsOn) speak(pieces.map(x => x.text).join(''));
     document.getElementById(placeholderId)?.remove();
     if (curCharId === myCharId) {
       for (let i = 0; i < added.length; i++) {
@@ -5785,7 +5923,7 @@ async function summarizeIfNeeded(charId = null) {
     // 与 summarizeChunk 完全同构。
     const charT = (await chars.get(cid0)) || curChar;
     const who = charT?.name || '她';
-    const txt = chunk.map(m => (m.role === 'user' ? '他：' : who + '：') + (m.content || '[图片]')).join('\n');
+    const txt = chunk.map(m => memLabel(m, who) + (m.content || '[图片]')).join('\n');
     // ⚠️ mine 单独分区（v1.21.37 修，复审 3.5）——
     // 它的人称【不统一】（用户自己写的可能用第三人称），而 AI 记忆强制用「我/你」。
     // 混在一起当示范会让模型模仿坏人称。
@@ -5804,34 +5942,21 @@ async function summarizeIfNeeded(charId = null) {
       const cl = await kv.get('clock:' + cid0, null);
       if (cl && typeof cl.day === 'number') day = cl.day;
     } catch { /* 读不到就用全局的，总比崩了强 */ }
+    // ⚠️ 群聊要用【另一套人称规则】（v0.4.1 复查）。
+    //    原来无论单聊还是群聊，提示词都写"下面【群名：】开头的是你自己说的话 → 换成「我」"——
+    //    而群名根本不是说话人（成员各有各的名字）。模型看到一堆「甲：」「乙：」，
+    //    提示词却在解释一个不存在的标记，于是它只能把所有人当成同一个"我"。
+    //    这正是长期记忆里"人格融合"的来源，而且写进去就再也分不出来了。
+    //    群聊改成的口径：**用名字记录谁做了什么，不要用「我」** ——
+    //    在这个群里「我」指谁不清楚，用名字才没有解读空间。
+    const memHead = memPersonaHead(who, isGroup(charT));
     const out = await onceChat({
       apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model: S.model,
       // 输出最多 5 条，但已知列表（known）会让输入很长、模型也容易话多，
       // 给 2048 留足余量（默认 1024 偏紧，同样会截断 JSON）。
       maxTokens: 2048,
       messages: [
-        { role: 'system', content:
-          `你是「${who}」，正在回顾你和他的对话，把值得长期记住的事记到心里。\n\n`
-          // ⚠️ 人称这一段必须写死"名字 → 我"的映射（2026-09-27 修）。
-          // 起因：角色O的长期记忆全成了第三人称。
-          // 原来只写"用『我』指你自己"，但模型不知道输入里的标记指谁；
-          // 而且带自称的角色（角色O自称妾身）会让指代更乱。
-          // 现在明确：输入里 `${who}：` 开头的是她自己，输出一律换成「我」。
-          + `【人称 —— 最重要，写错整条记忆就废了】\n`
-          + `  · 下面【${who}：】开头的是你自己说的话 → 输出时换成「我」。\n`
-          + `  · 下面【他：】开头的是他说的 → 输出时换成「你」。\n`
-          + `  · 【一律用「我」和「你」，不许用第三人称】。\n`
-          + `    错误示范："${who}喜欢喝咖啡"、"他说她怕黑" —— 这样写等于在写别人的事。\n`
-          + `    正确："我喜欢喝咖啡"、"你怕黑"。\n`
-          + `  · 你自己怎么称呼自己（比如自称「妾身」）是【说话时】的事，\n`
-          + `    记忆里统一用「我」，不要写成"妾身喜欢……"。\n`
-          // ⚠️ 主客方向 + 兜底（v0.3.1）：括号里那些第三人称的动作描写，模型复述时
-          //    会把「谁对谁做的」写反（实测出过「我会摸你的翅膀」这种刚好相反的记法）。
-          //    只写禁止不够 —— 再给一条「拿不准就改写成状态句」的出路，它才不会硬猜。
-          + `  · 括号里的动作，主语多半是【他】、承受方是你 —— 方向别记反。\n`
-          + `    他做的 → 用「你」当主语：✓「你揉了揉我的头发」　✗「我揉了揉你的头发」。\n`
-          + `  · 拿不准是谁做的，就改写成状态句：「我的头发被你揉乱了」，\n`
-          + `    不要写「我摸你的翅膀」这种分不清方向的说法。\n\n`
+        { role: 'system', content: memHead
           + `【分两类】\n`
           + `· fact = 关于他本人的稳定事实（喜好、习惯、经历、关系、忌讳、在意的东西），不会过期。\n`
           + `· event = 有时限的事（假期、约定、某段时间的状态），要给出失效的那一天。\n\n`
@@ -6134,6 +6259,10 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
     // 带上 freq 和"是不是这一批新写的"——模型要靠它决定哪些保留细节、哪些可以抽象掉。
     // 用时间戳区分新旧，不需要改数据结构。
     const freshCut = Date.now() - 5 * 60 * 1000;
+    // ⚠️ 群聊要单独交代一句（v0.4.1.1）：上面新写的群记忆是【用名字】记的，
+    //    而这份提示词整篇在讲「你 / 他」，还会把名字改回「我」——
+    //    那等于把刚修好的东西又抹掉，而且抹的是【已经落库】的记忆。
+    const dedupeGrp = isGroup(await chars.get(cidFor));
     const src = JSON.stringify(list.map(m => ({
       text: m.text,
       kind: m.kind || 'fact',
@@ -6166,6 +6295,8 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
       messages: [
         { role: 'system', content:
           `你是「${who}」。下面是你记下的关于他的事。请把它们重新整理一遍——\n`
+          + (dedupeGrp ? `⚠️ 这是【群】的记忆：条目里的人名指的是【不同的人】。`
+            + `整理时务必【保留名字】，不要改成「我」—— 在这个群里「我」指谁不清楚。\n` : ``)
           + `⚠️ 这不是「看看要不要整理」，是【动手整理】。把下面这些原样返回等于这次白做。\n\n`
 
           + `【第一步：合并同主题的条目 —— 必做】\n`
@@ -6734,21 +6865,14 @@ async function summarizeChunk(charId, chunk) {
   // 起因：summarizeIfNeeded 那条路早就改成用名字了（见那边的长注释），
   // 归档这条路漏了 —— 模型看到一串「我：xxx」，会理解成一段第一人称文本，
   // 复述时转成第三人称，记忆里的人称就飘了（角色O那次就是这么来的）。
-  const txt = chunk.map(m => (m.role === 'user' ? '他：' : who + '：') + (m.content || '[图片]')).join('\n');
+  const txt = chunk.map(m => memLabel(m, who) + (m.content || '[图片]')).join('\n');
   const out = await onceChat({
     apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model: S.model,
     messages: [
       { role: 'system', content:
-        `你是「${who}」，正在回顾你和他的对话，把值得长期记住的事记到心里。\n\n`
-        + `【人称 —— 最重要，写错整条记忆就废了】\n`
-        + `  · 下面【${who}：】开头的是你自己说的话 → 输出时换成「我」。\n`
-        + `  · 下面【他：】开头的是他说的 → 输出时换成「你」。\n`
-        + `  · 一律用「我」指你自己，用「你」指他，【不要用第三人称】，也不要写名字。\n`
-        + `  例：✓「你喜欢坐在窗边发呆」　✗「他喜欢坐在窗边发呆」　✗「${who}喜欢…」\n`
-        + `  · 括号里的动作，主语多半是【他】、承受方是你 —— 方向别记反。\n`
-        + `    他做的 → 用「你」当主语：✓「你揉了揉我的头发」　✗「我揉了揉你的头发」。\n`
-        + `  · 拿不准是谁做的，就改写成状态句：「我的头发被你揉乱了」，\n`
-        + `    不要写「我摸你的翅膀」这种分不清方向的说法。\n\n`
+        // ⚠️ 和 summarizeIfNeeded 共用同一份开场 + 人称规则（v0.4.1）。
+        //    这两处历史上各漏过一次「我：」的坑，就是因为在各写各的。
+        memPersonaHead(who, isGroup(char))
         + `【分两类】\n`
         + `· fact = 关于他本人的稳定事实（喜好、习惯、经历、关系、忌讳、在意的东西），不会过期。\n`
         + `· event = 有时限的事（假期、约定、某段时间的状态），要给出失效的那一天。\n\n`
@@ -6929,10 +7053,12 @@ function renderAttachPreview() {
 
 // ================= 头像裁剪 =================
 let cropImg = null, cropScale = 1, cropX = 0, cropY = 0, cropBase = 1, cropSize = 300;
-let cropTarget = 'char';   // 'char' = 角色头像，'me' = 我的头像
+let cropTarget = 'char';   // 'char' = 角色头像，'me' = 我的头像，'group' = 群头像
+let cropGroupId = '';     // cropTarget === 'group' 时，存到哪个群
 
-function openCropper(dataUrl, target = 'char') {
+function openCropper(dataUrl, target = 'char', gid = '') {
   cropTarget = target;
+  cropGroupId = gid || '';
   const img = new Image();
   img.onload = () => {
     cropImg = img;
@@ -7387,6 +7513,42 @@ function groupMembers(c) {
 }
 
 /**
+ * 她在【这个群】里的设置（v0.4.1.1）。
+ *
+ * ⚠️ 刻意【不是】把她的卡复制一份进群，而是只存改过的那几项，没改的一律跟随她自己的卡。
+ *    复制听起来更直观（"刚建群等于照抄一份"），但有个治不好的毛病：
+ *    **复制完就各走各的** —— 你之后把她单聊的设定改好了，群里那份还停在旧的，
+ *    而且没有任何界面能告诉你"这个群里的是哪一版"。三个人 × 几个群 = 几份都不会同步。
+ *    覆盖层给的是同样的隔离（群内改了绝不碰单聊），但"跟随"是默认状态，
+ *    改错了清空就回到她本人 —— 这比复制少一份要维护的东西，不是多一个概念。
+ *
+ * 存法：group.memberCfg = { [charId]: { note, persona, muted } }
+ *   note    群内补充（追加在她设定后面的一两句话）
+ *   persona 群内人设（填了就【替换】她自己的设定，留空=跟随）
+ *   muted   群里基本不让她开口（点名仍会答，那是用户明确要的）
+ */
+function memberCfgOf(g, cid) {
+  const all = (g && g.memberCfg && typeof g.memberCfg === 'object') ? g.memberCfg : {};
+  const one = all[cid];
+  return (one && typeof one === 'object') ? one : {};
+}
+
+/** 她在群里实际用的人设文本（群内覆盖优先，否则跟随她自己的卡） */
+function personaInGroup(g, m) {
+  const cfg = memberCfgOf(g, m.id);
+  const over = String(cfg.persona || '').trim();
+  if (over) return { text: over.replace(/[\r\n\t ]+/g, ' ').trim(), overridden: true };
+  return { text: String(m.persona || '').replace(/[\r\n\t ]+/g, ' ').trim(), overridden: false };
+}
+
+/** 群里有谁（静音的也算在场，只是不参与轮流） */
+function mutedSet(g) {
+  const s = new Set();
+  for (const m of groupMembers(g)) if (memberCfgOf(g, m.id).muted) s.add(m.id);
+  return s;
+}
+
+/**
  * 把成员的设定拼成群的人设，写进 group.persona。
  * 这样 buildStablePrompt 一行都不用改 —— 它本来就只是读 char.persona。
  */
@@ -7394,27 +7556,73 @@ function composeGroupPersona(c) {
   const ms = groupMembers(c);
   const lines = ['你们是「' + (c.name || '这个群') + '」里的人，此刻待在一起。在场的有：'];
   ms.forEach((m, i) => {
-    const who = String(m.persona || '').replace(/[\r\n\t ]+/g, ' ').trim().slice(0, 400);
-    lines.push((i + 1) + '. ' + m.name + '：' + (who || '（没写设定）'));
+    const p = personaInGroup(c, m);
+    const cfg = memberCfgOf(c, m.id);
+    let tail = '';
+    // ⚠️ 群内补充放在【紧挨着名字】的位置，不是另起一段 ——
+    //    这是"她在这个群里是什么样"，跟她的设定是同一件事的两个层次。
+    if (String(cfg.note || '').trim()) tail += '（在这个群里：' + String(cfg.note).replace(/[\r\n\t ]+/g, ' ').trim().slice(0, 200) + '）';
+    if (cfg.muted) tail += '（她这会儿基本不开口）';
+    lines.push((i + 1) + '. ' + m.name + '：' + (p.text.slice(0, 400) || '（没写设定）') + tail);
   });
   const note = String(c.groupNote || '').trim();
   if (note) lines.push('', '【这个群是怎么回事】', note);
+  // ⚠️ 群级的「他是谁」（v0.4.1.2）：用户反馈"群内人设没有『他』的，
+  //    不同的她各自的设定容易打架"。他说得对 —— 每个成员的卡里都各写了一套
+  //    关于他的关系，喂进同一个上下文就是几套说法互相矛盾。
+  //    所以给群一条【共用的】说法，并明确它优先，冲突时以这里为准。
+  const he = String(c.heNote || '').trim();
+  if (he) lines.push('', '【在她们眼里，他是谁】', he,
+    '（**这一条优先于**她们各自设定里关于他的说法 —— 有冲突以这里为准）');
   return lines.join('\n');
 }
 
 /** 成员变了就重算人设。群聊的"设定"就是这么来的 —— 不用手写。 */
 async function refreshGroupPersona(c) {
   if (!isGroup(c)) return c;
+  let dirty = false;
   const next = composeGroupPersona(c);
-  if (c.persona !== next) { c.persona = next; await chars.put(c); }
+  if (c.persona !== next) { c.persona = next; dirty = true; }
+  // ⚠️ 轮次指针是【下标】，成员一变就可能指到别人身上（v0.4.0 复查）。
+  //    删掉一个成员后 groupMembers 少一个，turnIndex 落在范围外 ——
+  //    而"改成员"恰恰是群现在唯一能改的东西，用户一改就会撞到，
+  //    表现是"下一轮说话的人莫名其妙换了一个"，而且没有任何提示。
+  const n = groupMembers(c).length;
+  if (n > 0 && (Number(c.turnIndex) || 0) >= n) { c.turnIndex = 0; dirty = true; }
+  if (dirty) await chars.put(c);
   return c;
+}
+
+/** 上一条回复是谁说的（用来实现"续写 = 刚才那人继续说"） */
+async function lastSpeakerCharId(charId) {
+  try {
+    const all = await msgs.list(charId, 0, true);
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (all[i] && all[i].role === 'assistant') return all[i].speakerId || '';
+    }
+  } catch { /* 读不到就当没有 */ }
+  return '';
 }
 
 /** 这一轮轮到谁（轮流模式下按 memberIds 的顺序转） */
 function groupSpeaker(c) {
   const ms = groupMembers(c);
   if (!ms.length) return null;
+  // ⚠️ 用户【点了名】的优先，而且【不受静音影响】（v0.4.1.1 自查发现）。
+  //    原来的写法只改 turnIndex，而 groupSpeaker 会跳过静音的人 ——
+  //    于是点一个"少开口"的成员：界面提示"下一轮轮到她"，实际换了个人说，
+  //    用户明确表达的意愿被静默忽略。点名和静音冲突时，点名的意图更强。
+  if (c.pinId) {
+    const pin = ms.find(m => m.id === c.pinId);
+    if (pin) return pin;
+  }
   const i = Math.max(0, Number(c.turnIndex) || 0);
+  // 静音的人跳过（v0.4.1.1）。全都静音了就还是给一个 —— 不能把群聊卡死。
+  const muted = mutedSet(c);
+  for (let k = 0; k < ms.length; k++) {
+    const m = ms[(i + k) % ms.length];
+    if (!muted.has(m.id)) return m;
+  }
   return ms[i % ms.length];
 }
 
@@ -7436,10 +7644,158 @@ function pickSpeakerByText(c, text) {
   return null;
 }
 
+/**
+ * 把模型的回复按【名字】拆成"一幕里的几段"（v0.4.1，群聊小说式一幕）。
+ *
+ * ⚠️ 这是**解析 + 兜底**，不是"要求模型这么写就完事"。
+ *    诊断文档 §6 那张表说得很清楚：让模型在正文里夹带归属，可靠性低
+ *    （它会用昵称、把叙述段也带上名字、或者干脆不遵守）。所以三条规矩：
+ *      · 认得出的名字 → 归那个人
+ *      · 【旁白】/认不出的名字 / 没有【】的行 → 算旁白（不挂 speakerId）
+ *      · **整段一个名字都没认出来 → 整段归主说话人**，退化成老行为
+ *    绝不允许"解析失败就丢内容"，也绝不允许"猜一个名字挂上去"。
+ */
+function splitBySpeaker(text, members, primary) {
+  const raw = String(text == null ? '' : text).trim();
+  const fallback = [{ text: raw, speakerId: primary ? primary.id : '', narration: false }];
+  if (!raw) return fallback;
+  const byName = new Map();
+  for (const m of (members || [])) {
+    const n = String(m.name || '').trim();
+    if (n) byName.set(n, m);
+  }
+  const out = [];
+  let sawTag = false;
+  // 连着几行都没有【】时并成【一段旁白】，不要一行一个气泡 —— 那读起来更碎
+  let narrBuf = null;
+  const flushNarr = () => {
+    if (narrBuf && narrBuf.text.trim()) out.push({ text: narrBuf.text.trim(), speakerId: '', narration: true });
+    narrBuf = null;
+  };
+  for (const line of raw.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;                    // 空行只当分隔，不进正文
+    const m = /^【\s*([^】]{1,24})\s*】(.*)$/.exec(s);
+    if (m) {
+      flushNarr();
+      sawTag = true;
+      const nm = m[1].trim();
+      const who = byName.get(nm) || null;
+      const rest = m[2].trim();
+      if (who) {
+        out.push({ text: rest, speakerId: who.id, narration: false });
+      } else {
+        // ⚠️ 认不出的名字（模型用了昵称、或者写了个不在场的人）→【不猜】。
+        //    整行当旁白，而且【把【名字】原样留着】—— 这样用户看得见
+        //    "模型用了一个我不认识的名字"，而不是被悄悄抹掉。
+        out.push({ text: s, speakerId: '', narration: true });
+      }
+      continue;
+    }
+    if (!narrBuf) narrBuf = { text: s };
+    else narrBuf.text += '\n' + s;
+  }
+  flushNarr();
+  // ⚠️ 一个【】都没有 = 模型压根没按格式来 → 整段归主说话人（老行为），不拆也不丢
+  if (!sawTag) return fallback;
+  const kept = out.filter(x => x && String(x.text || '').trim());
+  return kept.length ? kept : fallback;
+}
+
+/**
+ * 喂给"总结/归档/滚动摘要"那个模型看的【谁说的】（v0.4.1）。
+ *
+ * ⚠️ 群聊里原来三处都写成 `who + '：'`，而 who 是这条 characters 记录的名字 ——
+ *    群记录的名字是「周末茶会」。于是喂进去的输入长这样：
+ *        他：今天怎么样
+ *        周末茶会：她笑了笑。
+ *        周末茶会：我也不太想去。
+ *    三个成员**全被标成同一个名字**，总结模型只能当成"一个人说的"。
+ *    更要命的是它接着把结果【永久写进长期记忆】，之后每一轮都注入 ——
+ *    比聊天里那个身份串台更糟：那个只影响一轮，这个会一直留在库里。
+ *    而且这三处同构（滚动摘要 2431 / 记忆整理 5859 / 归档总结 6808），
+ *    历史上已经各自修过一次「我：」的坑 —— 所以这次抽成一个函数，
+ *    以后任何"把消息喂给模型"的地方都从这儿走。
+ *
+ * @param {any} m      消息（这个字段集合在一条 msg 上是开放的，写 object 只会招来类型噪音）
+ * @param {string} who 这条记录的显示名（单聊时就是角色名）
+ */
+function memLabel(m, who) {
+  if (m && m.role === 'user') return '他：';
+  const c = (m && m.speakerId) ? allChars.find(x => x.id === m.speakerId) : null;
+  if (c && c.name) return c.name + '：';
+  // 旁白没有说话人。硬塞一个名字会让人以为是她说的
+  if (m && m.narration === true) return '旁白：';
+  return (who || '她') + '：';
+}
+
+/**
+ * 记忆/归档总结那个模型看到的【开场 + 人称规则】（v0.4.1）。
+ *
+ * ⚠️ 群聊必须用另一套。原来无论单聊还是群聊都写
+ *    "下面【${who}：】开头的是你自己说的话 → 换成「我」"，
+ *    而群名根本不是说话人（成员各有各的名字）。模型看到一堆「甲：」「乙：」，
+ *    提示词却在解释一个不存在的标记 —— 它只能把所有人当成同一个"我"。
+ *    这正是长期记忆里"人格融合"的来源，**而且写进去就再也分不出来了**。
+ *    比聊天里那个身份串台更糟：那个只影响一轮，这个永久留在库里、每轮都注入。
+ *
+ * 抽成一个函数是因为这条路有【两处同构】（记忆整理 summarizeIfNeeded / 归档总结 summarizeChunk），
+ * 历史上已经各自修过一次「我：」的坑 —— 各写一份就一定会再漏一次。
+ */
+function memPersonaHead(who, isGrp) {
+  if (isGrp) {
+    return '你在整理「' + who + '」这个群聊里发生的事，目的是给这个群留下长期记忆。\n\n'
+      + '【谁是谁 —— 最重要，写错整条记忆就废了】\n'
+      + '  · 下面每行开头是**说话人的名字**，他们【是不同的人】，别混成同一个人。\n'
+      + '  · ' + who + ' 是这个群的名字，【不是任何一个人的名字】，别拿它当说话人。\n'
+      + '  · 下面【他：】开头的是他（用户）说的。\n'
+      + '  · 【不要用「我」】—— 这个群里「我」指谁不清楚。提到具体的人一律用名字：\n'
+      + '    错误示范："我不太想去"（谁不想去？）　正确："乙不太想去"。\n'
+      + '  · 他仍然用「你」：✓"你不喜欢下雨"。\n'
+      + '  · 【旁白：】开头的是场面描写，不是谁说的话，要记就写成"当时……"。\n\n';
+  }
+  return '你是「' + who + '」，正在回顾你和他的对话，把值得长期记住的事记到心里。\n\n'
+    // ⚠️ 人称这一段必须写死"名字 → 我"的映射（2026-09-27 修）。
+    // 起因：角色O的长期记忆全成了第三人称。
+    // 原来只写"用『我』指你自己"，但模型不知道输入里的标记指谁；
+    // 而且带自称的角色（角色O自称妾身）会让指代更乱。
+    + '【人称 —— 最重要，写错整条记忆就废了】\n'
+    + '  · 下面【' + who + '：】开头的是你自己说的话 → 输出时换成「我」。\n'
+    + '  · 下面【他：】开头的是他说的 → 输出时换成「你」。\n'
+    + '  · 一律用「我」指你自己，用「你」指他，【不要用第三人称】，也不要写名字。\n'
+    + '  例：✓「你喜欢坐在窗边发呆」　✗「他喜欢坐在窗边发呆」　✗「' + who + '喜欢…」\n'
+    + '  · 括号里的动作，主语多半是【他】、承受方是你 —— 方向别记反。\n'
+    + '    他做的 → 用「你」当主语：✓「你揉了揉我的头发」　✗「我揉了揉你的头发」。\n'
+    + '  · 拿不准是谁做的，就改写成状态句：「我的头发被你揉乱了」，\n'
+    + '    不要写「我摸你的翅膀」这种分不清方向的说法。\n\n';
+}
+
 /** 说话的人存进消息里（界面要按这个显示名字和头像） */
 function speakerCharOf(m) {
   if (!m || !m.speakerId) return null;
   return allChars.find(x => x.id === m.speakerId) || null;
+}
+
+/**
+ * 发进模型的【谁说的】前缀（v0.4.0 复查新增，群聊诊断文档 3.2 第一层）。
+ *
+ * ⚠️ 只拼进【这一轮的请求体副本】，绝不回写库 —— 和 stRe 是同一条红线。
+ *
+ * 为什么必须有它：群聊里历史消息原来一律是"不带名字的 assistant 消息"，
+ * 在模型眼里【全是它自己刚说的】。然后 system 段突然宣布"你现在是丙" ——
+ * 它会延续上一条的语气、身份和视角。这是必然而不是概率：
+ * 第二个人一开口就是第一个人的腔调。
+ *
+ * 三种标记：
+ *   【甲】  这条是甲说的（assistant 且有 speakerId）
+ *   【旁白】场面描写 / 群的开场白（没有 speakerId 的 assistant 消息）
+ *   无标记  他自己说的话（role === 'user'）
+ * 这三种含义在 buildTurnNote 的「这一轮你演谁」里逐条讲给学生听了（persona.js）。
+ */
+function speakerTag(m) {
+  if (!m || m.role === 'user') return '';
+  const c = speakerCharOf(m);
+  return c ? '【' + (c.name || '她') + '】' : '【旁白】';
 }
 
 /** 群聊时把轮次往后推一格 */
@@ -7448,6 +7804,8 @@ async function advanceGroupTurn(c, speaker) {
   const ms = groupMembers(c);
   const i = ms.findIndex(x => x.id === speaker.id);
   c.turnIndex = i >= 0 ? (i + 1) % ms.length : 0;
+  // 点名的有效期就是【这一轮】—— 用掉就清掉，否则她会一直被钉在那儿
+  if (c.pinId) c.pinId = '';
   try { await chars.put(c); } catch { /* 记不上最多下一轮还是她，不致命 */ }
   if (curChar && curChar.id === c.id) curChar = c;
 }
@@ -7470,11 +7828,72 @@ function renderGroupRoster() {
       const i = ms2.findIndex(m => m.id === x.dataset.gr);
       if (i < 0) return;
       curChar.turnIndex = i;
+      curChar.pinId = ms2[i].id;   // 钉住她这一轮 —— 她就算被设成"少开口"也照说
       try { await chars.put(curChar); } catch { /* 记不住只影响下一轮 */ }
       renderGroupRoster();
       toast('下一轮轮到「' + (ms2[i].name || '') + '」', 2000);
     };
   });
+}
+
+/**
+ * 「她在这个群里是什么样」—— 群成员二级设置（v0.4.1.1）。
+ *
+ * 用户的原话：想有那种"进到群成员自己的设置里改一改"的地方，
+ * 而且**群里改了不能影响她在单聊里的设定**。
+ *
+ * ⚠️ 实现上【没有把她的卡复制一份进群】，只存改过的那几项（见 memberCfgOf 上面的长注释）。
+ *    复制的问题是"复制完就各走各的"：你之后把她单聊的设定改好了，
+ *    群里那份还停在旧的，而且界面看不出"这个群里的是哪一版"。
+ *    覆盖层给的是同样的隔离，"跟随她本人"是默认状态，清空就回去。
+ *
+ * 三样能改：
+ *   · 群内补充 —— 追加在她设定后面的一两句话（最常用："在这个群里她话少"）
+ *   · 群内人设 —— 填了就【替换】她自己的设定（想让她在群里完全是另一个人时用）
+ *   · 少开口   —— 不参与轮流（你点名还是会答，那是你明确要的）
+ */
+async function openGroupMemberCfg(gid, cid) {
+  const g = (await chars.get(gid)) || allChars.find(x => x.id === gid);
+  if (!isGroup(g)) return;
+  const m = allChars.find(x => x.id === cid);
+  if (!m) { toast('这个人已经不在本机了'); editGroupChat(gid); return; }
+  const cfg = memberCfgOf(g, cid);
+  $('modal-title').textContent = '她在「' + (g.name || '这个群') + '」里';
+  $('modal-ok').textContent = '保存';
+  $('modal-cancel').textContent = '返回';
+  $('modal-text').innerHTML =
+    '<p class="hint-text" style="margin:0 0 10px">这些<b>只影响这个群</b>。'
+    + '她在单聊里的设定、参数、记忆<b>一个字都不会动</b>。</p>'
+    + '<label class="field"><span>群内补充（加在她自己的设定后面）</span>'
+    + '<textarea id="mc-note" rows="3" placeholder="比如：在这个群里她话少，基本只跟乙搭腔。">'
+    + esc(cfg.note || '') + '</textarea></label>'
+    + '<label class="field" style="margin-top:12px"><span>群内人设（留空 = 跟随她自己的卡）</span>'
+    + '<textarea id="mc-persona" rows="5" placeholder="留空就跟她本人一模一样">'
+    + esc(cfg.persona || '') + '</textarea></label>'
+    + '<label class="look-switch" style="margin-top:8px"><input type="checkbox" id="mc-muted"'
+    + (cfg.muted ? ' checked' : '') + '><span>在群里少开口（不参与轮流，你点名仍会答）</span></label>'
+    + '<p class="hint-text" style="margin-top:12px">她自己的设定（只读）：<br>'
+    + esc(String(m.persona || '（没写）').replace(/[\r\n\t ]+/g, ' ').slice(0, 160)) + '…</p>';
+  $('modal').classList.remove('hidden');
+  $('modal-cancel').onclick = () => { $('modal').classList.add('hidden'); editGroupChat(gid); };
+  $('modal-ok').onclick = async () => {
+    const note = String((elv('mc-note') || {}).value || '').trim().slice(0, 500);
+    const persona = String((elv('mc-persona') || {}).value || '').trim().slice(0, 3000);
+    const muted = !!(elv('mc-muted') || {}).checked;
+    const cur = (await chars.get(gid)) || g;
+    const map = Object.assign({}, cur.memberCfg || {});
+    // 三样都空 = 恢复成"完全跟随她本人" —— 清掉这条，别在库里留一个空壳
+    if (!note && !persona && !muted) delete map[cid];
+    else map[cid] = { note, persona, muted };
+    cur.memberCfg = map;
+    await refreshGroupPersona(cur);
+    await chars.put(cur);
+    $('modal').classList.add('hidden');
+    await loadChars();
+    if (curCharId === gid) { curChar = allChars.find(x => x.id === gid) || cur; renderGroupRoster(); }
+    toast(note || persona ? '改好了（只在这个群里生效）' : '已恢复成跟随她本人');
+    editGroupChat(gid);
+  };
 }
 
 /**
@@ -7536,10 +7955,110 @@ function editGroupChat(gid) {
     pickName: '群聊名字',
     namePlaceholder: '比如：周末茶会',
     okText: '保存',
-    onOk: async (nm, ids) => {
+    delText: '删除这个群',
+    // ⚠️ v0.4.1：群的"设定"原来一个入口都没有 ——
+    //    groupNote（这个群是怎么回事）注入逻辑早就写好了，但**全项目没有一处写它**，
+    //    所以永远是空串；narrative（小说式一幕）是这一版新加的。
+    //    小说的质感很吃"这一幕在哪、你们是什么关系"，所以这两个入口是必须的。
+    extraHtml:
+      '<label class="field" style="margin-top:14px"><span>这个群是怎么回事</span>'
+      + '<textarea id="g-note" rows="3" placeholder="比如：每周六下午在她家喝茶。三个人认识很多年了，说话不客气。">'
+      + esc(g.groupNote || '') + '</textarea></label>'
+      + '<label class="look-switch" style="margin-top:6px"><input type="checkbox" id="g-narr"'
+      + (g.narrative === false ? '' : ' checked') + '><span>小说式一幕（一轮里可以几个人说话，并带旁白）</span></label>'
+      // 篇幅（v0.4.1.1）：用户实测"聊两轮 token 就没了"。
+      // 小说感是拿 token 换的，得让他自己选换多少 —— 默认中档。
+      + '<label class="field" style="margin-top:14px"><span>在她们眼里，他是谁（这个群共用一份）</span>'
+      + '<textarea id="g-he" rows="3" placeholder="比如：他是常来的老客，三个人都认识他，但只有甲知道他姓什么。">'
+      + esc(g.heNote || '') + '</textarea></label>'
+      + '<label class="field" style="margin-top:10px"><span>这一幕写多长（直接决定花多少 token）</span>'
+      + '<select id="g-len">'
+      + '<option value="short"' + ((g.sceneLen || 'mid') === 'short' ? ' selected' : '') + '>短 · 120~220 字，最多两个人开口</option>'
+      + '<option value="mid"' + ((g.sceneLen || 'mid') === 'mid' ? ' selected' : '') + '>中 · 200~350 字（默认）</option>'
+      + '<option value="long"' + (g.sceneLen === 'long' ? ' selected' : '') + '>长 · 350~600 字</option>'
+      + '</select></label>'
+      // 群头像（v0.4.1.1）：用户反馈"群聊头像改不了"。原来群记录 avatar 建群时置 null，没有任何 UI 能改。
+      + '<label class="field" style="margin-top:10px"><span>群头像</span>'
+      + '<input type="file" id="g-avatar" accept="image/*"></label>'
+      + '<div class="hint-text" style="margin-top:2px">选张图会自动压到 512 像素存进群记录（太大导备份会变慢）。</div>'
+      + '<div class="hint-text" style="margin-top:8px">想单独调某个人在这个群里的样子，点她名字右边那个 <b>⚙</b>。</div>',
+    // ⚠️ 删群入口（v0.4.0 复查）：原来【没有正常路径能删群】——
+    //    角色编辑页有删除按钮，但群不进那页；唯一能删到的是"长按气泡头像误进编辑页"
+    //    那条 bug 路径（见 缺陷 2）。等于用户的群是删不掉的。
+    onDelete: async () => {
+      if (destructiveBlocked('删群')) return;
+      let n = 0;
+      try { n = (await msgs.list(gid, 0, true)).length; } catch { n = 0; }
+      const ok = await confirmBox('删除这个群聊',
+        '<p>把「' + esc(g.name || '未命名') + '」和它的 <b>' + n + ' 条</b>聊天记录、'
+        + '以及<b>群自己的那份长期记忆</b>一起删掉？</p>'
+        + '<p><b>成员角色本身不受影响</b> —— 她们各自的单聊、设定、记忆都还在。</p>'
+        + '<p>这件事<b>无法撤销</b>。</p>', '删除');
+      if (!ok) return;
+      await purgeCharEverywhere(gid);
+      await settleAfterDelete(gid);
+      toast('已删除这个群（成员都还在）');
+    },
+    // 头像选完立刻压缩入库（不等"保存"）—— 用户在选图那一步的预期是"马上就换好了"，
+    // 而 file input 的 change 是异步的，拖到 onOk 里读还得再把 File 存一遍。
+    onRendered: (box) => {
+      const inp = elv('g-avatar');
+      if (!inp) return;
+      inp.onchange = async () => {
+        const file = inp.files && inp.files[0];
+        inp.value = '';                    // 允许再选同一张
+        if (!file) return;
+        try {
+          const raw = await fileToDataUrl(file);
+          const big = await compressImage(raw, 1600, 0.95);   // 和角色头像一样：先压再进裁剪器
+          $('modal').classList.add('hidden');                 // 裁剪页要露出来
+          openCropper(big, 'group', gid);
+        } catch (e) { console.error(e); toast('这张图读不出来，换一张试试'); }
+      };
+    },
+    // 齿轮 → 二级设置。⚠️ 先把弹窗里已经改过的东西存下来，
+    //    否则"改了群名→点齿轮→回来"会发现群名没了。
+    onMemberCfg: async (cid, sel) => {
+      const nmNow = String(($('pk-name') && $('pk-name').value) || '').trim();
+      const box = $('modal-text');
+      const cur = (await chars.get(gid)) || g;
+      if (nmNow) cur.name = nmNow;
+      const ids = [...sel];
+      if (ids.length >= 2) cur.memberIds = ids;
+      const noteEl = elv('g-note');
+      const narrEl = elv('g-narr');
+      const lenEl = elv('g-len');
+      const heEl = elv('g-he');
+      if (noteEl) cur.groupNote = String(noteEl.value || '').trim().slice(0, 2000);
+      if (narrEl) cur.narrative = !!narrEl.checked;
+      if (lenEl) cur.sceneLen = lenEl.value || 'mid';
+      if (heEl) cur.heNote = String(heEl.value || '').trim().slice(0, 1000);
+      await refreshGroupPersona(cur);
+      await chars.put(cur);
+      $('modal').classList.add('hidden');
+      await loadChars();
+      await openGroupMemberCfg(gid, cid);
+    },
+    onOk: async (nm, ids, box) => {
       if (ids.length < 2) { toast('至少要留两个人，不然就是单聊了', 3200); return; }
       g.name = nm;
       g.memberIds = ids;
+      // 从弹窗里读那几个字段（box 就是 #modal-text，openCharPicker 传过来的）
+      const noteEl = elv('g-note');
+      const narrEl = elv('g-narr');
+      const lenEl = elv('g-len');
+      if (noteEl) g.groupNote = String(noteEl.value || '').trim().slice(0, 2000);
+      if (narrEl) g.narrative = !!narrEl.checked;
+      if (lenEl) g.sceneLen = lenEl.value || 'mid';
+      const heEl2 = elv('g-he');
+      if (heEl2) g.heNote = String(heEl2.value || '').trim().slice(0, 1000);
+      // ⚠️ 移出群的人，她的"群内设置"也要一起删（v0.4.1.1 自查）。
+      //    留着的话：她回来时旧设置【悄无声息地复活】，而用户以为早就清掉了。
+      //    这类孤儿键在这个项目里出过好几次（kv 前缀表漏项那三次），所以顺手扫一遍。
+      if (g.memberCfg && typeof g.memberCfg === 'object') {
+        const keep = new Set(ids);
+        for (const k of Object.keys(g.memberCfg)) if (!keep.has(k)) delete g.memberCfg[k];
+      }
       await refreshGroupPersona(g);   // 人设跟着成员重算
       await chars.put(g);
       await loadChars();
@@ -7550,6 +8069,56 @@ function editGroupChat(gid) {
       toast('已更新「' + nm + '」', 2600);
     },
   });
+}
+
+/**
+ * 彻底删掉一个「角色 / 群」以及挂在它名下的一切（v0.4.0 复查抽出来的）。
+ *
+ * 抽出来的原因：群也要能删，而删一个要清【六样】—— 角色本体、聊天记录（含归档）、
+ * 长期记忆、世界书（成员身份 + 单独条目）、按 id 存的 kv 键、现实时间存档位。
+ * 在群那边抄一份 = 以后加一样漏一样。这个位置历史上已经漏过三次
+ * （v1.21.24 硬编码 10 个前缀漏了 memArchiveLastAt、v1.21.35 漏了 memNeedTidy、
+ *  v1.21.36 才改成扫库），所以这次不再复制第二份。
+ */
+async function purgeCharEverywhere(id) {
+  if (!id) return;
+  try { await wb.purgeChar(id); } catch { /* 清不掉也不影响删除本身 */ }
+  await chars.del(id);
+  // ⚠️ 不再靠人工维护前缀表：任何以 ':<id>结尾' 的键都清掉。
+  //    角色 id 是 uid() 生成的、永不复用，所以不会误删别的角色的键。
+  try {
+    const allKv = await kv.entries();
+    for (const e of allKv) {
+      const k = String(e.k || '');
+      if (k.endsWith(':' + id) || k.endsWith(':' + id + ':real')) {
+        try { await kv.del(e.k); } catch { /* 单条清不掉不影响整体 */ }
+      }
+    }
+  } catch {
+    for (const k of [...BACKUP_KV_PREFIXES, 'memTidyBackup:']) {
+      try { await kv.del(k + id); } catch { /* 清不掉也不影响删除 */ }
+    }
+  }
+  // ⚠️ clock:<id>:real 是【另一个键】（现实时间模式的存档位）——
+  //    上面扫尾缀那圈能覆盖它，但扫库失败退回按清单清时会漏，所以再显式删一次。
+  try { await kv.del('clock:' + id + ':real'); } catch { /* 同上 */ }
+}
+
+/** 删完之后把当前会话收到一个还存在的地方（删的可能正是正在聊的那个） */
+async function settleAfterDelete(oldId) {
+  await loadChars();
+  if (!allChars.length) { await showEmptyChat(); }
+  else if (allChars.some(c => c.id === curCharId)) await selectChar(curCharId);
+  else await selectChar(allChars[0].id);
+  renderCharList();
+  resetTo('chat');
+}
+
+/** 点/长按头像该进哪一页：群进「改成员」，普通角色进编辑页（v0.4.0 复查） */
+function openEditFor(id) {
+  const c = allChars.find(x => x.id === id) || (curCharId === id ? curChar : null);
+  if (isGroup(c)) { editGroupChat(id); return; }
+  openCharEdit(id);
 }
 
 function renderCharList() {
@@ -7580,9 +8149,7 @@ function renderCharList() {
     el.onclick = async (e) => {
       if (e.target.dataset.edit) {
         // 群聊走【群编辑】（改成员），不进普通角色编辑页 —— 理由见 editGroupChat 的注释
-        const target = allChars.find(x => x.id === e.target.dataset.edit);
-        if (isGroup(target)) editGroupChat(e.target.dataset.edit);
-        else openCharEdit(e.target.dataset.edit);   // 内部自己切页
+        openEditFor(e.target.dataset.edit);
         return;
       }
       await selectChar(el.dataset.id);
@@ -9940,7 +10507,52 @@ async function applyImport(data, p, file) {
   /** 把备份里的 charId 翻成本机实际 id；没映射过就原样返回 */
   const remap = (id) => (charIdMap.has(id) ? charIdMap.get(id) : id);
 
+  // ---- 群的成员 id 也要重映射 ----
+  // 起因：群是 characters 表里的一条普通记录（isGroup + memberIds[]），
+  // 上面那个循环把它【整条】落库，memberIds 是原样带进去的 ——
+  // 而成员角色如果走了「按名字认领」那条分支，本机 id 会和备份 id 不同。
+  // groupMembers() 是 allChars.find(x => x.id === id).filter(Boolean)，
+  // 找不到就静静丢掉 → 群里少人、不报错、不留痕。
+  // 同一类已经在 wbSolo.charId / messages.charId / memories.charId / kv 键上各修过一次，这是第五个。
+  //
+  // ⚠️ 必须【第二遍】做，不能在上面那个循环里顺手 map(remap)：
+  //    charIdMap 是那个循环一边走一边建的，成员的认领结果取决于
+  //    characters 数组里的先后顺序 —— 第一遍里 map 会漏掉"排在群后面"的成员。
+  // ⚠️ 加 want('chars') 闸门：群只跟着角色一起来，别的模式下不该去动本机的群。
+  if (want('chars')) {
+    const liveIds = new Set((await chars.all()).map(c => c.id));
+    let fixedGroups = 0;
+    let droppedMembers = 0;
+    for (const c of (data.characters || [])) {
+      if (!c || !Array.isArray(c.memberIds) || !c.memberIds.length) continue;
+      const gid = remap(c.id);
+      if (!liveIds.has(gid)) continue;                 // 这个群这次没导进来
+      // ⚠️ 用 chars.get 读回来再写，不直接 put 备份那条：
+      //    认领分支写进去的是 { ...keepAvatar(same), id: same.id }，它保留了本机头像。
+      //    拿备份的 c 拼会把那次保头像的处理丢掉。
+      const cur0 = await chars.get(gid);
+      if (!cur0) continue;
+      const mapped = c.memberIds.map(remap);
+      // ⚠️ 成员角色本身不在这份文件里（比如「仅角色」只带了一部分人）时，
+      //    那个 id 会留在数组里当悬空项 —— groupMembers 会滤掉所以不炸，
+      //    但它让"这个群本来有几个人"永远对不上。顺手摘掉并计数。
+      const next = mapped.filter(id => liveIds.has(id));
+      droppedMembers += mapped.length - next.length;
+      const same = next.length === (cur0.memberIds || []).length
+        && next.every((v, i) => v === (cur0.memberIds || [])[i]);
+      if (same) continue;                              // 一个都没变就别多写一次
+      try {
+        // 成员变了就把轮次指针收回 0：它是个【下标】，留着会指到别人身上
+        await chars.put({ ...cur0, memberIds: next, turnIndex: 0 });
+        fixedGroups++;
+      } catch { /* 单个群失败不影响其他 */ }
+    }
+    if (fixedGroups) console.log('[导入] 修正了 ' + fixedGroups + ' 个群的成员 id');
+    if (droppedMembers) console.log('[导入] 有 ' + droppedMembers + ' 个群成员不在这份备份里，已从群里摘掉');
+  }
+
   // ---- 世界书（组 + 单独角色一起，两层本来就是一套）----
+  let wbTurnedOn = false;   // 这次导入顺手把总开关打开了（v0.4.1.3）
   if (want('wb')) {
     try {
       // 同上：复数 worldsbook 是早期格式，也要认
@@ -9991,6 +10603,11 @@ async function applyImport(data, p, file) {
           catch (e2) { badWb++; console.error('[导入] 这一条单独设定写不进去，已跳过：', s.charId, e2); }
         }
       }
+      // ⚠️ 总开关关着就顺手打开（v0.4.1.3）—— 同「导入世界书文件」那条路：
+      //    导入报成功、世界书却一条不注入，用户只会得出"导入没用"。
+      if (S.worldbookOn === false && wbData) {
+        try { await saveSettings({ worldbookOn: true }); wbTurnedOn = true; } catch (e3) { /* 开关没打开不该挡导入 */ }
+      }
     } catch (e) {
       // ⚠️ 这里【不能】再是空的（v1.21.54，审计发现）：以前 catch 里连 console 都没有，
       // 世界书整段失败时用户只看到「导入完成」，而「完全还原」模式下本机那份已经被清掉了。
@@ -10018,6 +10635,13 @@ async function applyImport(data, p, file) {
         const rec = { ...m };
         if (!rec.charId) rec.charId = cid;
         else rec.charId = remap(rec.charId);
+        // ⚠️ speakerId 也要翻（v0.4.0 复查）—— 它是群聊里"这条是谁说的"。
+        //    这是同一类的【第六个】位置：charId 在数据模型里一共六处，
+        //    另外五处（messages.charId / memories.charId / wbSolo.charId /
+        //    wbGroups.members / kv 键）早就翻了，就这个漏了。
+        //    漏了的后果和成员 id 那次一样是静默的：speakerCharOf() 找不到人 →
+        //    气泡不显示说话人、提示词里的【名字】前缀退化成【旁白】。
+        if (rec.speakerId) rec.speakerId = remap(rec.speakerId);
         if (!rec.id) rec.id = uid();
         if (typeof rec.ts !== 'number' || !isFinite(rec.ts)) rec.ts = Date.now();
         if (!Array.isArray(rec.images)) rec.images = [];
@@ -10203,6 +10827,7 @@ async function applyImport(data, p, file) {
   if (typeof droppedSolo !== 'undefined' && droppedSolo) {
     bits.push(`${droppedSolo} 条世界书条目的角色本机没有，已跳过`);
   }
+  if (typeof wbTurnedOn !== 'undefined' && wbTurnedOn) bits.push('世界书原来是关着的，已帮你打开');
   if (kvN) bits.push(`记账 ${kvN} 项`);
   // ⚠️ 导入完之后，【内存里】那几份从 kv 读出来的东西要重新读一遍（v0.4.0）。
   //
@@ -10327,8 +10952,7 @@ function bindEvents() {
     //    那页能改人设，而群的人设是每次载入从成员【算出来】的 ——
     //    在那儿改完，下次进 App 就被覆盖回去，用户只会觉得"改了没用"。
     //    角色列表里的 ✎ 早就绕开了这条路，头顶这个入口一开始漏了。
-    if (isGroup(curChar)) { editGroupChat(curCharId); return; }
-    openCharEdit(curCharId);
+    openEditFor(curCharId);
   };
   $('chat-avatar').onclick = openCurCharEdit;
   $('chat-titletxt').onclick = openCurCharEdit;
@@ -10558,7 +11182,25 @@ function bindEvents() {
     try {
       const dataUrl = getCroppedDataUrl();
       cropImg = null;
-      if (cropTarget === 'me') {
+      if (cropTarget === 'group') {
+        // 群头像（v0.4.1.2）：和角色头像走【同一个裁剪器】——
+        // 用户反馈"选完直接存太敷衍，要能预览、能挪位置"。
+        const gid = cropGroupId;
+        cropGroupId = '';
+        if (gid) {
+          const cur = await chars.get(gid);
+          if (cur) {
+            cur.avatar = dataUrl;
+            await chars.put(cur);
+            await loadChars();
+            renderCharList();
+            if (curCharId === gid) await selectChar(gid);
+          }
+        }
+        goBack();
+        toast('群头像已更新');
+        if (gid) editGroupChat(gid);   // 回到群设置，接着改别的
+      } else if (cropTarget === 'me') {
         await saveSettings({ myAvatar: dataUrl });
         renderMyAvatar();
         goBack();
@@ -10619,44 +11261,14 @@ function bindEvents() {
     // 但【全项目零调用】—— 属于"函数写好了、接线忘了"。
     // 后果：角色组的 members 永久留着不存在的 charId（组列表显示"3 人"却只列 2 个），
     // wbSolo 整条残留成永远回收不了的孤儿数据。
-    try { await wb.purgeChar(editingId); } catch { /* 清不掉也不影响删除本身 */ }
-    await chars.del(editingId);
-    // 把所有「按角色 id 存」的键都清掉。id 是 uid() 生成的、不会复用，
-    // 漏清就会变成永远回收不了的孤儿键（原来只清了 clock:）。
-    // memRolling: 同理 —— 漏了它会留下永远回收不了的孤儿键（占着 IndexedDB 不释放）。
-    // ⚠️ 【根治】不再靠人工维护前缀表（v1.21.36 修，复审 新A1 —— 第 4 次复发）。
     //
-    // 历史（这个位置被改过三次，每次都是"新加键忘了加进清单"）：
-    //   · v1.21.24 硬编码 10 个前缀，漏了 memArchiveLastAt:
-    //   · v1.21.32 改成从 BACKUP_KV_PREFIXES 派生
-    //   · v1.21.35 新增 memZeroRetry:/memQueueLen: 时加进去了，注释还写"漏了会留孤儿"
-    //     —— 却漏了【同一批新增】的 memNeedTidy:（本轮新A1）
-    //
-    // 只要清单要人维护，就一定会再漏。改成扫库：任何以 ':<角色id>' 结尾的键都清掉。
-    // 天然覆盖未来新增的键，也不会误删（角色 id 是 uid()，永不复用）。
-    try {
-      const allKv = await kv.entries();
-      for (const e of allKv) {
-        if (String(e.k || '').endsWith(':' + editingId) || String(e.k || '').endsWith(':' + editingId + ':real')) {
-          try { await kv.del(e.k); } catch { /* 单条清不掉不影响整体 */ }
-        }
-      }
-    } catch { /* 扫库失败就退回按清单清，保证不崩 */
-      for (const k of [...BACKUP_KV_PREFIXES, 'memTidyBackup:']) {
-        try { await kv.del(k + editingId); } catch { /* 清不掉也不影响删除 */ }
-      }
-    }
-    // ⚠️ clock:<id>:real 是【另一个键】（现实时间模式的存档位，v1.20.21 新增），
-    // 上面的 'clock:' + id 匹配不到它 —— 漏了它会留下永远回收不了的孤儿键。
-    try { await kv.del('clock:' + editingId + ':real'); } catch { /* 同上 */ }
-    await loadChars();
-    if (!allChars.length) { await showEmptyChat(); }
-    // 删掉的如果不是正在聊的那个角色，就别动当前会话 —— 原来一律跳回
-    // allChars[0]，还会顺手改写 lastCharId，下次启动就回到别人那儿了。
-    else if (allChars.some(c => c.id === curCharId)) await selectChar(curCharId);
-    else await selectChar(allChars[0].id);
-    renderCharList();
-    resetTo('chat');
+    // ⚠️ v0.4.0 复查：这一整段（清世界书 + 删角色 + 清 kv 键 + 切走会话）
+    //    抽成了 purgeCharEverywhere() + settleAfterDelete()，两个入口共用。
+    //    抽出来的理由是【群也要能删】—— 抄第二份的话，以后加一样就漏一样，
+    //    而这个位置历史上已经漏过三次（下面那段注释原本就记着）。
+    //    kv 键的清理同时从"按前缀清单"改成"扫尾缀"，理由见那个函数里的注释。
+    await purgeCharEverywhere(editingId);
+    await settleAfterDelete(editingId);
     toast('已删除');
   };
 
@@ -11110,7 +11722,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.0';
+const WEB_VERSION_FALLBACK = '0.4.1.3';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

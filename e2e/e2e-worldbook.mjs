@@ -71,15 +71,17 @@ const purge = await page.evaluate(async () => {
 t('成员里去掉 c1', JSON.stringify(purge.members) === JSON.stringify(['c2']), JSON.stringify(purge.members));
 t('单独条目被清掉', purge.solo === null);
 
-console.log('=== 4. 总开关默认关闭 ===');
+console.log('=== 4. 总开关默认开着（v0.4.1.3 起）===');
 const on = await page.evaluate(async () => {
   const { kv } = await import('./js/db.js');
   const s = await kv.get('settings', {});
   return { v: s && s.worldbookOn };
 });
-t('worldbookOn 默认 false（用户要自己想开才开）', on.v === undefined || on.v === false, JSON.stringify(on));
+// ⚠️ v0.4.1.3 改成默认【开】：默认关着时导入世界书报成功却一条不注入，
+//    用户的原话是「导入没用…提示导入成功了但没显示」。
+t('worldbookOn 默认开（导入完直接生效）', on.v === undefined || on.v === true, JSON.stringify(on));
 
-// 总开关默认是关的（上一节刚验过）—— 不开它，点「全局设置」不会响应
+// v0.4.1.3 起默认就是开的；这里仍然显式写一遍，免得以后改默认值时这一节跟着失效
 await page.evaluate(async () => {
   const { kv } = await import('./js/db.js');
   const s = (await kv.get('settings', {})) || {};

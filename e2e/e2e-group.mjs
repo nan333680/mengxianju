@@ -23,8 +23,14 @@ const SRC = readCode(WWW + '/js/app.js');
 console.log('=== 1. 源码：群聊的几条关键约定还在 ===');
 t('群 = 带 isGroup + memberIds 的角色', SRC.includes('function isGroup(c)'));
 t('群的人设是从成员拼出来的（buildStablePrompt 一行没改）', SRC.includes('function composeGroupPersona'));
-t('推轮次在落库之后（先推会"有人被跳过"）', SRC.includes('if (speaker) await advanceGroupTurn(myChar, speaker);'));
-t('说话的人记在消息上', SRC.includes('if (speaker) am.speakerId = speaker.id;'));
+// ⚠️ 断言改成【比顺序】而不是【比字面】（v0.4.1）：
+//    原来写的是 SRC.includes('if (speaker) await advanceGroupTurn(myChar, speaker);') ——
+//    那是在断言"这行代码长这样"，句子一改就假红，而它真正想守的是【先后顺序】。
+t('推轮次在落库之后（先推会"有人被跳过"）',
+  SRC.indexOf('await advanceGroupTurn(myChar, adv)') > SRC.indexOf('await msgs.add(am)'),
+  { add: SRC.indexOf('await msgs.add(am)'), adv: SRC.indexOf('await advanceGroupTurn(myChar, adv)') });
+t('说话的人记在消息上（每一段按自己的说话人记）',
+  SRC.includes('if (piece.speakerId) am.speakerId = piece.speakerId;'));
 t('世界书并上成员的', SRC.includes('function wbEffectiveIds'));
 t('选成员时不会把"群"选进来（群不是人）', SRC.includes('excludeGroups'));
 t('正则预览只要最近 30 条，不读全量', SRC.includes('msgs.list(curCharId, 30, true)'));
@@ -131,7 +137,8 @@ const send = async (text) => {
 };
 await send('大家都在吗');
 const sysAll = (lastReq && lastReq.messages ? lastReq.messages : []).map(m => String(m.content || '')).join('\n');
-t('提示词里说了这一轮只有甲说话', sysAll.includes('这一轮只写「甲」'), sysAll.slice(-400));
+t('提示词里点名了这一轮演谁', sysAll.includes('你现在是「甲」'), sysAll.slice(-400));
+t('并且解释了历史里【名字】前缀是什么意思', sysAll.includes('标的是'), '');
 t('提示词里带了群的人设（名单 + 每人的设定）', sysAll.includes('在场的有') && sysAll.includes('甲：'), sysAll.slice(0, 300));
 t('提示词里并上了【乙】名下的常驻世界书（群要并成员的）', sysAll.includes('乙养了一只叫团子的猫'), '');
 const afterOne = await page.evaluate(async () => {

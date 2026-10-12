@@ -71,7 +71,7 @@ t('抽屉拉出来了', drawerOpen.active);
 t('聊天页原地不动（stay）', drawerOpen.chatStay);
 t('菜单有内容', drawerOpen.items > 0);
 
-console.log('=== 2. 世界书页：总开关默认关 → 入口灰 ===');
+console.log('=== 2. 世界书页：总开关默认开、入口可点（v0.4.1.3 改）===');
 await page.evaluate(() => {
   const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'worldbook');
   b.click();
@@ -85,21 +85,26 @@ const wb0 = await page.evaluate(() => ({
 }));
 console.log('   ' + JSON.stringify(wb0));
 t('进了世界书页', wb0.page);
-t('总开关默认关', wb0.on === false);
-t('全局设置灰着（点不进去）', wb0.gDisabled === true);
-t('单独角色灰着', wb0.sDisabled === true);
+// ⚠️ v0.4.1.3 改：默认【开】。起因是用户实测「导入世界书提示成功但没显示」——
+//    根因就是默认关着：既不注入，入口还是灰的、点了没反应。空的库注入空串，开着零成本。
+t('总开关默认开', wb0.on === true);
+t('全局设置可点（不再灰）', wb0.gDisabled === false);
+t('单独角色可点', wb0.sDisabled === false);
 
-console.log('=== 3. 开总开关 → 入口变可用 ===');
+console.log('=== 3. 关掉总开关 → 入口仍然可点，只是不注入 ===');
 await page.evaluate(() => { document.querySelector('#s-wb-on').click(); });
 await sleep(900);
 const wb1 = await page.evaluate(() => ({
   on: document.querySelector('#s-wb-on').checked,
   gDisabled: document.querySelector('#btn-wb-global').disabled,
   sDisabled: document.querySelector('#btn-wb-solo').disabled,
+  warn: !!document.querySelector('#wb-off-warn'),
 }));
-t('开关变开', wb1.on === true);
-t('全局设置可点了', wb1.gDisabled === false);
-t('单独角色可点了', wb1.sDisabled === false);
+t('开关变关', wb1.on === false);
+// ⚠️ 管理界面和"是否注入"是两件事：关着也必须能进去看/改（用户就是这么卡住的）
+t('关着也能点进全局设置', wb1.gDisabled === false);
+t('关着也能点进单独角色', wb1.sDisabled === false);
+t('关着时页面有醒目提示条', wb1.warn === true);
 
 console.log('=== 4. 全局设置：新建组（弹窗全选 + 命名）===');
 await jsClick('#btn-wb-global'); await sleep(800);

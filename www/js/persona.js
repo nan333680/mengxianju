@@ -88,11 +88,11 @@ export function decideKaomoji(freq, historyMsgs) {
 
 /** 频率档位 → 数值 */
 export const FREQ_PRESETS = [
-  { label: '关闭', value: 0 },
-  { label: '偶尔', value: 0.15 },
-  { label: '适中', value: 0.35 },
-  { label: '经常', value: 0.6 },
-  { label: '总是', value: 0.95 }
+  { label: '关闭', value: 0, d: '一个都不加。' },
+  { label: '偶尔', value: 0.15, d: '大概每六七条出现一次。' },
+  { label: '适中', value: 0.35, d: '大概每三条出现一次。' },
+  { label: '经常', value: 0.6, d: '大概每两条就有一个。' },
+  { label: '总是', value: 0.95, d: '基本每条都有 —— 用多了会腻。' }
 ];
 
 // ---------- system prompt 构建 ----------
@@ -492,7 +492,16 @@ export function buildStablePrompt(char, s, constWb) {
   if (freq <= 0) {
     exp.push('- 你不使用任何颜文字（如 (´・ω・`) 这类符号组合）。');
   } else {
-    exp.push(`- 你习惯的颜文字风格是${STYLE_NAME[style] || STYLE_NAME['jp-soft']}。`);
+  // ⚠️ v0.4.1.7：原来只报一个风格名（"日式温和"），四个风格在模型眼里几乎没差别 ——
+  //    用户实测反馈「四个区别不大并且有点单调」。现在把【这一风格自己的样例】也给它，
+  //    并要求别混用别的风格，四档才真的分得开。
+  {
+    const lib = KAOMOJI_LIB[style] || KAOMOJI_LIB['jp-soft'];
+    const samples = lib.slice(0, 4).join('  ');
+    exp.push('- 你习惯的颜文字风格是' + (STYLE_NAME[style] || STYLE_NAME['jp-soft'])
+      + '，常用的是这一类：' + samples + '。'
+      + '从这一类里挑，别混用别的风格（混着用看起来像换了个人）。');
+  }
   }
 
   const ef = s.emojiFreq ?? 0;
@@ -868,6 +877,8 @@ export function buildTurnNote(char, s, ctx = {}) {
         + '· **' + sizeHint + '** —— 只写上面点到名字的那几个，'
         + '别把在场的人挨个写一遍（那是点名册不是小说）\n'
         + '· 每个人只按**她自己那份设定**说话：语气、口癖、称呼都别串味\n'
+        + '· 上面标了「几乎不说话」的人：**只写她的动作和神态，不要给她台词** ——'
+        + '冷淡的角色照样在场，你看得见她在做什么，只是她不搭腔\n'
         + '· 结尾可以留个钩子（有人看向他、问了句什么），让他有话可接');
     } else {
       parts.push('# 这一轮你演谁\n'
@@ -1043,7 +1054,12 @@ export function buildTurnNote(char, s, ctx = {}) {
     const selfName = String(ctx.memWhoName || '');
     if (selfId) {
       const mine = memories.filter(m => m && m.who === selfId);
-      const shared = memories.filter(m => m && !m.who);
+      // ⚠️ v0.4.1.7：她是【中途被拉进来】的话，她加入之前的「大家都知道」不该进她的脑子 ——
+      //    用户原话「把人物拉入群聊的时候会带入已经有了的长期记忆，
+      //    我觉得拉进群的时候应该是人物刚创建好的样子」。
+      //    没有 memSince（老数据、或建群时就在的人）→ 不过滤，行为不变。
+      const since = Number(ctx.memSince) || 0;
+      const shared = memories.filter(m => m && !m.who && (!since || !m.ts || Number(m.ts) >= since));
       const minePick = rankMemories(mine, topic, 16);
       const sharedPick = rankMemories(shared, topic, 8);
       const keep = new Set(minePick.concat(sharedPick));

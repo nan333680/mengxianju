@@ -91,7 +91,9 @@ const DEFAULTS = {
   // 单位是估算的 token。48000 是折中：常见 64K 窗口下留得下回复，
   // 128K 窗口的用户可以往大调。撞爆窗口时还有自动降级兜底（见 send 的重试循环）。
   contextBudget: 48000,
-  kaomojiFreq: 0.15, kaomojiStyle: 'jp-soft', emojiFreq: 0.1,
+  // ⚠️ emojiFreq 原来的默认值写的是 0.1，而档位表里没有这一档（0 / 0.15 / 0.35 / 0.6 / 0.95）——
+  //    界面上就多出一个印着「0.1」的按钮（用户实测提过）。现在默认值也走档位表。
+  kaomojiFreq: 0.15, kaomojiStyle: 'jp-soft', emojiFreq: 0.15,
   verbosity: 'medium', splitMessages: false, splitMax: 3,
   typingDelay: 1.0, showTyping: true, hesitation: true,
   longMemory: false, theme: 'dark', fontSize: 15, showUsage: true,
@@ -942,7 +944,9 @@ function openPickChars(field, label, text) {
   $('pick-chars-list').innerHTML = others.map(c => {
     const cur = field === 'myProfile' ? (c.myProfile || '') : (c.myEnv || '');
     const sub = String(cur).trim() ? ('已有 ' + String(cur).trim().length + ' 字') : '还没有';
-    return '<label><input type="checkbox" data-id="' + esc(c.id) + '" checked>'
+    // ⚠️ v0.4.1.7：原来每行都带 checked（一打开就是全选），用户每次都得先点一次"全不选"
+    //    再挑人（他原话："我每次选对应的角色都得先点一次全不选然后再去选择"）。现在默认全不勾。
+    return '<label><input type="checkbox" data-id="' + esc(c.id) + '">'
       + '<span class="nm">' + esc(c.name || '未命名') + '</span>'
       + '<span class="sub">' + sub + '</span></label>';
   }).join('');
@@ -1134,6 +1138,24 @@ async function loadSettings() {
   // 不写的话 settings 这个键一直是空的 —— 导出备份里没有它，
   // 恢复备份时又会被判成「全新安装」，行为对不上。
   if (isFreshInstall) await kv.set('settings', S);
+  // ⚠️ v0.4.1.7：颜文字 / emoji 的档位表统一成五档之后，老数据里可能存着表外的值
+  //    （典型是 emojiFreq=0.1 —— 更早版本的默认值）。这里按"最近的档"吸附一次并写回，
+  //    免得设置页永远显示一个对不上的数字。角色自己覆盖过的值不动（那是他明确设的）。
+  {
+    const near = (v, def) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return def;
+      let best = FREQ_PRESETS[0];
+      for (const p of FREQ_PRESETS) if (Math.abs(Number(p.value) - n) < Math.abs(Number(best.value) - n)) best = p;
+      return Number(best.value);
+    };
+    const k2 = near(S.kaomojiFreq, 0.15), e2 = near(S.emojiFreq, 0.15);
+    if (k2 !== S.kaomojiFreq || e2 !== S.emojiFreq) {
+      S.kaomojiFreq = k2; S.emojiFreq = e2;
+      await kv.set('settings', S);
+    }
+  }
+
   // 旧版的「全局统一」开关已废弃（改成角色编辑里的「覆盖全局设定」）。
   // 强制关掉：否则旧数据里还开着它，会让所有角色都用全局参数、忽略各自设置。
   S.globalOverride = false;
@@ -5313,6 +5335,8 @@ let namedInText = false;
       // 别人视角的记忆不进来 —— 把甲的私事塞进乙的嘴里比"她不知道"更糟。
       memWho: (isGroup(myChar) && speaker) ? speaker.id : '',
       memWhoName: (isGroup(myChar) && speaker) ? (speaker.name || '') : '',
+      // 她是中途进来的话，把加入时间也带上 —— 她加入之前的群共识不注入（v0.4.1.7）
+      memSince: (isGroup(myChar) && speaker) ? (Number(memberCfgOf(myChar, speaker.id).joinedAt) || 0) : 0,
     });
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -7308,10 +7332,8 @@ async function openCharEdit(id, presetKey) {
   // 人设 / 开场白现在也是入口行（v1.21.58），角标同样要跟着刚填进去的值走
   refreshCharTextBriefs();
 
-  $('e-kao-freq').dataset.v = P.kaomojiFreq;
-  renderSeg('e-kao-freq', FREQ_PRESETS, P.kaomojiFreq, v => { $('e-kao-freq').dataset.v = v; });
-  $('e-emoji').dataset.v = P.emojiFreq;
-  renderSeg('e-emoji', EMOJI_PRESETS, P.emojiFreq, v => { $('e-emoji').dataset.v = v; });
+  renderFreqRow('e-kao-freq', 'e-kao-freq-brief', P.kaomojiFreq, v => { $('e-kao-freq').dataset.v = v; });
+  renderFreqRow('e-emoji', 'e-emoji-brief', P.emojiFreq, v => { $('e-emoji').dataset.v = v; });
   $('e-reasoning').dataset.v = P.reasoningEffort;
   renderSeg('e-reasoning', REASONING_PRESETS, P.reasoningEffort, v => { $('e-reasoning').dataset.v = v; });
   // ⚠️ 三态：绕开 P 直接读角色自己的字段（v1.21.36 修，复审 #3）。
@@ -7397,10 +7419,8 @@ async function openCharEdit(id, presetKey) {
     $('e-think').dataset.v = String(v.think);
     renderSeg('e-think', POV_PRESETS, v.think, x => { $('e-think').dataset.v = String(x); });
     // 颜文字 / 表情
-    $('e-kao-freq').dataset.v = v.kao;
-    renderSeg('e-kao-freq', FREQ_PRESETS, v.kao, x => { $('e-kao-freq').dataset.v = x; });
-    $('e-emoji').dataset.v = v.emoji;
-    renderSeg('e-emoji', EMOJI_PRESETS, v.emoji, x => { $('e-emoji').dataset.v = x; });
+    renderFreqRow('e-kao-freq', 'e-kao-freq-brief', v.kao, x => { $('e-kao-freq').dataset.v = x; });
+    renderFreqRow('e-emoji', 'e-emoji-brief', v.emoji, x => { $('e-emoji').dataset.v = x; });
     // 上下文轮数
     $('e-ctx').value = v.ctx;
     $('e-v-ctx').textContent = v.ctx;
@@ -7703,6 +7723,9 @@ function composeGroupPersona(c) {
     }
     if (vs.length) tail += '（她私下怎么看别人：' + vs.join('；') + '）';
     if (cfg.muted) tail += '（她这会儿基本不开口）';
+    // 「只做动作，不说话」（v0.4.1.7）：冷淡的角色也该在场，只是不出声 ——
+    // 用户原话「冷淡的可以做到不说话，但行为表达和神态反应输出出来了能够看得到」。
+    if (cfg.actOnly) tail += '（她几乎不说话 —— 只写她的动作、神态和反应，别给她台词）';
     // 群内覆盖给足字数（GROUP_PERSONA_MAX）；跟随她本人时只取前 400 字 ——
     // 她自己的卡可能几千字，三个人一起塞进群上下文太贵。这条规矩要在二级页写明。
     const cap = p.overridden ? GROUP_PERSONA_MAX : 400;
@@ -8231,7 +8254,7 @@ async function renderGroupSettings() {
   $('g-members').innerHTML = ms.map(m => {
     const mc = memberCfgOf(g, m.id);
     const hasP = (Array.isArray(mc.personaItems) && mc.personaItems.length) || String(mc.persona || '').trim();
-    const mk = mc.muted ? '少开口' : (hasP ? '群内人设' : (String(mc.note || '').trim() ? '有补充' : ''));
+    const mk = mc.muted ? '少开口' : (mc.actOnly ? '只做动作' : (hasP ? '群内人设' : (String(mc.note || '').trim() ? '有补充' : '')));
     const av = m.avatar ? ('<img src="' + esc(m.avatar) + '">') : '🎎';
     return '<div class="g-tile' + (mc.muted ? ' mute' : '') + '" data-gm="' + esc(m.id) + '">'
       + '<div class="av">' + av + '</div>'
@@ -8318,14 +8341,8 @@ function loadGroupStyle(g) {
     renderSeg('g-pov', POV_STYLE_PRESETS, povKey, v => { $('g-pov').dataset.v = v; groupPovNote(v); });
     groupPovNote(povKey);
   }
-  if ($('g-kao-freq')) {
-    $('g-kao-freq').dataset.v = String(Number(P.kaomojiFreq) || 0);
-    renderSeg('g-kao-freq', FREQ_PRESETS, Number($('g-kao-freq').dataset.v), v => { $('g-kao-freq').dataset.v = v; });
-  }
-  if ($('g-emoji')) {
-    $('g-emoji').dataset.v = String(Number(P.emojiFreq) || 0);
-    renderSeg('g-emoji', EMOJI_PRESETS, Number($('g-emoji').dataset.v), v => { $('g-emoji').dataset.v = v; });
-  }
+  renderFreqRow('g-kao-freq', 'g-kao-freq-brief', Number(P.kaomojiFreq) || 0, v => { $('g-kao-freq').dataset.v = v; });
+  renderFreqRow('g-emoji', 'g-emoji-brief', Number(P.emojiFreq) || 0, v => { $('g-emoji').dataset.v = v; });
 }
 
 function syncGroupParamUI() {
@@ -8515,6 +8532,7 @@ function pickGroupMembers() {
     onOk: async (nm, ids) => {
       if (ids.length < 2) { toast('至少要留两个人，不然就是单聊了', 3200); return; }
       const cur = (await chars.get(_gId)) || g;
+      const cur0Ids = (cur.memberIds || []).slice();
       if (nm) cur.name = nm;
       cur.memberIds = ids;
       // 移出的人那份群内设置一起删（和长按移出走同一条规矩）
@@ -8523,6 +8541,20 @@ function pickGroupMembers() {
         for (const k of Object.keys(cur.memberCfg)) if (!keep.has(k)) delete cur.memberCfg[k];
       }
       if ((Number(cur.turnIndex) || 0) >= ids.length) cur.turnIndex = 0;
+      // ⚠️ 新拉进来的人记一个【加入时间】（v0.4.1.7）：
+      //    用户原话「把人物拉入群聊的时候会带入已经有了的长期记忆，
+      //    我觉得拉进群的时候应该是人物刚创建好的样子」。群的长期记忆是全群共用的，
+      //    新来的会被灌一耳朵她没经历过的旧事。有这个时间戳，注入时就能把
+      //    【她加入之前】的群共识滤掉；老数据没这个字段 → 不过滤，行为不变。
+      const before = new Set(cur0Ids);
+      const map0 = Object.assign({}, cur.memberCfg || {});
+      for (const id of ids) {
+        if (before.has(id)) continue;
+        map0[id] = Object.assign({}, map0[id] || {}, { joinedAt: Date.now() });
+      }
+      const keep0 = new Set(ids);
+      for (const k of Object.keys(map0)) if (!keep0.has(k)) delete map0[k];
+      cur.memberCfg = map0;
       await refreshGroupPersona(cur);
       await chars.put(cur);
       await loadChars();
@@ -8579,6 +8611,7 @@ function memberCfgEmpty(one) {
   if (String(one.persona || '').trim()) return false;
   if (Array.isArray(one.personaItems) && one.personaItems.length) return false;
   if (one.muted) return false;
+  if (one.actOnly) return false;
   // ⚠️ 判据不能用 Number(...) 的真假（v0.4.1.6）：活跃度【0 是合法值】
   //    （把某人在概率模式下压到 0 = 基本不让她开口），
   //    而 Number(0) 是 falsy —— 原来会把"只设了活跃度 0"的成员整个当成空壳删掉，
@@ -8613,7 +8646,9 @@ async function renderGroupMemberPage() {
   $('gm-avatar').innerHTML = m.avatar
     ? '<img src="' + esc(m.avatar) + '" style="width:100%;height:100%;object-fit:cover">' : '🎎';
   $('gm-name').textContent = m.name || '';
-  $('gm-sub').textContent = '她在「' + (g.name || '这个群') + '」里 · 只影响这个群';
+  const joined = Number(cfg.joinedAt) || 0;
+  $('gm-sub').textContent = '她在「' + (g.name || '这个群') + '」里 · 只影响这个群'
+    + (joined ? (' · ' + new Date(joined).toLocaleDateString('zh-CN') + ' 加入') : '');
   const items = personaItemsOf(cfg);
   $('gm-persona-brief').textContent = items.length ? ('已覆盖 · ' + items.length + ' 条') : '跟随她本人';
   const note = String(cfg.note || '').trim();
@@ -8628,10 +8663,15 @@ async function renderGroupMemberPage() {
   $('gm-talk').value = String(talkOf(g, m.id));
   $('gm-v-talk').textContent = String(talkOf(g, m.id));
   $('gm-muted').checked = !!cfg.muted;
+  $('gm-actonly').checked = !!cfg.actOnly;
   $('btn-gm-back').onclick = async () => { goBack(); await renderGroupSettings(); };
   $('btn-gm-save').onclick = async () => {
     const t = Number($('gm-talk').value);
-    await memberCfgWrite(_gId, _gmId, { talk: (t === 50 ? null : t), muted: !!$('gm-muted').checked });
+    await memberCfgWrite(_gId, _gmId, {
+      talk: (t === 50 ? null : t),
+      muted: !!$('gm-muted').checked,
+      actOnly: !!$('gm-actonly').checked || null,
+    });
     await renderGroupMemberPage();
     toast('改好了（只在这个群里生效）');
   };
@@ -8891,26 +8931,18 @@ async function openGroupWorldbook(gid) {
   const allGroups = await wb.groups();
   const ms = groupMembers(g);
   let total = 0;
-  const blocks = [];
+  const rows = [];
   for (const m of ms) {
     const solo = await wb.solo(m.id);
     const se = (solo && Array.isArray(solo.entries)) ? solo.entries : [];
     const inGroups = allGroups.filter(x => (x.members || []).indexOf(m.id) >= 0);
-    const ge = [];
-    for (const grp of inGroups) for (const e of (grp.entries || [])) ge.push({ e: e, from: grp.name || '角色组' });
-    const list = [];
-    for (const e of se) list.push({ e: e, from: '她的单独设定' });
-    for (const x of ge) list.push(x);
-    total += list.filter(x => x.e.on !== false).length;
-    if (!list.length) continue;
-    blocks.push('<div class="mem-sub">' + esc(m.name) + ' 带来的 ' + list.length + ' 条</div>'
-      + list.map(x => '<div class="wb-item" style="padding:8px 10px">'
-          + '<div class="wi-head"><span class="wi-title">' + esc(x.e.title || '（没标题）') + '</span>'
-          + (x.e.pos === 'always' ? '<span class="wi-pos">一直生效</span>'
-             : (x.e.pos === 'tail' ? '<span class="wi-pos">临场</span>' : ''))
-          + (x.e.on === false ? '<span class="wi-off">已关闭</span>' : '')
-          + '<span class="wi-key" style="margin-left:auto">' + esc(x.from) + '</span>'
-          + '</div></div>').join(''));
+    let n = se.length;
+    for (const grp of inGroups) n += (grp.entries || []).length;
+    total += n;
+    rows.push('<button class="pick-row" data-mw="' + esc(m.id) + '">'
+      + '<span>' + esc(m.name) + '</span>'
+      + '<em>' + (n ? ('带来 ' + n + ' 条') : '还没有') + '</em>'
+      + '<i class="fold-arrow">›</i></button>');
   }
   $('modal-title').textContent = '这个群的世界书';
   $('modal-ok').textContent = '去编辑群自己的条目';
@@ -8919,12 +8951,123 @@ async function openGroupWorldbook(gid) {
     + '群里生效的词条 = <b>这个群自己的 ' + ownN + ' 条</b> + <b>成员带进来的</b>（她们各自的单独设定，'
     + '以及她们所在的世界书角色组）。现在一共 <b>' + (ownN + total) + ' 条</b>在生效。'
     + '</p>'
-    + (blocks.length ? blocks.join('') : '<div class="sys-line">成员还没有任何单独词条。</div>');
+    + '<p class="hint-text" style="margin:0 0 8px">点某个人，看她带了哪些进来。</p>'
+    + (rows.length ? rows.join('') : '<div class="sys-line">群里还没有人。</div>');
   $('modal').classList.remove('hidden');
   $('modal-cancel').onclick = () => { $('modal').classList.add('hidden'); };
   $('modal-ok').onclick = () => { $('modal').classList.add('hidden'); openWbSolo(gid); };
+  $('modal-text').querySelectorAll('[data-mw]').forEach(b => {
+    b.onclick = () => { openGroupMemberWb(gid, b.dataset.mw); };
+  });
 }
+
 /**
+ * 三级窗口：她带进群里的世界书（v0.4.1.7）。
+ *
+ * 用户要的形态：「角色带来的世界书那些内容变成一个入口按钮，按钮上显示人物名字和带来了多少条。
+ * 点了角色后进入对应角色的三级窗口，三级窗口类似聊天框点右上角世界书后进去看到的格式，
+ * 对世界书的修改增减参考右上角世界书的…不要给我直接跳转到右上角的世界书界面设置」。
+ *
+ * 所以这里【不跳转】，就地列出 + 就地改。两条规矩：
+ *   · 她自己那份【单独设定】可以开关 / 改 / 删 / 加 —— 就是她的世界书，单聊里同步生效（界面写明）
+ *   · 她所在的【世界书角色组】只读：那份是组里所有人共用的，从这里改会牵动别人
+ */
+async function openGroupMemberWb(gid, memberId) {
+  const g = allChars.find(x => x.id === gid);
+  const m = allChars.find(x => x.id === memberId);
+  if (!isGroup(g) || !m) return;
+  const ctx = { kind: 'solo', id: memberId };
+  const entries = await wbLoadEntries(ctx);
+  const allGroups = await wb.groups();
+  const inGroups = allGroups.filter(x => (x.members || []).indexOf(memberId) >= 0);
+  const groupRows = [];
+  for (const grp of inGroups) {
+    for (const e of (grp.entries || [])) groupRows.push({ e: e, from: grp.name || '角色组' });
+  }
+  $('modal-title').textContent = m.name + ' 的世界书';
+  $('modal-ok').textContent = '加一条';
+  $('modal-cancel').textContent = '返回';
+  const draw = () => {
+    const list = entries.length
+      ? entries.map((e, i) => '<div class="wb-item" data-me="' + i + '">'
+          + '<div class="wi-head"><span class="wi-title">' + esc(e.title || ('条目 ' + (i + 1))) + '</span>'
+          + (e.pos === 'always' ? '<span class="wi-pos">一直生效</span>'
+             : (e.pos === 'tail' ? '<span class="wi-pos">临场</span>' : ''))
+          + (e.on === false ? '<span class="wi-off">已关闭</span>' : '')
+          + '</div>'
+          + '<div class="wi-keys">' + ((e.keys || []).length
+              ? (e.keys || []).map(k => '<span class="wi-key">' + esc(k) + '</span>').join('') 
+              : '<span class="wi-key">不看触发词</span>') + '</div>'
+          + '<div class="wi-body">' + esc(String(e.content || '').slice(0, 160)) + '</div>'
+          + '<div class="wi-btns">'
+          + '<button class="ghost-btn sm" data-mt="' + i + '">' + (e.on === false ? '启用' : '停用') + '</button>'
+          + '<button class="ghost-btn sm" data-med="' + i + '">编辑</button>'
+          + '<button class="ghost-btn sm" data-mdel="' + i + '">删除</button>'
+          + '</div></div>').join('')
+      : '<div class="sys-line">她还没有单独设定。</div>';
+    const grpList = groupRows.length
+      ? '<p class="hint-text" style="margin:14px 0 6px">她所在的<b>世界书角色组</b>（组里所有人共用，这里只读）：</p>'
+        + groupRows.map(x => '<div class="wb-item" style="padding:8px 10px">'
+            + '<div class="wi-head"><span class="wi-title">' + esc(x.e.title || '（没标题）') + '</span>'
+            + (x.e.pos === 'always' ? '<span class="wi-pos">一直生效</span>' : '')
+            + (x.e.on === false ? '<span class="wi-off">已关闭</span>' : '')
+            + '<span class="wi-key" style="margin-left:auto">' + esc(x.from) + '</span></div></div>').join('')
+      : '';
+    $('modal-text').innerHTML = '<p class="hint-text" style="margin:0 0 10px">'
+      + '下面这些是<b>她自己的世界书</b>（' + entries.length + ' 条）—— 改了<b>单聊里也一样</b>，'
+      + '因为它本来就是她这个角色的一部分。<br>只读的那部分是角色组共用的，不在这里改。'
+      + '</p>'
+      + list + grpList;
+    const box = $('modal-text');
+    box.querySelectorAll('[data-mt]').forEach(b => b.onclick = async () => {
+      const i = Number(b.dataset.mt);
+      const next = entries.slice();
+      next[i] = Object.assign({}, next[i], { on: next[i].on === false });
+      await wbSaveEntries(ctx, next);
+      await openGroupMemberWb(gid, memberId);
+    });
+    box.querySelectorAll('[data-mdel]').forEach(b => b.onclick = async () => {
+      const i = Number(b.dataset.mdel);
+      const ok = await confirmBox('删掉这条设定',
+        '<p>把「' + esc(entries[i].title || ('条目 ' + (i + 1))) + '」从<b>' + esc(m.name) + '</b>的世界书里删掉？</p>'
+        + '<p>她的单聊也会跟着少这一条。这件事<b>无法撤销</b>。</p>', '删除');
+      if (!ok) return;
+      const next = entries.slice();
+      next.splice(i, 1);
+      await wbSaveEntries(ctx, next);
+      await openGroupMemberWb(gid, memberId);
+    });
+    box.querySelectorAll('[data-med]').forEach(b => b.onclick = async () => {
+      await editMemberWbEntry(gid, memberId, Number(b.dataset.med));
+    });
+  };
+  draw();
+  $('modal').classList.remove('hidden');
+  $('modal-cancel').onclick = () => { openGroupWorldbook(gid); };
+  $('modal-ok').onclick = async () => { await editMemberWbEntry(gid, memberId, -1); };
+}
+
+/** 借现有的条目编辑弹窗改她的某一条（改完回到三级窗口） */
+async function editMemberWbEntry(gid, memberId, index) {
+  const prevCtx = _wbCtx;
+  _wbCtx = { kind: 'solo', id: memberId };   // openEntryEditor 认的是这个全局
+  try {
+    await openEntryEditor(index);
+    // ⚠️ 条目编辑弹窗用的是同一个 #modal：这里把它的两个按钮包一层，
+    //    存/取消之后自动回到三级窗口，用户不会掉进"世界书总列表"那一页。
+    const ok0 = $('modal-ok').onclick, cancel0 = $('modal-cancel').onclick;
+    $('modal-ok').onclick = async () => {
+      if (ok0) await ok0();
+      await openGroupMemberWb(gid, memberId);
+    };
+    $('modal-cancel').onclick = async () => {
+      if (cancel0) await cancel0();
+      await openGroupMemberWb(gid, memberId);
+    };
+  } finally {
+    _wbCtx = prevCtx;
+  }
+}/**
  * 新建一个群。
  * ⚠️ 群不是"角色的复制品"，它自己的角色级参数一律【不设】——
  *    全走全局设置（effSettings 读不到 char[k] 就落回全局，天然如此）。
@@ -8954,6 +9097,9 @@ function openGroupChatCreator() {
         presetKey: 'blank',
         createdAt: Date.now(),
       };
+      // 建群那一刻所有人都是"一开始就在"（v0.4.1.7）：记下时间，以后中途拉人进来才有得比。
+      g.memberCfg = {};
+      for (const id of ids) g.memberCfg[id] = { joinedAt: Date.now() };
       g.persona = composeGroupPersona(g);
       await chars.put(g);
       await loadChars();
@@ -9060,6 +9206,58 @@ function isSegOn(pv, value) {
   return String(pv) === String(value);
 }
 
+/** 档位值的显示名（对不上就原样显示数字） */
+function nearestFreq(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return FREQ_PRESETS[0];
+  let best = FREQ_PRESETS[0];
+  for (const p of FREQ_PRESETS) {
+    if (Math.abs(Number(p.value) - n) < Math.abs(Number(best.value) - n)) best = p;
+  }
+  return best;
+}
+// ⚠️ v0.4.1.7：这里原来"对不上就原样显示数字"—— 老数据里存着 0.1（更早的默认值，
+//    不在档位表上）时，界面上就多出一个印着「0.1」的按钮，用户实测提过。
+//    现在一律显示【最近的档位名】，界面上不会再出现裸数字。
+function freqLabel(v) { return nearestFreq(v).label; }
+
+/** 频率类的入口行：点开一个小窗口选档位（v0.4.1.7）
+ *  起因（用户实测原话）：「颜文字频率和 emoji 频率这两个是五个选项…现在五个挡位应该看着全是文本，
+ *  但关闭的往上一挡是数字 0.1。你看要么是去弄成进度条那种还是就按照几个挡位那种。
+ *  如果是挡位，我想的是做一个小窗口来选择，把布局弄的没那么冗余。」 */
+function renderFreqRow(rowId, briefId, value, onPick) {
+  const row = $(rowId);
+  if (!row) return;
+  row.dataset.v = String(value);
+  const b = $(briefId);
+  if (b) b.textContent = freqLabel(value);
+  row.onclick = () => openFreqPicker(Number(value), v => {
+    if (v === null) return;
+    row.dataset.v = String(v);
+    if (b) b.textContent = freqLabel(v);
+    onPick(v);
+  });
+}
+
+/** 借「描写详细程度」那个弹窗当通用档位选择器（同一个版式，改标题和说明就行） */
+function openFreqPicker(cur, onPick) {
+  const box = $('drive-modal'), list = $('drive-list');
+  if (!box || !list) return;
+  if ($('drive-title')) $('drive-title').textContent = '出现频率';
+  if ($('drive-sub')) $('drive-sub').innerHTML = '这是<b>平均多久出现一次</b>的档位，不是开关。'
+    + '<br>实际用不用还看上下文 —— 这一档只定"该不该出现"。';
+  const opts = FREQ_PRESETS.map(p => ({ v: String(p.value), t: p.label, d: p.d || '' }));
+  list.innerHTML = opts.map(o =>
+    '<button data-v="' + o.v + '" class="drive-item' + (o.v === String(nearestFreq(cur).value) ? ' on' : '') + '">'
+    + '<b>' + esc(o.t) + '</b><span>' + esc(o.d) + '</span></button>').join('');
+  list.querySelectorAll('button').forEach(b => b.onclick = () => {
+    closeDrivePicker();
+    onPick(Number(b.dataset.v));
+  });
+  $('drive-cancel').onclick = () => { closeDrivePicker(); onPick(null); };
+  box.classList.remove('hidden');
+}
+
 function renderSeg(containerId, presets, value, onPick) {
   const box = $(containerId);
   if (!box) return;
@@ -9082,10 +9280,10 @@ function renderSeg(containerId, presets, value, onPick) {
 }
 
 // ================= 设置页绑定 =================
-const EMOJI_PRESETS = [
-  { label: '关闭', value: 0 }, { label: '偶尔', value: 0.15 },
-  { label: '经常', value: 0.5 }, { label: '总是', value: 0.9 }
-];
+// ⚠️ v0.4.1.7：emoji 这张表和颜文字那张【本来就数值不一样】（0.1/0.15/0.5/0.9 对 0/0.15/0.35/0.6/0.95），
+//    于是默认值 emojiFreq=0.1 谁都对不上，renderSeg 会补一个按钮、上面直接印着「0.1」——
+//    用户看到的就是"关闭的往上一挡是个数字"。现在两张表共用同一套档位。
+const EMOJI_PRESETS = FREQ_PRESETS;
 
 // 非对话描写档位（管括号里的内容，和"回复长度"是两回事）
 // 描写详细程度（v1.21.31 新增）：全局一个四档 + 角色可覆盖。
@@ -12689,7 +12887,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.1.6';
+const WEB_VERSION_FALLBACK = '0.4.1.7';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

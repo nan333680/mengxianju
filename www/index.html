@@ -200,7 +200,7 @@
         </div>
         <p class="hint-text" id="g-pov-note">—</p>
         <div class="field"><span>颜文字频率</span>
-          <div class="seg" id="g-kao-freq"></div>
+          <button class="pick-row slim" id="g-kao-freq"><em id="g-kao-freq-brief">—</em><i class="fold-arrow">›</i></button>
         </div>
         <div class="field"><span>颜文字风格</span>
           <select id="g-kao-style">
@@ -211,7 +211,7 @@
           </select>
         </div>
         <div class="field"><span>emoji 频率</span>
-          <div class="seg" id="g-emoji"></div>
+          <button class="pick-row slim" id="g-emoji"><em id="g-emoji-brief">—</em><i class="fold-arrow">›</i></button>
         </div>
         </div>
       </div></div>
@@ -271,6 +271,9 @@
         <input id="gm-talk" type="range" min="0" max="100" step="5">
       </label>
       <label class="look-switch"><input type="checkbox" id="gm-muted"><span>在群里少开口（不参与轮流，你点名仍会答）</span></label>
+      <label class="look-switch" style="margin-top:8px"><input type="checkbox" id="gm-actonly"><span>只做动作，不说话（神态和举动照样写出来，但不给她台词）</span></label>
+      <p class="hint-text">「少开口」管的是<b>轮到谁开口</b>；「只做动作」管的是<b>她开口时写什么</b>。<br>
+        冷淡的角色可以用后者 —— 人还在场，眼神和动作都看得见，就是不出声。</p>
       <div class="hint-text">这些<b>只影响这个群</b>。她在单聊里的设定、参数、记忆一个字都不会动。</div>
     </section>
     <section class="group">
@@ -498,7 +501,7 @@
 
     <section class="group">
       <div class="field"><span data-i18n-en="Kaomoji frequency">颜文字频率</span>
-        <div class="seg" id="e-kao-freq"></div>
+        <button class="pick-row slim" id="e-kao-freq"><em id="e-kao-freq-brief">—</em><i class="fold-arrow">›</i></button>
       </div>
       <div class="field"><span data-i18n-en="Kaomoji style">颜文字风格</span>
         <select id="e-kao-style">
@@ -509,7 +512,7 @@
         </select>
       </div>
       <div class="field"><span data-i18n-en="Emoji frequency">emoji 频率</span>
-        <div class="seg" id="e-emoji"></div>
+        <button class="pick-row slim" id="e-emoji"><em id="e-emoji-brief">—</em><i class="fold-arrow">›</i></button>
       </div>
     </section>
 
@@ -1239,8 +1242,8 @@
      排在 #import-modal 之前 —— 层级靠 DOM 顺序（血泪 8）。 -->
 <div id="drive-modal" class="modal hidden">
   <div class="modal-box">
-    <h4>描写详细程度</h4>
-    <p class="drive-sub">控制她括号里的动作描写<b>必须写成什么样</b>。<br>
+    <h4 id="drive-title">描写详细程度</h4>
+    <p class="drive-sub" id="drive-sub">控制她括号里的动作描写<b>必须写成什么样</b>。<br>
        和「非对话描写」是两个独立开关：那个管<b>上限</b>（最多写多长），这个管<b>结构</b>（必须写成什么形状）。</p>
     <div id="drive-list" class="drive-list"></div>
     <div class="modal-btns">

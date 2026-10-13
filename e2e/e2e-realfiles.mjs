@@ -31,6 +31,33 @@ const page = await browser.newPage();
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// 请求拦截：我们要看【真进请求的提示词】。聊天那条回 SSE，其余回 JSON。
+let chatReq = null;
+const NL = String.fromCharCode(10);
+await page.setRequestInterception(true);
+page.on('request', req => {
+  if (req.url().includes('/chat/completions')) {
+    if (req.method() === 'OPTIONS') { req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'*', 'Access-Control-Allow-Methods':'*' } }); return; }
+    let body = {}; try { body = JSON.parse(req.postData() || '{}'); } catch (e) { /* ignore */ }
+    if (body.stream) {
+      chatReq = body;
+      const chunk = JSON.stringify({ choices: [{ delta: { content: '嗯。' } }] });
+      req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
+        body: 'data: ' + chunk + NL + NL + 'data: [DONE]' + NL + NL }); return;
+    }
+    req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'application/json',
+      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: '[]' } }] }) }); return;
+  }
+  req.continue();
+});
+const sysText = () => ((chatReq && chatReq.messages) || []).map(m => String(m.content || '')).join(NL + '@@' + NL);
+const send = async (txt) => {
+  await page.evaluate(x => { const el = document.getElementById('input'); el.value = x; el.dispatchEvent(new Event('input', { bubbles: true })); }, txt);
+  await sleep(200);
+  await page.evaluate(() => document.getElementById('btn-send').click());
+  for (let i = 0; i < 80; i++) { await sleep(300); const b = await page.$eval('#btn-stop', e => !e.classList.contains('hidden')).catch(() => false); if (!b) break; }
+  await sleep(700);
+};
 
 // ── 从文件里现算期望值 ──
 const F = {
@@ -228,6 +255,74 @@ if (got.length) {
   const speakerN = Object.values(OUT.messages || {}).flat().filter(m => m && m.speakerId).length;
   t('群聊的 speakerId 也带出来了', speakerN > 0, speakerN);
   t('导出的备份里没有 API Key', !OUT.settings || !OUT.settings.apiKey, OUT.settings && OUT.settings.apiKey);
+}
+
+
+// ⚠️ 备份里【不含 apiKey】（导出时故意抹掉），完全还原之后本机没有 Key →
+//    send() 会直接弹「请先到设置里填写 API Key」，一条请求都不发（第一版 9 条断言全红）。
+//    这里补一个测试用 Key。
+const putKey = () => page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const rec = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('settings'); q.onsuccess = () => r(q.result); });
+  const v = Object.assign({}, (rec && rec.v) || {}, { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com' });
+  await new Promise(r => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put({ k: 'settings', v }); tx.oncomplete = r; });
+  db.close();
+});
+await putKey();
+await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
+
+console.log('');
+console.log('=== F. 群聊提示词：用真实数据看谁真进了请求 ===');
+// 库此时是 10-13 那份（E 节刚重导过）
+const gidReal = g1013.id;
+const memOfGroup = (J.b1013.memories || []).filter(m => m && m.charId === gidReal);
+const gMembers = (g1013.memberIds || []).map(id => (J.b1013.characters.find(c => c.id === id) || {}).name).filter(Boolean);
+await page.evaluate((gid) => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === gid); if (c) c.click(); }, gidReal);
+await sleep(1500);
+chatReq = null;
+await send('在吗');
+const gSys = sysText();
+t('群聊真的发出了请求', !!chatReq, !!chatReq);
+t('人设里点名了两个成员', gMembers.every(n => gSys.includes(n)), { want: gMembers, head: gSys.slice(0, 80) });
+t('群自己的那份人设（在场的有…）进了系统提示', gSys.includes('在场的有'), '');
+if (memOfGroup.length) {
+  const one = String(memOfGroup[0].text || '').slice(0, 12);
+  t('群自己的长期记忆进了提示（' + memOfGroup.length + ' 条里的第一条）', gSys.includes(one), { want: one, has: gSys.includes(one) });
+} else {
+  t('这个群没有自己的记忆（跳过）', true, '');
+}
+t('这一轮点了名（群聊的发言调度生效）', /你现在是|这一幕怎么写|必须/.test(gSys), gSys.slice(0, 60));
+
+console.log('');
+console.log('=== G. 单聊提示词：真实角色 + 她自己的世界书 ===');
+// 挑一个在真实数据里【带常驻条目】的角色：常驻条目会进稳定前缀，是最好验的
+const soloAlways = (J.b1013.worldbook.solo || []).map(s => ({ s: s, always: (s.entries || []).filter(e => e && e.on !== false && e.pos === 'always') }))
+  .filter(x => x.always.length).sort((a, b) => b.always.length - a.always.length)[0];
+if (soloAlways) {
+  const ch = J.b1013.characters.find(c => c.id === soloAlways.s.charId);
+  console.log('   选中的角色：' + (ch && ch.name) + '（常驻 ' + soloAlways.always.length + ' 条：' + soloAlways.always.slice(0, 2).map(e => e.title).join('、') + '）');
+  if (ch) {
+    await page.evaluate(() => document.getElementById('btn-chars').click());
+    await sleep(800);
+    await page.evaluate((cid) => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === cid); if (c) c.click(); }, ch.id);
+    await sleep(1500);
+    chatReq = null;
+    await send('在吗');
+    const sSys = sysText();
+    const want = String(soloAlways.always[0].content || '').slice(0, 16);
+    t('单聊真的发出了请求', !!chatReq, !!chatReq);
+    t('她的人设进了提示', sSys.includes(String(ch.persona || '').slice(0, 12)), String(ch.persona || '').slice(0, 20));
+    t('她的常驻世界书条目进了稳定前缀', sSys.includes(want), { want: want, hit: sSys.includes(want) });
+    const herMem = (J.b1013.memories || []).filter(m => m && m.charId === ch.id);
+    if (herMem.length) {
+      t('她自己的长期记忆进了提示（共 ' + herMem.length + ' 条）', sSys.includes(String(herMem[0].text || '').slice(0, 12)), String(herMem[0].text || '').slice(0, 16));
+    } else {
+      t('她没有长期记忆（跳过）', true, '');
+    }
+  }
+} else {
+  console.log('   （这份备份里没有"一直生效"档的单独条目，跳过）');
 }
 
 console.log('');

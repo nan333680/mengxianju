@@ -60,6 +60,18 @@ const setSlider = async (sel, val) => {
 const setCheck = async (sel, val) => {
   await page.$eval(sel, (el, v) => { el.checked = v; el.dispatchEvent(new Event('change', { bubbles: true })); }, val);
 };
+// 频率类控件 v0.4.1.7 起不是分段按钮了：右边一个"当前档位"的入口行，点开是五档弹窗。
+const pickFreq = async (rowSel, label) => {
+  await page.click(rowSel);
+  await new Promise(r => setTimeout(r, 450));
+  const ok = await page.evaluate((l) => {
+    const x = [...document.querySelectorAll('#drive-list button')].find(y => (y.querySelector('b') || y).textContent.trim() === l);
+    if (x) { x.click(); return true; }
+    return false;
+  }, label);
+  await new Promise(r => setTimeout(r, 350));
+  return ok;
+};
 const pickSeg = async (sel, label) => {
   await page.evaluate((s, l) => {
     const b = [...document.querySelectorAll(s + ' button')].find(x => x.textContent.trim() === l);
@@ -127,7 +139,7 @@ await page.screenshot({ path: OUT + '/20-角色参数.png' });
 console.log('');
 console.log('=== 2. 给键山雏设 温度0.5 / 颜文字关闭 ===');
 await setSlider('#e-temp', 0.5);
-await pickSeg('#e-kao-freq', '关闭');
+await pickFreq('#e-kao-freq', '关闭');
 await new Promise(r => setTimeout(r, 300));
 await page.click('#btn-edit-save');
 await new Promise(r => setTimeout(r, 1000));
@@ -148,7 +160,7 @@ await page.evaluate(() => document.querySelector('#preset-list .char-card')?.cli
 await new Promise(r => setTimeout(r, 800));
 await page.$eval('#e-name', el => { el.value = '测试乙'; });
 await setSlider('#e-temp', 1.5);
-await pickSeg('#e-kao-freq', '总是');
+await pickFreq('#e-kao-freq', '总是');
 await new Promise(r => setTimeout(r, 300));
 await page.click('#btn-edit-save');
 await new Promise(r => setTimeout(r, 1200));
@@ -188,8 +200,8 @@ await new Promise(r => setTimeout(r, 800));
 const tempBack = await page.$eval('#e-temp', el => el.value);
 t('编辑页显示键山雏自己的温度 0.5', Math.abs(Number(tempBack) - 0.5) < 0.001, tempBack);
 
-const kaoOn = await page.$$eval('#e-kao-freq button.on', els => els.map(e => e.textContent.trim()));
-t('颜文字频率显示「关闭」', kaoOn.length === 1 && kaoOn[0] === '关闭', JSON.stringify(kaoOn));
+const kaoOn = await page.$eval('#e-kao-freq-brief', el => el.textContent.trim());
+t('颜文字频率显示「关闭」', kaoOn === '关闭', JSON.stringify(kaoOn));
 await page.click('#btn-edit-back');
 await new Promise(r => setTimeout(r, 700));
 

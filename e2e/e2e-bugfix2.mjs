@@ -229,12 +229,27 @@ console.log('=== 8. 档位表：当前值不在档位里时也有高亮 ===');
 await page.click('#btn-chars'); await sleep(500);
 await page.evaluate(() => document.querySelectorAll('#char-list .char-card button[data-edit]')[0].click());
 await sleep(700);
-const emojiOn = await page.$$eval('#e-emoji button.on', els => els.map(e => e.textContent));
-console.log('   表情包高亮的档位: ' + JSON.stringify(emojiOn));
-t('emoji 档位有高亮（默认 0.1 不在原表里）', emojiOn.length === 1, JSON.stringify(emojiOn));
-const kaoOn = await page.$$eval('#e-kao-freq button.on', els => els.map(e => e.textContent));
-console.log('   颜文字高亮的档位: ' + JSON.stringify(kaoOn));
-t('颜文字档位有高亮', kaoOn.length === 1, JSON.stringify(kaoOn));
+// ⚠️ v0.4.1.7 起这一节的前提变了：频率控件从"一排五档按钮"改成【入口行 + 五档弹窗】，
+//    而且"当前值不在档位表里就补一个印着 0.1 的按钮"这个行为被【明确删掉了】
+//    （用户实测反馈："关闭的往上一挡是数字 0.1"）。所以这里改成验新契约：
+//      ① 入口行上永远显示【档位名】，不显示裸数字；② 点开有 5 档；③ 当前档有高亮。
+const emojiBrief = await page.$eval('#e-emoji-brief', el => el.textContent.trim());
+console.log('   emoji 入口行显示: ' + JSON.stringify(emojiBrief));
+t('emoji 那行显示的是档位名（不是裸数字）', /^(关闭|偶尔|适中|经常|总是)$/.test(emojiBrief), emojiBrief);
+const kaoBrief = await page.$eval('#e-kao-freq-brief', el => el.textContent.trim());
+console.log('   颜文字入口行显示: ' + JSON.stringify(kaoBrief));
+t('颜文字那行显示的也是档位名', /^(关闭|偶尔|适中|经常|总是)$/.test(kaoBrief), kaoBrief);
+await page.click('#e-emoji');
+await sleep(450);
+const freqSeg = await page.$$eval('#drive-list button', els => els.map(e => ({
+  t: (e.querySelector('b') || e).textContent.trim(), on: e.classList.contains('on'),
+})));
+console.log('   弹窗里的档位: ' + JSON.stringify(freqSeg));
+t('档位弹窗是 5 档', freqSeg.length === 5, freqSeg.length);
+t('当前档有高亮（而且是唯一一个）', freqSeg.filter(x => x.on).length === 1, JSON.stringify(freqSeg.filter(x => x.on)));
+t('档位名就是那五个', freqSeg.map(x => x.t).join(',') === '关闭,偶尔,适中,经常,总是', freqSeg.map(x => x.t).join(','));
+await page.click('#drive-cancel');
+await sleep(300);
 
 console.log('');
 console.log('=== 9. 横屏：弹窗和裁剪页都能滚，按钮够得着 ===');

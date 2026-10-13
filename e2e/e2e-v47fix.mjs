@@ -140,9 +140,11 @@ await jsClick('#btn-e-mine-apply'); await sleep(600);
 t('多选弹窗打开了', !(await page.$eval('#pick-chars-modal', el => el.classList.contains('hidden'))));
 const listed = await page.$$eval('#pick-chars-list label', els => els.map(e => e.querySelector('.nm').textContent));
 t('列出来的是"别的"角色（不含自己）', listed.length === 1 && listed[0] === '乙角色', JSON.stringify(listed));
-t('默认全勾上', await page.$eval('#pick-chars-list input', el => el.checked));
+// ⚠️ v0.4.1.7：默认改成【一个都不勾】（用户原话："我每次选对应的角色都得先点一次
+//    '全不选'然后再去选择"）。所以这里验的是反过来的契约：打开是空的，要选自己点。
+t('默认一个都不勾', (await page.$eval('#pick-chars-list input', el => el.checked)) === false);
 const cntAll = await page.$eval('#pick-chars-count', el => el.textContent);
-t('计数写对了', cntAll === '已选 1 / 1', cntAll);
+t('计数写对了（打开时是 0）', cntAll === '已选 0 / 1', cntAll);
 await jsClick('#pick-chars-none'); await sleep(250);
 t('「全不选」生效', (await page.$eval('#pick-chars-count', el => el.textContent)) === '已选 0 / 1');
 await jsClick('#pick-chars-all'); await sleep(250);

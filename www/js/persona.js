@@ -836,7 +836,11 @@ export function buildTurnNote(char, s, ctx = {}) {
         + '不只是天气和环境 —— 活力就来自这里\n'
         + '· **这一幕结束时，事情要往前走一点**：关系、信息、情绪、下一步的打算，'
         + '至少要有一样和开口之前不一样\n'
-        + '· 不带【】的行算旁白。一个人连着说的几句要放在同一行里，别拆行 —— 拆了会被当成旁白\n'
+        // ⚠️ v0.4.1.4：这句原来是【反的】—— 它要求"一个人连着说的几句放在同一行里"，
+        //    而解析器（app.js 的 splitBySpeaker）本来就是"同名多行各自成一段"。
+        //    提示词和解析器互相抵消，用户要的"一个人连发几条"永远出不来。
+        + '· 同一个人连着说几句，就【写几行、每行都以她的名字开头】—— 一次把一大段塞进一行反而假\n'
+        + '· 不带【】的行算旁白\n'
         + '· 历史里每条开头的【名字】标的是**那句话是谁说的** —— '
         + '带别人名字的那些**不是你说的**，是别人说的，你只是听见了\n'
         + '· 必须有「' + spk + '」的一段（这一轮从她起头）\n'
@@ -1001,9 +1005,47 @@ export function buildTurnNote(char, s, ctx = {}) {
     // 起因：纯按最新挑，几百轮之后就变成"她记得结论、但细节对不上"——
     // 你正在聊的那件事可能躺在第 30 条上，而它前面躺着 24 条无关的旧事。
     // 条数上限【没变】（还是 24，token 开销一样），只是挑得更准。详见 rankMemories。
-    const picked = rankMemories(memories, topic, 24);
-    const lines = picked.map(m => '- ' + m.text).join('\n');
-    parts.push(`# 你记得关于他的事\n${lines}\n\n这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。`);
+    //
+    // ⚠️ v0.4.1.4：群聊里再加一层【视角】过滤。
+    //    群的记忆原来全群共用一份、连主语都没有（标题写死"你记得关于他的事"），
+    //    于是甲私下的事会被读成"大家都知道"。现在每条记忆可以带 who（属于谁的视角）：
+    //      · 当前发言人自己的（最多 16 条）
+    //      · 全群共识（who 为空，最多 8 条）—— 老数据没有 who，一律当共识
+    //    别人视角的记忆【不注入】：把甲的私事塞进乙的嘴里，比"她不知道"更糟。
+    //    条数上限仍是 24，token 不涨。单聊时 memWho 是空串，走 else，行为和以前一模一样。
+    const selfId = String(ctx.memWho || '');
+    const selfName = String(ctx.memWhoName || '');
+    if (selfId) {
+      const mine = memories.filter(m => m && m.who === selfId);
+      const shared = memories.filter(m => m && !m.who);
+      const minePick = rankMemories(mine, topic, 16);
+      const sharedPick = rankMemories(shared, topic, 8);
+      const keep = new Set(minePick.concat(sharedPick));
+      const picked = memories.filter(m => keep.has(m));   // 按原时间顺序回去
+      if (picked.length) {
+        const blocks = [];
+        if (minePick.length) {
+          blocks.push('# 你（' + (selfName || '她') + '）自己看在眼里的事\n'
+            + minePick.map(m => '- ' + m.text).join('\n'));
+        }
+        if (sharedPick.length) {
+          blocks.push('# 这个群里大家都知道的事\n'
+            + sharedPick.map(m => '- ' + m.text).join('\n'));
+        }
+        // ⚠️ 最后那句只在【真有"她自己看在眼里的事"】时才说 ——
+        //    乙一条自己的记忆都没有时还写"上面那些只有你知道"，
+        //    上面根本没有那一段（e2e-groupmem 抓到的）。
+        blocks.push('（这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。'
+          + (minePick.length
+              ? '\n上面「你自己看在眼里的事」只有你知道 —— 别当成大家都知道的事说出来。)' 
+              : '）'));
+        parts.push(blocks.join('\n\n'));
+      }
+    } else {
+      const picked = rankMemories(memories, topic, 24);
+      const body = picked.map(m => '- ' + m.text).join('\n');
+      parts.push('# 你记得关于他的事\n' + body + '\n\n这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。');
+    }
   }
 
   // 世界书「临场」档（v1.21.51）：放到本轮段靠后的位置 —— 记忆之后、本轮要求之前。

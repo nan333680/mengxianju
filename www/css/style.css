@@ -1216,3 +1216,47 @@ input[type="range"] { touch-action: pan-y; }
 }
 .pick-row .pk-gear:active{ opacity:1; background:var(--line); }
 .pick-row .pk-name{ flex:1; }
+
+
+/* ===== 群设置页 / 群成员页（v0.4.1.4） =====
+   为什么要单独两页：原来群设置塞在 openCharPicker 的 extraHtml 里
+   （群名 + 成员复选框 + 4 个设置 + 头像 + 提示文字全在一个弹窗里），
+   再加一项就滚不完，而且「点成员进二级设置」要靠弹窗里一个 ⚙ 小按钮，
+   点之前还得先把弹窗里的值抢救性地存一遍 —— 那本身就是弹窗撑不住的证据。 */
+.g-head{ display:flex; align-items:center; gap:14px; padding:8px 4px 0; }
+.g-head .avatar-lg{ width:64px; height:64px; font-size:30px; border-radius:18px; flex:0 0 auto; }
+.g-head-txt{ flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
+.g-head-txt b{ font-size:17px; }
+.g-head-txt .sub{ font-size:12px; color:var(--fg2); }
+.g-head-txt input{ font-size:17px; font-weight:600; background:var(--bg3); border:1px solid var(--line);
+  border-radius:10px; color:var(--fg); padding:8px 10px; width:100%; }
+.g-head-btns{ display:flex; gap:8px; margin:12px 0 2px; }
+
+.g-members{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px 8px; margin:14px 0 8px; }
+.g-tile{ display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; }
+.g-tile .av{ width:56px; height:56px; border-radius:16px; background:var(--bg3); overflow:hidden;
+  display:flex; align-items:center; justify-content:center; font-size:26px; }
+.g-tile .av img{ width:100%; height:100%; object-fit:cover; }
+.g-tile .nm{ font-size:12px; color:var(--fg2); max-width:100%; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.g-tile .mk{ font-size:10px; color:var(--fg3); line-height:1.1; }
+.g-tile:active .av{ filter:brightness(1.35); }
+.g-tile.mute .av{ opacity:.45; }
+.g-tile.add .av{ border:1px dashed var(--line); color:var(--fg3); font-size:24px; }
+.g-add-row{ margin-top:2px; }
+.g-note-box{ background:var(--bg2); border:1px solid var(--line); border-radius:12px; padding:10px 12px;
+  font-size:13px; color:var(--fg2); margin-top:10px; }
+.g-silence-line{ margin:14px 0 6px; text-align:center; }
+.g-silence-line span{ display:inline-block; background:var(--bg3); color:var(--fg3);
+  font-size:12px; padding:4px 12px; border-radius:999px; }
+
+/* 群内人设的「条目」编辑器（v0.4.1.4）：一条 = 一个标题 + 一段话 */
+.gp-item{ border:1px solid var(--line); border-radius:12px; padding:10px; margin-bottom:10px; background:var(--bg2); }
+.gp-item .gp-row{ display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+.gp-item .gp-row input{ flex:1; min-width:0; background:var(--bg3); border:1px solid var(--line);
+  border-radius:9px; color:var(--fg); padding:7px 9px; font-size:13px; }
+.gp-item textarea{ width:100%; background:var(--bg3); border:1px solid var(--line); border-radius:9px;
+  color:var(--fg); padding:8px 9px; font-size:13px; resize:vertical; }
+.gp-item .icon-btn{ width:30px; height:30px; flex:0 0 auto; font-size:14px; }
+/* 群记忆按「谁记得的」分组（v0.4.1.4） */
+.mem-sub{ font-size:12px; color:var(--fg3); margin:12px 0 6px; }

@@ -187,9 +187,8 @@ console.log('   ' + JSON.stringify(fields));
 t('「这个群是怎么回事」有输入框了', fields.note === true, fields);
 t('「小说式一幕」有开关了，而且默认开着', fields.narr === true && fields.narrChecked === true, fields);
 await page.evaluate(() => { document.getElementById('g-note').value = '每周六下午在她家喝茶。'; });
-await page.evaluate(() => document.getElementById('modal-ok').click());
-await sleep(1200);
-await sleep(600);
+await page.evaluate(() => document.getElementById('btn-group-save').click());   // v0.4.1.4：整页的保存键
+await sleep(1400);
 await send('继续');
 const sys2 = sysOf();
 t('群设定进了稳定前缀（「这个群是怎么回事」那段）', sys2.some(s => s.includes('每周六下午在她家喝茶')), '');
@@ -198,8 +197,8 @@ console.log('=== 7. 关掉小说模式 → 回到"一轮一个人" ===');
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
 await sleep(900);
 await page.evaluate(() => { document.getElementById('g-narr').checked = false; });
-await page.evaluate(() => document.getElementById('modal-ok').click());
-await sleep(1200);
+await page.evaluate(() => document.getElementById('btn-group-save').click());
+await sleep(1400);
 replyText = '【甲】这一句不该被拆开。' + NL + '【乙】这一句也不该。';
 await send('试试');
 const sys3 = sysOf();
@@ -293,36 +292,35 @@ t('群聊用的是【群那一套】开场（不是"回顾你和他的对话"）
   memBody.includes('这个群聊里发生的事') && !memBody.includes('正在回顾你和他的对话'), '');
 t('并且明说"不要用「我」"（群里「我」指谁不清楚）', memBody.includes('不要用「我」'), '');
 
-console.log('=== 9. v0.4.1.1：群头像 / 篇幅 / 成员二级设置 ===');
+console.log('=== 9. v0.4.1.4：群设置是整页了（群头像 / 篇幅 / 成员二级设置） ===');
 // ⚠️ 第 7 节把小说模式关掉了，这里要先把开关开回来 ——
 //    篇幅那句提示词只在小说模式下出现，不然这条断言永远测不到东西。
+//
+// ⚠️ v0.4.1.4：群设置从「选人弹窗 + extraHtml」改成了【整页 view-group】，
+//    二级设置也从弹窗里那个 ⚙ 改成了【点头像进 view-gmember】。
+//    这一节原来查的是 #g-avatar / #pk-list .pk-gear / #mc-note，全部跟着改。
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
 await sleep(1000);
-await page.evaluate(() => { const c = document.getElementById('g-narr'); if (c) c.checked = true; });
-await page.evaluate(() => document.getElementById('modal-ok').click());
-await sleep(1200);
-await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
-await sleep(1000);
-const ui = await page.evaluate(() => ({
-  avatar: !!document.getElementById('g-avatar'),
+const pageOn = await page.evaluate(() => ({
+  active: document.getElementById('view-group').classList.contains('active'),
+  modal: !document.getElementById('modal').classList.contains('hidden'),
+  avatar: !!document.getElementById('g-avatar-pick'),
+  avatarFile: !!document.getElementById('g-avatar-file'),
   len: !!document.getElementById('g-len'),
   lenVal: (document.getElementById('g-len') || {}).value,
-  gear: document.querySelectorAll('#pk-list .pk-gear').length,
-  names: [...document.querySelectorAll('#pk-list .pk-name')].map(x => x.textContent),
+  tiles: document.querySelectorAll('#g-members [data-gm]').length,
+  add: !!document.querySelector('#g-members [data-gm-add]'),
 }));
-console.log('   ' + JSON.stringify(ui));
-t('「群头像」有入口了（用户反馈：原来改不了）', ui.avatar === true, ui);
-t('「这一幕写多长」有入口了，默认中档', ui.len === true && ui.lenVal === 'mid', ui);
-t('每个成员右边都有齿轮（二级设置入口）', ui.gear === ui.names.length && ui.gear >= 3, ui);
+console.log('   ' + JSON.stringify(pageOn));
+t('群设置进的是整页（不再是弹窗）', pageOn.active === true && pageOn.modal === false, pageOn);
+t('「群头像」有入口了（用户反馈：原来改不了）', pageOn.avatar === true && pageOn.avatarFile === true, pageOn);
+t('「这一幕写多长」有入口了，默认中档', pageOn.len === true && pageOn.lenVal === 'mid', pageOn);
+t('成员是头像九宫格（点她 = 进她的二级设置）', pageOn.tiles === 3 && pageOn.add === true, pageOn);
+await page.evaluate(() => { const c = document.getElementById('g-narr'); if (c) c.checked = true; });
 
 // 篇幅：切成"短"，提示词里的篇幅要求要跟着换
-const lenDbg = await page.evaluate(() => {
-  const s = document.getElementById('g-len');
-  if (s) s.value = 'short';
-  return { found: !!s, val: s && s.value, inModal: !!(s && s.closest('#modal-text')), opts: s ? s.options.length : 0 };
-});
-console.log('   DBG 篇幅控件: ' + JSON.stringify(lenDbg));
-await page.evaluate(() => document.getElementById('modal-ok').click());
+await page.evaluate(() => { document.getElementById('g-len').value = 'short'; });
+await page.evaluate(() => document.getElementById('btn-group-save').click());
 await sleep(1200);
 const saved = await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
@@ -332,38 +330,44 @@ const saved = await page.evaluate(async () => {
   return g && { sceneLen: g.sceneLen, narrative: g.narrative };
 });
 console.log('   DBG 存进去的: ' + JSON.stringify(saved));
+t('篇幅和小说模式都存进了群记录', !!saved && saved.sceneLen === 'short' && saved.narrative === true, saved);
 replyText = '【甲】短一点。';
 await send('试试短档');
 const sysS = sysOf();
 {
   const blk = sysS.find(s => s.includes('这一幕怎么写')) || '';
-  console.log('   DBG 这一幕段: ' + blk.replace(/\n/g, ' | ').slice(0, 700));
+  console.log('   DBG 这一幕段: ' + blk.replace(/\n/g, ' | ').slice(0, 400));
 }
 t('切到短档后提示词要 120~220 字', sysS.some(s => s.includes('120~220 字')), '');
 
-// 二级设置：点齿轮 → 写群内补充 → 保存 → 进群人设
-await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
+// 二级设置：点她的头像 → 写群内补充 + 少开口 → 保存
+await page.evaluate(() => document.querySelector('#g-members [data-gm="gb"]').click());
 await sleep(1000);
-await page.evaluate(() => {
-  const gear = [...document.querySelectorAll('#pk-list .pk-row, #pk-list .pick-row')]
-    .find(r => (r.querySelector('.pk-name') || {}).textContent === '乙');
-  gear.querySelector('.pk-gear').click();
-});
-await sleep(1000);
-const cfgUi = await page.evaluate(() => ({
-  title: document.getElementById('modal-title').textContent,
-  note: !!document.getElementById('mc-note'),
-  persona: !!document.getElementById('mc-persona'),
-  muted: !!document.getElementById('mc-muted'),
+const gmUi = await page.evaluate(() => ({
+  active: document.getElementById('view-gmember').classList.contains('active'),
+  name: document.getElementById('gm-name').textContent,
+  sub: document.getElementById('gm-sub').textContent,
+  persona: !!document.getElementById('gm-persona-open'),
+  note: !!document.getElementById('gm-note-open'),
+  views: !!document.getElementById('gm-views-open'),
+  params: !!document.getElementById('gm-params-open'),
+  talk: !!document.getElementById('gm-talk'),
+  muted: !!document.getElementById('gm-muted'),
 }));
-console.log('   ' + JSON.stringify(cfgUi));
-// ⚠️ 标题里是【群名】，不是成员名 —— 第一版断言写的是 includes('乙')，假红。
-t('齿轮进的是她的二级设置（标题写着她在哪个群）', cfgUi.title.includes('周末茶会') && cfgUi.title.includes('她在'), cfgUi);
-t('三样都能改：群内补充 / 群内人设 / 少开口', cfgUi.note && cfgUi.persona && cfgUi.muted, cfgUi);
-await page.evaluate(() => { document.getElementById('mc-note').value = '在这个群里她只喊甲「姐」。'; });
-await page.evaluate(() => { document.getElementById('mc-muted').checked = true; });
+console.log('   ' + JSON.stringify({ name: gmUi.name }));
+t('点她的头像进的是她的二级页', gmUi.active === true && gmUi.name === '乙', gmUi);
+t('写清了"她在哪个群里"', gmUi.sub.includes('周末茶会'), gmUi.sub);
+t('四样都能改：群内人设 / 群内补充 / 她怎么看 / 群内参数',
+  gmUi.persona && gmUi.note && gmUi.views && gmUi.params, gmUi);
+t('活跃度和「少开口」也在这一页', gmUi.talk === true && gmUi.muted === true, gmUi);
+await page.evaluate(() => document.getElementById('gm-note-open').click());
+await sleep(600);
+await page.evaluate(() => { document.getElementById('gn-note').value = '在这个群里她只喊甲「姐」。'; });
 await page.evaluate(() => document.getElementById('modal-ok').click());
-await sleep(1500);
+await sleep(1200);
+await page.evaluate(() => { const c = document.getElementById('gm-muted'); c.checked = true; });
+await page.evaluate(() => document.getElementById('btn-gm-save').click());
+await sleep(1400);
 const after = await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
@@ -379,19 +383,17 @@ t('静音也存下来了', !!after.cfg && after.cfg.muted === true, after.cfg);
 t('⚠️ 她自己的角色记录【一个字都没改】（这是这个设计的关键）', after.bHasCfg === false, after.bHasCfg);
 t('群人设里带上了那句群内补充', String(after.persona || '').includes('在这个群里：'), String(after.persona || '').slice(0, 160));
 t('群人设里注明了她这会儿少开口', String(after.persona || '').includes('不开口'), '');
-await page.evaluate(() => { const b = document.getElementById('modal-cancel'); if (b) b.click(); });
-await sleep(800);
+await page.evaluate(() => document.getElementById('btn-gm-back').click());
+await sleep(900);
 
 console.log('=== 9b. 群头像要走裁剪器（用户反馈：选完直接存太敷衍）===');
-await page.evaluate(() => { const b = document.getElementById('modal-cancel'); if (b) b.click(); });
-await sleep(600);
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
-await sleep(900);
-const avIn = await page.$('#g-avatar');
+await sleep(1000);
+const avIn = await page.$('#g-avatar-file');
 t('群头像的选图入口在', !!avIn, !!avIn);
 if (avIn) {
   await avIn.uploadFile(R + '/tmp/av.png');
-  await sleep(1500);
+  await sleep(1800);
   const cropOn = await page.evaluate(() => {
     const v = document.getElementById('view-crop');
     return { active: !!(v && v.classList.contains('active')), zoom: !!document.getElementById('crop-zoom'), ok: !!document.getElementById('btn-crop-ok') };
@@ -399,7 +401,7 @@ if (avIn) {
   console.log('   ' + JSON.stringify(cropOn));
   t('选完图进的是【裁剪/预览】页（能挪位置、能缩放）', cropOn.active === true && cropOn.zoom && cropOn.ok, cropOn);
   await page.evaluate(() => document.getElementById('btn-crop-ok').click());
-  await sleep(2000);
+  await sleep(2200);
   const avSaved = await page.evaluate(async () => {
     const o = indexedDB.open('ai-companion');
     const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
@@ -408,16 +410,16 @@ if (avIn) {
     return g && String(g.avatar || '').slice(0, 30);
   });
   t('裁剪结果存进了群记录', String(avSaved || '').startsWith('data:image'), avSaved);
-  await page.evaluate(() => { const b = document.getElementById('modal-cancel'); if (b) b.click(); });
-  await sleep(600);
+  t('裁剪完回到的是群设置页（不是废弃的弹窗）',
+    await page.evaluate(() => document.getElementById('view-group').classList.contains('active')), '');
 }
 
 console.log('=== 9c. 群级的「他是谁」（用户反馈：各自的设定容易打架）===');
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
-await sleep(900);
+await sleep(1000);
 t('「在她们眼里，他是谁」有输入框了', await page.evaluate(() => !!document.getElementById('g-he')), '');
 await page.evaluate(() => { document.getElementById('g-he').value = '他是常来的老客，三个人都认识他。'; });
-await page.evaluate(() => document.getElementById('modal-ok').click());
+await page.evaluate(() => document.getElementById('btn-group-save').click());
 await sleep(1400);
 const heOut = await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
@@ -451,12 +453,18 @@ t('点名只管这一轮（下一轮回到正常轮转，不是一直钉着她�
   rr.ai[rr.ai.length - 1].s !== 'gb', rr.ai.slice(-1));
 
 // bug 2：把人移出群后，她的群内设置不能留在群里（否则回来时旧设置静默复活）
+// v0.4.1.4：移出成员从「弹窗里取消勾选」改成【长按她的头像】→ 确认
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
 await sleep(1000);
+const tileThere = await page.evaluate(() => !!document.querySelector('#g-members [data-gm="gb"]'));
+t('成员九宫格里有乙', tileThere, '');
 await page.evaluate(() => {
-  const row = [...document.querySelectorAll('#pk-list .pick-row')].find(r => (r.querySelector('.pk-name') || {}).textContent === '乙');
-  row.click();   // 取消勾选 = 移出群
+  const el = document.querySelector('#g-members [data-gm="gb"]');
+  el.dispatchEvent(new Event('touchstart', { bubbles: true }));
 });
+await sleep(900);
+const askShown = await page.evaluate(() => !document.getElementById('modal').classList.contains('hidden'));
+t('长按弹出「移出这个群」确认', askShown, '');
 await page.evaluate(() => document.getElementById('modal-ok').click());
 await sleep(1400);
 const pruned = await page.evaluate(async () => {

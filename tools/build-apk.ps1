@@ -176,5 +176,17 @@ Move-Item -LiteralPath $tmpDest -Destination $dest -Force
 Write-Host ""
 Write-Host ("已放到桌面：" + $dest) -ForegroundColor Green
 
+# 再往桌面的 mxj 文件夹放一份（v0.4.1.4）：那是用户自己攒各版本安装包的地方。
+# 两处都留 —— 桌面根目录那份方便直接传手机，mxj 那份是留档。
+$mxjDir = Join-Path $desk "mxj"
+$mxjDest = Join-Path $mxjDir ("梦弦居-v" + $vn + ".apk")
+try {
+  if (-not (Test-Path $mxjDir)) { New-Item -ItemType Directory -Path $mxjDir | Out-Null }
+  Copy-Item $dest $mxjDest -Force -ErrorAction Stop
+  Write-Host ("也放了一份到：" + $mxjDest) -ForegroundColor Green
+} catch {
+  Write-Host ("复制到 mxj 文件夹失败（桌面上那份不受影响）：" + $_.Exception.Message) -ForegroundColor Yellow
+}
+
 # 顺带归档一份完整快照（脚本自己会拒绝覆盖已存在的版本目录）
 & (Join-Path $PSScriptRoot "archive-release.ps1") -Version $vn -Apk $dest

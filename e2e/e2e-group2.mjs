@@ -160,30 +160,30 @@ console.log('   ' + JSON.stringify(variants));
 t('版本表里每个版本都记着说话人', !!variants && variants.n >= 2 && variants.spk.every(s => !!s), variants);
 t('每个版本的说话人都一样（不会串人）', !!variants && new Set(variants.spk).size === 1, variants);
 
-console.log('=== 5. 群里长按气泡头像进的是「改成员」，不是普通编辑页 ===');
+// ⚠️ v0.4.1.4：删群入口从「选人弹窗里的一个按钮」搬到了【群设置整页】的底部。
+//    这一节原来查的是 #pk-del（弹窗里那个），跟着改。
+console.log('=== 5. 群里长按气泡头像进的是「群设置页」，不是普通编辑页 ===');
 await page.evaluate(() => {
   const av = document.querySelector('#messages .msg.ai .av-her');
   av.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
 });
 await sleep(900);
 const picker = await page.evaluate(() => ({
+  page: document.getElementById('view-group').classList.contains('active'),
   modal: !document.querySelector('#modal').classList.contains('hidden'),
-  title: document.querySelector('#modal-title').textContent,
-  editPage: document.querySelector('#view-edit').classList.contains('active'),
-  del: !!document.getElementById('pk-del'),
+  editPage: document.getElementById('view-edit').classList.contains('active'),
+  name: (document.getElementById('g-name') || {}).value,
+  del: !!document.getElementById('g-del'),
 }));
 console.log('   ' + JSON.stringify(picker));
-t('弹的是改成员的窗（不是编辑页）', picker.modal === true && picker.title.includes('群'), picker);
+t('进的是群设置整页（不是弹窗、不是编辑页）', picker.page === true && picker.modal === false, picker);
 t('没有进普通角色编辑页', picker.editPage === false, picker);
-t('这个窗里有「删除这个群」', picker.del === true, picker);
-await page.evaluate(() => document.getElementById('modal-cancel').click());
-await sleep(600);
+t('页面上就是这个群', picker.name === '周末茶会', picker);
+t('这个页里有「删除这个群」', picker.del === true, picker);
 
 console.log('=== 6. 删群：群没了、成员都还在 ===');
-await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
-await sleep(900);
-await page.evaluate(() => document.getElementById('pk-del').click());
-await sleep(700);
+await page.evaluate(() => document.getElementById('g-del').click());
+await sleep(800);
 const confirmShown = await page.evaluate(() => !document.querySelector('#modal').classList.contains('hidden'));
 t('弹了删除确认（说要删什么）', confirmShown === true, confirmShown);
 const confirmText = await page.evaluate(() => document.querySelector('#modal-text').textContent);

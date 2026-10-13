@@ -83,7 +83,11 @@ const labels = await page.evaluate(() => ({
   apply: document.getElementById('e-look-apply').textContent.trim(),
   clear: document.getElementById('e-look-clearlive').textContent.trim(),
   img: document.getElementById('e-look-img').textContent.trim(),
-  on: document.querySelector('.look-switch span').textContent.trim(),
+  // ⚠️ 必须挂到【这个开关自己】身上找文案（v0.4.1.4）：
+  //    原来是 document.querySelector('.look-switch span') —— 取全文档第一个。
+  //    群设置页插在 view-edit 前面之后，第一个 .look-switch 变成了「允许冷场」，
+  //    这条断言就莫名其妙地红了（是选择器太松，不是文案变了）。
+  on: document.getElementById('e-look-on').closest('.look-switch').querySelector('span').textContent.trim(),
 }));
 console.log('   ' + JSON.stringify(labels));
 t('开关叫「是否启用」', labels.on === '是否启用', labels.on);

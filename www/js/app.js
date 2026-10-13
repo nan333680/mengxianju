@@ -4974,6 +4974,9 @@ async function exportChatMarkdown() {
  * @param {object} [opts]
  * @param {boolean} [opts.cont]  true = 「续写」（v1.21.48）：不落用户消息、也不动输入框，
  *                   只让模型接着上一轮往下写。其余链路（历史 / 记忆 / 落库 / 渲染）完全一样。
+ * @param {number} [opts.autoRun]  群聊「自动续一幕」专用（v0.4.1.4）：这是自己往下演的第几幕
+ *                   （0/不传 = 不是自动的）。它和 cont 一起用，但【不认"上一轮是谁说的"】——
+ *                   自动续幕是让轮次自然往下走，不是钉住同一个人继续说。
  * @param {string} [opts.sameSpeaker]  群聊专用（v0.4.0 复查）：这一轮必须由这个成员说。
  *                   重新生成 / 换一个版本时由调用方传进来 —— 它们会先删掉旧回复，
  *                   所以必须在【删之前】把"刚才是谁说的"取好，不能等 send() 自己去读。
@@ -4988,6 +4991,10 @@ async function send(opts) {
   // ⚠️ 必须在【删消息之前】取好再传 —— regenerate() 先删掉旧回复再调 send()，
   //    那时候再去读"上一条回复是谁"读到的是更早的那条了。
   const sameSpeaker = (opts && opts.sameSpeaker) || '';
+  // 自动续一幕（v0.4.1.4）：这一轮是"她们自己往下演"的第几幕（0 = 不是自动的）
+  const autoRun = Number((opts && opts.autoRun) || 0);
+  // 冷场 / 自动续幕要在 finally 里判断，跨 try 边界 —— 一律在函数顶部 let
+  let sceneOk = false, sceneSilent = false;
   // ⚠️ 没有角色就别往下走（v1.21.60）。
   // 全新安装进来是空的（不再自动建角色），此时点发送会带着 myCharId = null
   // 一路走到请求组装，回复落库时 charId 也是 null —— 变成一条看不见、导不出、
@@ -5053,6 +5060,10 @@ async function send(opts) {
 //      b) 轮次永远不推 —— 表现是"她说了话，但下一条消息就没了、而且一直是同一个人"
 //    上面那段"跨 try 边界用到的变量一律在函数顶部 let 声明"的教训，这次自己又踩了一遍。
 let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, added = [], speaker = null;
+// ⚠️ placeholderId 也放这里（v0.4.1.4）：catch 里要读它，而它原来在 try 里 const ——
+//    在它初始化【之前】抛错（用户消息落库失败等），catch 自己会抛
+//    「Cannot access 'placeholderId' before initialization」，把真正的原因盖掉。
+let placeholderId = '';
 // 这一轮他是不是点名了某个人（@名字 / 名字：）—— 小说式一幕里要告诉她"你被点名了，必须接话"
 let namedInText = false;
   // 上下文预算（v1.21.54）：这几个同理 —— 撞超长后的重发发生在 try #2 里，
@@ -5109,6 +5120,36 @@ let namedInText = false;
       // 续写：输入框原样留着（用户可能正写了一半，不该被清掉）
       input.value = text;
       syncInput();
+    }
+
+    // 冷场（v0.4.1.4，默认关）：群里小概率这一轮【没人接话】。
+    // 这是"设定允许的"，不是 bug —— 所以界面上要看得见（那条消息写的就是它）。
+    // 只在你没点名的时候才可能发生；点名 = 你明确要她答。
+    if (!cont && isGroup(myChar) && myChar.allowSilence === true
+        && !pickSpeakerByText(myChar, visibleText)
+        && Math.random() < 0.1) {
+      const am = { id: uid(), charId: myCharId, role: 'assistant', content: '（没人接话）',
+                   narration: true, story: storyStamp(), ts: Date.now() };
+      await msgs.add(am);
+      sceneSilent = true;
+      if (curCharId === myCharId) {
+        $('messages').insertAdjacentHTML('beforeend', msgHtml(am));
+        markFresh($('messages').lastElementChild);
+        attachMsgActions();
+        scrollBottom();
+      }
+      // ⚠️ 这里必须【自己解锁】，不能指望 finally ——
+      //    send() 里是【两个顺序的 try】：这一个（落库/拼上下文）只有 catch、【没有 finally】，
+      //    直接 return 的话，下面那个 try 的 finally（busy=false / 按钮复位）根本不会跑，
+      //    表现是发送键消失、之后每次点发送只弹「她还在打字」，只能重启 App。
+      //    e2e-groupspeak 第 4 节就是这么抓出来的（第 3 节冷场之后，第 4 节怎么发都发不出去）。
+      busy = false;
+      abortCtl = null;
+      $('btn-send').classList.remove('hidden');
+      $('btn-stop').classList.add('hidden');
+      // 记忆任务这一轮不跑：它挂在下面那个 try 的 finally 上。
+      // 代价是这条用户消息要等下一轮才进总结窗口 —— 冷场本来就没内容可提炼，可以接受。
+      return;
     }
 
     // 全局发送计数。注意：记忆节奏【已经不用它了】——那些都改用按角色的 msgSeq。
@@ -5192,7 +5233,7 @@ let namedInText = false;
       //    于是直接落到 groupSpeaker(指针) —— 而指针在上一轮结束时【已经推过了】，
       //    结果"续写"实际是"换个人说"，和按钮文案正好相反。
       let spk = sameSpeaker ? (allChars.find(x => x.id === sameSpeaker) || null) : null;
-      if (!spk && cont) {
+      if (!spk && cont && !autoRun) {
         const lastId = await lastSpeakerCharId(myCharId);
         if (lastId) spk = allChars.find(x => x.id === lastId) || null;
       }
@@ -5201,6 +5242,18 @@ let namedInText = false;
       const namedCh = spk ? null : pickSpeakerByText(myChar, visibleText);
       speaker = spk || namedCh || groupSpeaker(myChar);
       namedInText = !!namedCh;
+      // 她在群里的参数（v0.4.1.4，复查清单 §9.3）：成员的温度 / 长度上限
+      // 原来在群里【完全不生效】—— P 是拿群记录算的（effSettings(myChar, S)），
+      // 成员自己设的一律读不到。选定这一轮的发言人之后，把她的覆盖叠上去。
+      if (speaker) {
+        const mp = memberCfgOf(myChar, speaker.id).params;
+        if (mp && typeof mp === 'object') {
+          if (Number.isFinite(Number(mp.temperature))) P.temperature = Number(mp.temperature);
+          if (Number.isFinite(Number(mp.maxTokens))) P.maxTokens = Math.round(Number(mp.maxTokens));
+        }
+      }
+      // 群里的"他住哪"：群记录自己的 myEnv 优先，没有才回落全局那份。
+      // persona.js 本来就是这么读的（char.myEnv ?? s.myEnv），群现在能填了，这条天然生效。
     } else speaker = null;
 
     // 会变化的内容（记忆 / 当前时间 / 本轮颜文字开关 / 命中的世界书）独立成一条，放到历史之后
@@ -5221,6 +5274,10 @@ let namedInText = false;
       named: namedInText,
       // 篇幅档位（v0.4.1.1）：直接决定这一幕花多少 token
       sceneLen: myChar.sceneLen || 'mid',
+      // 记忆的"视角"（v0.4.1.4）：群聊时只注入【她自己的】+【全群共识】，
+      // 别人视角的记忆不进来 —— 把甲的私事塞进乙的嘴里比"她不知道"更糟。
+      memWho: (isGroup(myChar) && speaker) ? speaker.id : '',
+      memWhoName: (isGroup(myChar) && speaker) ? (speaker.name || '') : '',
     });
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -5325,7 +5382,7 @@ let namedInText = false;
   }
 
   // 3) 渲染占位气泡
-  const placeholderId = 'gen-' + uid();
+  placeholderId = 'gen-' + uid();
   if (curCharId === myCharId) {
     $('messages').insertAdjacentHTML('beforeend',
       `<div class="msg ai" id="${placeholderId}">${avatarHtml(myChar, 'av')}<div class="bub${P.showTyping === false ? ' no-dots' : ''}"><span class="gen-text"><span class="typing-dots"><i></i><i></i><i></i></span></span></div></div>`);
@@ -5505,6 +5562,8 @@ let namedInText = false;
       await msgs.add(am);
       added.push(am);
     }
+    // 到这一步这一轮是真的成了（下面 finally 里"自动续一幕"只看这个标记）
+    sceneOk = true;
     // 群聊：这一轮说完了，轮到下一个人（v0.4.0）。
     // ⚠️ 放在落库【之后】—— 先推轮次再落库的话，落库失败会白推一格，
     //    表现是"有人被跳过了"，而且没人看得出为什么。
@@ -5600,6 +5659,22 @@ let namedInText = false;
     $('btn-stop').classList.add('hidden');
     abortCtl = null;
     scrollBottom();
+
+    // 自动续一幕（v0.4.1.4，默认关）：你不说话时，她们自己往下再演几幕。
+    // ⚠️ 每一幕都是一次完整请求，【token 成倍】—— 所以默认 0（关），界面上写明代价。
+    // 条件：这一轮真出了内容 + 不是用户按了停止 + 群里开了这个开关 + 没到上限
+    //      + 输入框是空的（他正在打字就别抢）。
+    if (sceneOk && !sceneSilent && isGroup(myChar)) {
+      const maxN = Math.max(0, Math.min(5, Number(myChar.autoScene) || 0));
+      const gidAt = myCharId;
+      if (maxN > 0 && autoRun < maxN && !(($('input').value || '').trim())) {
+        setTimeout(() => {
+          if (busy || curCharId !== gidAt) return;              // 已经切走/在生成
+          if ((($('input').value || '') || '').trim()) return;  // 他正在打字
+          send({ cont: true, autoRun: autoRun + 1 });
+        }, 1200);
+      }
+    }
 
     // 5) 长期记忆（异步，不阻塞）
     //
@@ -6032,6 +6107,7 @@ async function summarizeIfNeeded(charId = null) {
       // ⚠️ untilHour/untilMinute 一起写（v1.21.25 修，复审 ★4 的同类遗漏 ——
       // 报告只点了 3 处，全库扫下来还有 2 处，这是其中一处）。
       await mem.add({ id: uid(), charId: cid0, text: it.text, kind: it.kind,
+                      who: isGroup(charT) ? attributeWho(it.text, chunk) : '',
                       untilDay: it.untilDay,
                       untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                       untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
@@ -6631,6 +6707,7 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
         // 到期时刻推迟 8 小时 29 分，她会在本该忘记之后还记得大半天。
         // （上面那个备份特意带了这个字段，这里却漏了，属于同一处的疏忽。）
         await mem.add({ id: uid(), charId: cidFor, text: it.text, kind: it.kind,
+                        who: whoOfNearest(it.text, list),
                         untilDay: it.untilDay,
                         untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                         untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
@@ -6968,6 +7045,7 @@ async function summarizeChunk(charId, chunk) {
   for (const it of items) {
     // ⚠️ 同上（v1.21.25 修）——这是【最常走】的一条写回路径。
     await mem.add({ id: uid(), charId, text: it.text, kind: it.kind,
+                    who: isGroup(char) ? attributeWho(it.text, chunk) : '',
                     untilDay: it.untilDay,
                     untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                     untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
@@ -7536,8 +7614,14 @@ function memberCfgOf(g, cid) {
 /** 她在群里实际用的人设文本（群内覆盖优先，否则跟随她自己的卡） */
 function personaInGroup(g, m) {
   const cfg = memberCfgOf(g, m.id);
+  // 群内覆盖支持【条目化】（v0.4.1.4 的"可增删的设定"）：有条目就用条目拼。
+  const items = personaItemsOf(cfg);
+  if (items.length) {
+    const txt = items.map(it => (it.t ? it.t + '：' : '') + it.x).join(' ');
+    return { text: txt.replace(/[\r\n\t ]+/g, ' ').trim().slice(0, GROUP_PERSONA_MAX), overridden: true };
+  }
   const over = String(cfg.persona || '').trim();
-  if (over) return { text: over.replace(/[\r\n\t ]+/g, ' ').trim(), overridden: true };
+  if (over) return { text: over.replace(/[\r\n\t ]+/g, ' ').trim().slice(0, GROUP_PERSONA_MAX), overridden: true };
   return { text: String(m.persona || '').replace(/[\r\n\t ]+/g, ' ').trim(), overridden: false };
 }
 
@@ -7561,10 +7645,34 @@ function composeGroupPersona(c) {
     let tail = '';
     // ⚠️ 群内补充放在【紧挨着名字】的位置，不是另起一段 ——
     //    这是"她在这个群里是什么样"，跟她的设定是同一件事的两个层次。
-    if (String(cfg.note || '').trim()) tail += '（在这个群里：' + String(cfg.note).replace(/[\r\n\t ]+/g, ' ').trim().slice(0, 200) + '）';
+    // ⚠️ 上限和编辑框【必须是同一个数】（GROUP_NOTE_MAX）——
+    //    原来存 slice(0,500)、注入 slice(0,200)，用户写了 500 字只有 200 字进上下文，
+    //    而且没有任何提示（复查清单 §9.2）。§9.1 的人设是同一个病。
+    if (String(cfg.note || '').trim()) {
+      tail += '（在这个群里：' + String(cfg.note).replace(/[\r\n\t ]+/g, ' ').trim().slice(0, GROUP_NOTE_MAX) + '）';
+    }
+    // 「她怎么看群里这些人」（v0.4.1.4）：写成她的视角，每轮都在。
+    //    用户举的例子是"文文觉得芙兰比自己会照顾人" —— 这种"对人的判断"是设定，
+    //    不是记忆：记忆是事件、会过期、还会被话题相关性筛掉（只留 24 条）。
+    const vw = (cfg.views && typeof cfg.views === 'object') ? cfg.views : {};
+    const vs = [];
+    for (const o of ms) {
+      if (o.id === m.id) continue;
+      const t = String(vw[o.id] || '').replace(/[\r\n\t ]+/g, ' ').trim();
+      if (t) vs.push(o.name + '——' + t.slice(0, 120));
+    }
+    if (vs.length) tail += '（她私下怎么看别人：' + vs.join('；') + '）';
     if (cfg.muted) tail += '（她这会儿基本不开口）';
-    lines.push((i + 1) + '. ' + m.name + '：' + (p.text.slice(0, 400) || '（没写设定）') + tail);
+    // 群内覆盖给足字数（GROUP_PERSONA_MAX）；跟随她本人时只取前 400 字 ——
+    // 她自己的卡可能几千字，三个人一起塞进群上下文太贵。这条规矩要在二级页写明。
+    const cap = p.overridden ? GROUP_PERSONA_MAX : 400;
+    lines.push((i + 1) + '. ' + m.name + '：' + (p.text.slice(0, cap) || '（没写设定）') + tail);
   });
+  // 「群所在的地方」（v0.4.1.4）：城市 / 季节 / 这间屋子长什么样。
+  // 它和「场景」的分工：这个是常驻的（进稳定前缀、能命中缓存），
+  // 场景是"这一段对话发生在哪"，改得勤，只进本轮段。
+  const place = String(c.placeNote || '').trim();
+  if (place) lines.push('', '【这个地方】', place);
   const note = String(c.groupNote || '').trim();
   if (note) lines.push('', '【这个群是怎么回事】', note);
   // ⚠️ 群级的「他是谁」（v0.4.1.2）：用户反馈"群内人设没有『他』的，
@@ -7616,9 +7724,27 @@ function groupSpeaker(c) {
     const pin = ms.find(m => m.id === c.pinId);
     if (pin) return pin;
   }
+  const muted = mutedSet(c);
+  // 概率模式（v0.4.1.4）：按活跃度抽，刚说过的人权重减半。
+  // ⚠️ 用户说的"固定轮次"其实是四件不同的事（谁先开口 / 一幕里有几个人 /
+  //    能不能连发 / 会不会冷场）。这里改的是【第一件】，其余三件各有各的开关。
+  if (groupMode(c) === 'weight') {
+    const live = ms.filter(m => !muted.has(m.id));
+    const pool = live.length ? live : ms;
+    const lastId = String(c.lastSpeakerId || '');
+    const w = pool.map(m => {
+      let x = talkOf(c, m.id);
+      if (m.id === lastId) x *= 0.5;
+      return x;
+    });
+    const tot = w.reduce((a, b) => a + b, 0);
+    if (tot <= 0) return pool[0];   // 全是 0 权重也别把群聊卡死
+    let r = Math.random() * tot;
+    for (let k = 0; k < pool.length; k++) { r -= w[k]; if (r <= 0) return pool[k]; }
+    return pool[pool.length - 1];
+  }
   const i = Math.max(0, Number(c.turnIndex) || 0);
   // 静音的人跳过（v0.4.1.1）。全都静音了就还是给一个 —— 不能把群聊卡死。
-  const muted = mutedSet(c);
   for (let k = 0; k < ms.length; k++) {
     const m = ms[(i + k) % ms.length];
     if (!muted.has(m.id)) return m;
@@ -7626,8 +7752,18 @@ function groupSpeaker(c) {
   return ms[i % ms.length];
 }
 
-/** 发言模式：round（轮流）/ call（点名，认「@名字」和「名字：」） */
-function groupMode(c) { return c.speakMode === 'call' ? 'call' : 'round'; }
+/** 发言模式：round（轮流）/ weight（按活跃度抽，v0.4.1.4）/ call（点名，认「@名字」和「名字：」） */
+function groupMode(c) {
+  if (c.speakMode === 'call') return 'call';
+  if (c.speakMode === 'weight') return 'weight';
+  return 'round';
+}
+
+/** 她在这个群里的活跃度（0~100，默认 50）—— 概率模式下开口的权重 */
+function talkOf(g, cid) {
+  const v = Number(memberCfgOf(g, cid).talk);
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 50;
+}
 
 function escRe(s) { return String(s).replace(/[.*+?^$(){}|[\]\\]/g, '\\$&'); }
 
@@ -7770,6 +7906,64 @@ function memPersonaHead(who, isGrp) {
     + '    不要写「我摸你的翅膀」这种分不清方向的说法。\n\n';
 }
 
+/**
+ * 这条记忆是【谁】的视角（v0.4.1.4）。
+ *
+ * ⚠️ 刻意【不让总结模型自己填 who】：它会把人名写错，而写错的 who 会永久留在库里、
+ *    每轮都按错的视角注入 —— 比"没有视角"糟得多。这里用的是确定性的就近归属：
+ *    拿这条记忆和这一批里【每个发言人说过的话】比二元组重合度，取最像的那条。
+ *    够不像就返回 ''（= 全群共识）—— "判断不了就当大家都不知道"是安全的默认。
+ *
+ * 单聊根本没有 who 这回事，调用点自己判断 isGroup 之后再进来。
+ */
+function attributeWho(text, chunk) {
+  const t = String(text || '');
+  if (!t || !Array.isArray(chunk)) return '';
+  const lines = [];
+  for (const m of chunk) {
+    if (!m || m.role !== 'assistant' || !m.speakerId) continue;
+    const c = String(m.content || '');
+    if (c) lines.push({ sid: m.speakerId, c: c });
+  }
+  if (!lines.length) return '';
+  const grams = [];
+  for (let i = 0; i + 1 < t.length; i++) grams.push(t.slice(i, i + 2));
+  const uniq = [...new Set(grams)];
+  if (uniq.length < 3) return '';
+  const score = new Map();
+  for (const ln of lines) {
+    let hit = 0;
+    for (const g of uniq) if (ln.c.includes(g)) hit++;
+    if (hit > (score.get(ln.sid) || 0)) score.set(ln.sid, hit);
+  }
+  let best = '', bestS = 0;
+  for (const [sid, sc] of score) if (sc > bestS) { bestS = sc; best = sid; }
+  // 门槛：至少 3 个二元组命中，且覆盖率不低于 1/3
+  if (bestS >= 3 && bestS >= uniq.length / 3) return best;
+  return '';
+}
+
+/** 整理/查重时把老条目的 who 接过来（新写的条目模型不知道 who，丢了就再也回不来） */
+function whoOfNearest(text, oldList) {
+  const t = String(text || '').trim();
+  if (!t || !Array.isArray(oldList) || !oldList.length) return '';
+  for (const m of oldList) if (m && String(m.text || '').trim() === t) return String(m.who || '');
+  const grams = [];
+  for (let i = 0; i + 1 < t.length; i++) grams.push(t.slice(i, i + 2));
+  const uniq = [...new Set(grams)];
+  if (uniq.length < 3) return '';
+  let best = '', bestS = 0;
+  for (const m of oldList) {
+    if (!m || !m.who) continue;
+    const c = String(m.text || '');
+    let hit = 0;
+    for (const g of uniq) if (c.includes(g)) hit++;
+    if (hit > bestS) { bestS = hit; best = String(m.who); }
+  }
+  if (bestS >= 3 && bestS >= uniq.length / 3) return best;
+  return '';
+}
+
 /** 说话的人存进消息里（界面要按这个显示名字和头像） */
 function speakerCharOf(m) {
   if (!m || !m.speakerId) return null;
@@ -7804,6 +7998,8 @@ async function advanceGroupTurn(c, speaker) {
   const ms = groupMembers(c);
   const i = ms.findIndex(x => x.id === speaker.id);
   c.turnIndex = i >= 0 ? (i + 1) % ms.length : 0;
+  // 概率模式的降温因子要用"刚才谁说的"（v0.4.1.4）
+  c.lastSpeakerId = speaker.id;
   // 点名的有效期就是【这一轮】—— 用掉就清掉，否则她会一直被钉在那儿
   if (c.pinId) c.pinId = '';
   try { await chars.put(c); } catch { /* 记不上最多下一轮还是她，不致命 */ }
@@ -7821,7 +8017,7 @@ function renderGroupRoster() {
   el.innerHTML = '<span class="gr-label">在场</span>'
     + ms.map(m => '<span class="gr-chip' + (now && now.id === m.id ? ' on' : '') + '" data-gr="' + esc(m.id) + '">'
         + esc(m.name) + '</span>').join('')
-    + '<span class="gr-label">' + (groupMode(curChar) === 'call' ? '点名' : '轮流') + '</span>';
+    + '<span class="gr-label">' + (groupMode(curChar) === 'call' ? '点名' : (groupMode(curChar) === 'weight' ? '概率' : '轮流')) + '</span>';
   el.querySelectorAll('[data-gr]').forEach(x => {
     x.onclick = async () => {
       const ms2 = groupMembers(curChar);
@@ -7836,64 +8032,582 @@ function renderGroupRoster() {
   });
 }
 
-/**
- * 「她在这个群里是什么样」—— 群成员二级设置（v0.4.1.1）。
- *
- * 用户的原话：想有那种"进到群成员自己的设置里改一改"的地方，
- * 而且**群里改了不能影响她在单聊里的设定**。
- *
- * ⚠️ 实现上【没有把她的卡复制一份进群】，只存改过的那几项（见 memberCfgOf 上面的长注释）。
- *    复制的问题是"复制完就各走各的"：你之后把她单聊的设定改好了，
- *    群里那份还停在旧的，而且界面看不出"这个群里的是哪一版"。
- *    覆盖层给的是同样的隔离，"跟随她本人"是默认状态，清空就回去。
- *
- * 三样能改：
- *   · 群内补充 —— 追加在她设定后面的一两句话（最常用："在这个群里她话少"）
- *   · 群内人设 —— 填了就【替换】她自己的设定（想让她在群里完全是另一个人时用）
- *   · 少开口   —— 不参与轮流（你点名还是会答，那是你明确要的）
- */
-async function openGroupMemberCfg(gid, cid) {
-  const g = (await chars.get(gid)) || allChars.find(x => x.id === gid);
+// ============================================================
+//  群设置页（一级）/ 群成员页（二级）  v0.4.1.4
+// ============================================================
+//
+// 为什么从弹窗改成整页（用户要的是"参考 QQ/微信群设置那个形态"）：
+//   群设置原来塞在 openCharPicker 的 extraHtml 里 —— 群名 + 成员复选框 + 4 个设置
+//   + 头像上传 + 提示文字全挤在一个弹窗里，再加一项就滚不完；而且"点成员进二级设置"
+//   要靠弹窗里一个 ⚙ 小按钮，点之前还得先把弹窗里的值【抢救性地存一遍】
+//   （那段代码本身就是"弹窗撑不住"的证据）。
+//
+// 三层：
+//   一级 view-group     群头像 / 群名 / 成员九宫格 / 群设定 / 发言方式 / 输出 / 群参数
+//   二级 view-gmember   「她在这个群里是什么样」（点一级页里她的头像进来）
+//   三级 复用现有弹窗    人设条目、群内补充、她怎么看、群内参数、记忆、世界书
+//
+// ⚠️ 这两页的 id 一律用 g- / gm- 前缀，绝不复用角色编辑页的 e-*：
+//    角色编辑页（view-edit）和它们会【同时存在于 DOM 里】，id 撞了就是静默串值。
+
+let _gId = '';    // 正在编辑的群（一级页）
+let _gmId = '';   // 正在看的成员（二级页）
+
+// 群内覆盖的两个上限。【保存和注入必须用同一个数】——
+// 原来保存 slice(0,3000)、注入 slice(0,400)：用户填了 3000 字只有 400 字进上下文，
+// 而且没有任何提示（v0.4.1.4 复查清单 §9.1/§9.2 就是这么抓出来的）。
+const GROUP_PERSONA_MAX = 1500;   // 群内人设（替换她自己的设定）
+const GROUP_NOTE_MAX = 300;       // 群内补充（加在她设定后面的一两句话）
+
+/** 群设置页入口。角色列表的 ✎、点顶栏群名、裁剪头像回跳都走这里。 */
+function editGroupChat(gid) {
+  const g = allChars.find(x => x.id === gid);
+  if (!isGroup(g)) return;
+  _gId = gid;
+  _gmId = '';
+  renderGroupSettings();
+  showView('group');
+}
+
+/** 长按（移动端的"右键"）：550ms，和聊天页气泡那边同一套手感 */
+function bindLongPress(el, fn) {
+  let tm = null;
+  const clear = () => { if (tm) { clearTimeout(tm); tm = null; } };
+  el.addEventListener('touchstart', () => { clear(); tm = setTimeout(() => { tm = null; fn(); }, 550); }, { passive: true });
+  el.addEventListener('touchend', clear);
+  el.addEventListener('touchmove', clear);
+  el.addEventListener('touchcancel', clear);
+}
+
+function groupModeLabel(g) {
+  const m = groupMode(g);
+  return m === 'weight' ? '按活跃度抽人开口' : (m === 'call' ? '你点名才开口' : '按顺序轮流开口');
+}
+
+/** 一级页：把群记录整个画一遍 */
+async function renderGroupSettings() {
+  const g = allChars.find(x => x.id === _gId);
+  if (!isGroup(g)) { goBack(); return; }
+  const ms = groupMembers(g);
+  $('g-avatar-lg').innerHTML = g.avatar
+    ? '<img src="' + esc(g.avatar) + '" style="width:100%;height:100%;object-fit:cover">' : '👥';
+  $('g-name').value = g.name || '';
+  $('g-sub').textContent = ms.length + ' 个人 · ' + groupModeLabel(g);
+  $('g-member-num').textContent = ms.length ? (ms.length + ' 人') : '';
+  $('g-members').innerHTML = ms.map(m => {
+    const mc = memberCfgOf(g, m.id);
+    const hasP = (Array.isArray(mc.personaItems) && mc.personaItems.length) || String(mc.persona || '').trim();
+    const mk = mc.muted ? '少开口' : (hasP ? '群内人设' : (String(mc.note || '').trim() ? '有补充' : ''));
+    const av = m.avatar ? ('<img src="' + esc(m.avatar) + '">') : '🎎';
+    return '<div class="g-tile' + (mc.muted ? ' mute' : '') + '" data-gm="' + esc(m.id) + '">'
+      + '<div class="av">' + av + '</div>'
+      + '<div class="nm">' + esc(m.name) + '</div>'
+      + '<div class="mk">' + esc(mk) + '</div></div>';
+  }).join('')
+  + '<div class="g-tile add" data-gm-add="1"><div class="av">＋</div><div class="nm">加人</div><div class="mk"></div></div>';
+  // 群设定
+  $('g-note').value = g.groupNote || '';
+  $('g-he').value = g.heNote || '';
+  $('g-place').value = g.placeNote || '';
+  $('g-home').value = g.myEnv || '';
+  // 发言 / 输出
+  $('g-mode').value = groupMode(g);
+  $('g-silence').checked = g.allowSilence === true;
+  const autoN = Math.max(0, Math.min(5, Number(g.autoScene) || 0));
+  $('g-auto').value = String(autoN);
+  $('g-v-auto').textContent = String(autoN);
+  $('g-narr').checked = g.narrative !== false;
+  $('g-len').value = g.sceneLen || 'mid';
+  // 群自己的参数（三态：不勾 = 跟随全局；勾了才把值写进群记录）
+  const own = (g.temperature !== undefined && g.temperature !== null)
+           || (g.maxTokens !== undefined && g.maxTokens !== null);
+  $('g-ownparams').checked = own;
+  $('g-temp').value = String(Number(own ? g.temperature : S.temperature) || 1);
+  $('g-maxtok').value = String(Number(own ? g.maxTokens : S.maxTokens) || 2048);
+  syncGroupParamUI();
+  $('g-try-out').textContent = '';
+  // 资料小字
+  try {
+    const all = await mem.list(_gId);
+    const nWho = new Set(all.filter(m => m && m.who).map(m => m.who)).size;
+    $('g-mem-sub').textContent = all.length
+      ? (all.length + ' 条' + (nWho ? ' · ' + nWho + ' 个人的视角' : ' · 全群共用')) : '还没有';
+  } catch (e) { $('g-mem-sub').textContent = '—'; }
+  try {
+    const ss = await wb.soloAll();
+    const one = ss.find(x => x && x.charId === _gId);
+    const n = (one && Array.isArray(one.entries)) ? one.entries.length : 0;
+    $('g-wb-sub').textContent = n ? (n + ' 条') : '给这个群单独写的词条';
+  } catch (e) { $('g-wb-sub').textContent = '—'; }
+  bindGroupSettingsOnce();
+}
+
+function syncGroupParamUI() {
+  const on = !!($('g-ownparams') && $('g-ownparams').checked);
+  const t = $('g-temp'), mt = $('g-maxtok');
+  if (t) t.disabled = !on;
+  if (mt) mt.disabled = !on;
+  const tv = $('g-v-temp'), mv = $('g-v-maxtok');
+  if (tv) tv.textContent = (Number(t && t.value) || 0).toFixed(2);
+  if (mv) mv.textContent = String(Math.round(Number(mt && mt.value) || 0));
+}
+
+/** 一级页的监听只绑一次（每次重画都重绑，所以直接覆盖 onclick） */
+function bindGroupSettingsOnce() {
+  const box = $('g-members');
+  box.querySelectorAll('[data-gm]').forEach(el => {
+    const cid = el.dataset.gm;
+    el.onclick = () => { openGroupMemberPage(_gId, cid); };
+    bindLongPress(el, () => askRemoveMember(cid));
+  });
+  const addEl = box.querySelector('[data-gm-add]');
+  if (addEl) addEl.onclick = () => pickGroupMembers();
+  $('btn-group-back').onclick = () => { goBack(); };
+  $('btn-group-save').onclick = () => { saveGroupSettings(); };
+  $('g-avatar-pick').onclick = () => { $('g-avatar-file').click(); };
+  $('g-avatar-file').onchange = async () => {
+    const inp = $('g-avatar-file');
+    const file = inp.files && inp.files[0];
+    inp.value = '';
+    if (!file) return;
+    try {
+      const raw = await fileToDataUrl(file);
+      const big = await compressImage(raw, 1600, 0.95);
+      openCropper(big, 'group', _gId);
+    } catch (e) { console.error(e); toast('这张图读不出来，换一张试试'); }
+  };
+  $('g-mode').onchange = () => { $('g-try-out').textContent = ''; };
+  $('g-try').onclick = () => trySpeakerPreview();
+  $('g-auto').oninput = () => { $('g-v-auto').textContent = $('g-auto').value; };
+  $('g-ownparams').onchange = () => syncGroupParamUI();
+  $('g-temp').oninput = () => syncGroupParamUI();
+  $('g-maxtok').oninput = () => syncGroupParamUI();
+  $('g-wb-open').onclick = () => { openWbSolo(_gId); };
+  $('g-mem-open').onclick = () => { openGroupMemory(_gId); };
+  $('g-del').onclick = () => { deleteGroupConfirm(_gId); };
+}
+
+/** 保存一级页 —— saveGroupSettings 的完整实现（被 ✓ 和切页时调用） */
+async function saveGroupSettings(silent) {
+  const g = (await chars.get(_gId)) || allChars.find(x => x.id === _gId);
+  if (!isGroup(g)) return;
+  const nm = String($('g-name').value || '').trim();
+  if (nm) g.name = nm;
+  g.groupNote = String($('g-note').value || '').trim().slice(0, 2000);
+  g.heNote = String($('g-he').value || '').trim().slice(0, 1000);
+  g.placeNote = String($('g-place').value || '').trim().slice(0, 1000);
+  g.myEnv = String($('g-home').value || '').trim().slice(0, 4000);
+  const mode = $('g-mode').value;
+  g.speakMode = (mode === 'weight' || mode === 'call') ? mode : 'round';
+  g.allowSilence = !!$('g-silence').checked;
+  g.autoScene = Math.max(0, Math.min(5, Number($('g-auto').value) || 0));
+  g.narrative = !!$('g-narr').checked;
+  g.sceneLen = $('g-len').value || 'mid';
+  if ($('g-ownparams').checked) {
+    g.temperature = Number($('g-temp').value);
+    g.maxTokens = Math.round(Number($('g-maxtok').value));
+  } else {
+    // 三态：不勾 = 跟随全局。键要【删掉】，不是写一份当前值的快照 ——
+    // 写快照的话以后改全局设置，这个群不会再跟着动（FOLLOW_KEYS 那个坑的同一类）。
+    delete g.temperature;
+    delete g.maxTokens;
+  }
+  await refreshGroupPersona(g);
+  await chars.put(g);
+  await loadChars();
+  if (curCharId === g.id) { curChar = allChars.find(x => x.id === g.id) || g; renderGroupRoster(); }
+  renderCharList();
+  // 保存完把这一页重画一遍：副标题（"3 个人 · 按顺序轮流开口"）和几处小字
+  // 都是保存【之前】的状态，不重画的话用户会看着一个"改了没反应"的标题
+  // （e2e-grouppages 就是这么抓出来的）。
+  if ($('view-group') && $('view-group').classList.contains('active')) await renderGroupSettings();
+  if (!silent) toast('群设置已保存');
+}
+
+/** 「试一次」：概率不给预览，用户没法判断调得对不对 */
+function trySpeakerPreview() {
+  const g = allChars.find(x => x.id === _gId);
+  if (!isGroup(g)) return;
+  const ms = groupMembers(g);
+  const out = $('g-try-out');
+  if (!ms.length) { out.textContent = '群里还没有人。'; return; }
+  const mode = groupMode(g);
+  if (mode === 'call') {
+    out.textContent = '点名模式：你在聊天里 @谁、或者写「谁：」，下一轮就是她开口。';
+    return;
+  }
+  if (mode === 'round') {
+    out.textContent = '轮流顺序：' + ms.map((m, i) => (i + 1) + '.' + m.name).join(' → ') + ' → 回到第一个';
+    return;
+  }
+  const tot = ms.reduce((a, m) => a + talkOf(g, m.id), 0) || 1;
+  out.textContent = '每次开口的机会：' + ms.map(m =>
+    m.name + ' ' + Math.round(talkOf(g, m.id) / tot * 100) + '%').join(' · ')
+    + '（刚说过的人下一轮权重减半）';
+}
+
+/** 长按成员头像 → 移出群 */
+async function askRemoveMember(cid) {
+  const g = allChars.find(x => x.id === _gId);
   if (!isGroup(g)) return;
   const m = allChars.find(x => x.id === cid);
-  if (!m) { toast('这个人已经不在本机了'); editGroupChat(gid); return; }
-  const cfg = memberCfgOf(g, cid);
-  $('modal-title').textContent = '她在「' + (g.name || '这个群') + '」里';
-  $('modal-ok').textContent = '保存';
-  $('modal-cancel').textContent = '返回';
-  $('modal-text').innerHTML =
-    '<p class="hint-text" style="margin:0 0 10px">这些<b>只影响这个群</b>。'
-    + '她在单聊里的设定、参数、记忆<b>一个字都不会动</b>。</p>'
-    + '<label class="field"><span>群内补充（加在她自己的设定后面）</span>'
-    + '<textarea id="mc-note" rows="3" placeholder="比如：在这个群里她话少，基本只跟乙搭腔。">'
-    + esc(cfg.note || '') + '</textarea></label>'
-    + '<label class="field" style="margin-top:12px"><span>群内人设（留空 = 跟随她自己的卡）</span>'
-    + '<textarea id="mc-persona" rows="5" placeholder="留空就跟她本人一模一样">'
-    + esc(cfg.persona || '') + '</textarea></label>'
-    + '<label class="look-switch" style="margin-top:8px"><input type="checkbox" id="mc-muted"'
-    + (cfg.muted ? ' checked' : '') + '><span>在群里少开口（不参与轮流，你点名仍会答）</span></label>'
-    + '<p class="hint-text" style="margin-top:12px">她自己的设定（只读）：<br>'
-    + esc(String(m.persona || '（没写）').replace(/[\r\n\t ]+/g, ' ').slice(0, 160)) + '…</p>';
-  $('modal').classList.remove('hidden');
-  $('modal-cancel').onclick = () => { $('modal').classList.add('hidden'); editGroupChat(gid); };
-  $('modal-ok').onclick = async () => {
-    const note = String((elv('mc-note') || {}).value || '').trim().slice(0, 500);
-    const persona = String((elv('mc-persona') || {}).value || '').trim().slice(0, 3000);
-    const muted = !!(elv('mc-muted') || {}).checked;
-    const cur = (await chars.get(gid)) || g;
-    const map = Object.assign({}, cur.memberCfg || {});
-    // 三样都空 = 恢复成"完全跟随她本人" —— 清掉这条，别在库里留一个空壳
-    if (!note && !persona && !muted) delete map[cid];
-    else map[cid] = { note, persona, muted };
-    cur.memberCfg = map;
-    await refreshGroupPersona(cur);
-    await chars.put(cur);
-    $('modal').classList.add('hidden');
-    await loadChars();
-    if (curCharId === gid) { curChar = allChars.find(x => x.id === gid) || cur; renderGroupRoster(); }
-    toast(note || persona ? '改好了（只在这个群里生效）' : '已恢复成跟随她本人');
-    editGroupChat(gid);
+  if (!m) return;
+  if ((g.memberIds || []).length <= 2) { toast('群里至少要留两个人', 3000); return; }
+  const ok = await confirmBox('把她移出这个群',
+    '<p>把「' + esc(m.name) + '」移出「' + esc(g.name || '这个群') + '」？</p>'
+    + '<p>她<b>在群里改过的那份设定会一起删掉</b> —— 留着的话她回来时会悄无声息地复活，你会以为早就清掉了。</p>'
+    + '<p>她的角色本身、单聊、记忆都<b>不受影响</b>。</p>', '移出');
+  if (!ok) return;
+  const cur = (await chars.get(_gId)) || g;
+  cur.memberIds = (cur.memberIds || []).filter(x => x !== cid);
+  if (cur.memberCfg && typeof cur.memberCfg === 'object') delete cur.memberCfg[cid];
+  cur.turnIndex = 0;
+  cur.pinId = '';
+  await refreshGroupPersona(cur);
+  await chars.put(cur);
+  await loadChars();
+  if (curCharId === cur.id) { curChar = allChars.find(x => x.id === cur.id) || cur; renderGroupRoster(); }
+  await renderGroupSettings();
+  toast('已把「' + (m.name || '') + '」移出这个群');
+}
+
+/** ＋ 加人 / 换人（复用原来的选人弹窗，它本来就是多选） */
+function pickGroupMembers() {
+  const g = allChars.find(x => x.id === _gId);
+  if (!isGroup(g)) return;
+  openCharPicker({
+    title: '群成员',
+    name: g.name || '',
+    selected: (g.memberIds || []).slice(),
+    excludeGroups: true,
+    pickName: '群聊名字',
+    namePlaceholder: '比如：周末茶会',
+    okText: '保存',
+    onOk: async (nm, ids) => {
+      if (ids.length < 2) { toast('至少要留两个人，不然就是单聊了', 3200); return; }
+      const cur = (await chars.get(_gId)) || g;
+      if (nm) cur.name = nm;
+      cur.memberIds = ids;
+      // 移出的人那份群内设置一起删（和长按移出走同一条规矩）
+      if (cur.memberCfg && typeof cur.memberCfg === 'object') {
+        const keep = new Set(ids);
+        for (const k of Object.keys(cur.memberCfg)) if (!keep.has(k)) delete cur.memberCfg[k];
+      }
+      if ((Number(cur.turnIndex) || 0) >= ids.length) cur.turnIndex = 0;
+      await refreshGroupPersona(cur);
+      await chars.put(cur);
+      await loadChars();
+      renderCharList();
+      if (curCharId === cur.id) { curChar = allChars.find(x => x.id === cur.id) || cur; renderGroupRoster(); }
+      await renderGroupSettings();
+      toast('成员改好了');
+    },
+  });
+}
+
+/** 删群：连聊天记录 + 群记忆一起删，成员不受影响（v0.4.0 就有，搬到新页面） */
+async function deleteGroupConfirm(gid) {
+  const g = (await chars.get(gid)) || allChars.find(x => x.id === gid);
+  if (!isGroup(g)) return;
+  if (destructiveBlocked('删群')) return;
+  let n = 0;
+  try { n = (await msgs.list(gid, 0, true)).length; } catch (e) { n = 0; }
+  const ok = await confirmBox('删除这个群聊',
+    '<p>把「' + esc(g.name || '未命名') + '」和它的 <b>' + n + ' 条</b>聊天记录、'
+    + '以及<b>群自己的那份长期记忆</b>一起删掉？</p>'
+    + '<p><b>成员角色本身不受影响</b> —— 她们各自的单聊、设定、记忆都还在。</p>'
+    + '<p>这件事<b>无法撤销</b>。</p>', '删除');
+  if (!ok) return;
+  await purgeCharEverywhere(gid);
+  await settleAfterDelete(gid);
+  toast('已删除这个群（成员都还在）');
+}
+
+// ---------- 二级页：她在这个群里是什么样 ----------
+
+/** 把群内设置写进去（patch 里值为 null = 删掉这个键） */
+async function memberCfgWrite(gid, cid, patch) {
+  const cur = (await chars.get(gid)) || allChars.find(x => x.id === gid);
+  if (!isGroup(cur)) return null;
+  const map = Object.assign({}, cur.memberCfg || {});
+  const one = Object.assign({}, map[cid] || {});
+  for (const k of Object.keys(patch || {})) {
+    if (patch[k] === null) delete one[k]; else one[k] = patch[k];
+  }
+  // 全空 = 恢复成"完全跟随她本人" —— 别在库里留一个空壳（空壳会让界面显示"已覆盖"）
+  if (memberCfgEmpty(one)) delete map[cid]; else map[cid] = one;
+  cur.memberCfg = map;
+  await refreshGroupPersona(cur);
+  await chars.put(cur);
+  await loadChars();
+  if (curCharId === cur.id) { curChar = allChars.find(x => x.id === cur.id) || cur; renderGroupRoster(); }
+  return cur;
+}
+
+function memberCfgEmpty(one) {
+  if (!one) return true;
+  if (String(one.note || '').trim()) return false;
+  if (String(one.persona || '').trim()) return false;
+  if (Array.isArray(one.personaItems) && one.personaItems.length) return false;
+  if (one.muted) return false;
+  if (Number(one.talk) && Number(one.talk) !== 50) return false;
+  if (one.views && Object.keys(one.views).length) return false;
+  if (one.params && Object.keys(one.params).length) return false;
+  return true;
+}
+
+/** 群内人设的条目（路 B）：[{t:标题, x:正文}]；老数据是整块字符串，这里就地兼容 */
+function personaItemsOf(cfg) {
+  const arr = Array.isArray(cfg.personaItems) ? cfg.personaItems.filter(x => x && (x.x || x.t)) : [];
+  if (arr.length) return arr.map(x => ({ t: String(x.t || ''), x: String(x.x || '') }));
+  const raw = String(cfg.persona || '').trim();
+  return raw ? [{ t: '', x: raw }] : [];
+}
+
+async function openGroupMemberPage(gid, cid) {
+  _gId = gid;
+  _gmId = cid;
+  await renderGroupMemberPage();
+  showView('gmember');
+}
+
+async function renderGroupMemberPage() {
+  const g = allChars.find(x => x.id === _gId);
+  const m = allChars.find(x => x.id === _gmId);
+  if (!isGroup(g) || !m) { goBack(); return; }
+  const cfg = memberCfgOf(g, m.id);
+  $('gm-title').textContent = '她在群里';
+  $('gm-avatar').innerHTML = m.avatar
+    ? '<img src="' + esc(m.avatar) + '" style="width:100%;height:100%;object-fit:cover">' : '🎎';
+  $('gm-name').textContent = m.name || '';
+  $('gm-sub').textContent = '她在「' + (g.name || '这个群') + '」里 · 只影响这个群';
+  const items = personaItemsOf(cfg);
+  $('gm-persona-brief').textContent = items.length ? ('已覆盖 · ' + items.length + ' 条') : '跟随她本人';
+  const note = String(cfg.note || '').trim();
+  $('gm-note-brief').textContent = note ? (note.slice(0, 14) + (note.length > 14 ? '…' : '')) : '没写';
+  const views = (cfg.views && typeof cfg.views === 'object') ? cfg.views : {};
+  const nv = Object.keys(views).filter(k => String(views[k] || '').trim()).length;
+  $('gm-views-brief').textContent = nv ? (nv + ' 条') : '没写';
+  const pr = (cfg.params && typeof cfg.params === 'object') ? cfg.params : {};
+  const hasP = Object.keys(pr).length > 0;
+  $('gm-params-brief').textContent = hasP
+    ? ('温度 ' + Number(pr.temperature).toFixed(2) + ' · ' + Math.round(Number(pr.maxTokens))) : '跟随全局';
+  $('gm-talk').value = String(talkOf(g, m.id));
+  $('gm-v-talk').textContent = String(talkOf(g, m.id));
+  $('gm-muted').checked = !!cfg.muted;
+  $('btn-gm-back').onclick = async () => { goBack(); await renderGroupSettings(); };
+  $('btn-gm-save').onclick = async () => {
+    const t = Number($('gm-talk').value);
+    await memberCfgWrite(_gId, _gmId, { talk: (t === 50 ? null : t), muted: !!$('gm-muted').checked });
+    await renderGroupMemberPage();
+    toast('改好了（只在这个群里生效）');
   };
+  $('gm-talk').oninput = () => { $('gm-v-talk').textContent = $('gm-talk').value; };
+  $('gm-persona-open').onclick = () => { openGroupPersonaEditor(_gId, _gmId); };
+  $('gm-note-open').onclick = () => { openGroupNoteEditor(_gId, _gmId); };
+  $('gm-views-open').onclick = () => { openGroupViewsEditor(_gId, _gmId); };
+  $('gm-params-open').onclick = () => { openGroupParamsEditor(_gId, _gmId); };
+  $('gm-full').onclick = () => { openCharEdit(m.id); };
+  $('gm-reset').onclick = async () => {
+    const ok = await confirmBox('恢复成跟随她本人',
+      '<p>把「' + esc(m.name) + '」在<b>这个群里</b>的全部单独设置清掉？</p>'
+      + '<p>清掉之后她在这个群里就是用她自己那份设定。<b>她本人的卡一个字都不会动。</b></p>', '恢复');
+    if (!ok) return;
+    await memberCfgWrite(_gId, _gmId, { note: null, persona: null, personaItems: null, muted: null, talk: null, views: null, params: null });
+    await renderGroupMemberPage();
+    toast('已恢复成跟随她本人');
+  };
+}
+
+// ---------- 三级：四个弹窗 ----------
+
+/** 群内人设（条目化）。分条写才好改：一条讲性格，一条讲她在这个群里跟谁什么关系。 */
+function openGroupPersonaEditor(gid, cid) {
+  const g = allChars.find(x => x.id === gid);
+  const m = allChars.find(x => x.id === cid);
+  if (!isGroup(g) || !m) return;
+  let items = personaItemsOf(memberCfgOf(g, cid));
+  if (!items.length) items = [{ t: '', x: '' }];
+  const box = $('modal-text');
+  $('modal-title').textContent = '她在群内的人设';
+  $('modal-ok').textContent = '保存';
+  $('modal-cancel').textContent = '取消';
+  const read = () => {
+    items = items.map((it, i) => {
+      const t = box.querySelector('[data-t="' + i + '"]');
+      const x = box.querySelector('[data-x="' + i + '"]');
+      return { t: t ? t.value : it.t, x: x ? x.value : it.x };
+    });
+  };
+  const cnt = () => {
+    const n = items.reduce((a, it) => a + String(it.x || '').length, 0);
+    const el = $('gp-cnt');
+    if (el) el.textContent = '共 ' + n + ' / ' + GROUP_PERSONA_MAX + ' 字（超出的部分会被截掉）';
+  };
+  const draw = () => {
+    box.innerHTML = '<p class="hint-text" style="margin:0 0 10px">这里写的会<b>替换</b>她自己的设定，只在这个群生效。全部都空 = 跟随她本人。</p>'
+      + items.map((it, i) => '<div class="gp-item" data-i="' + i + '">'
+          + '<div class="gp-row"><input type="text" data-t="' + i + '" placeholder="这条叫什么（可以空着）" value="' + esc(it.t) + '">'
+          + '<button class="icon-btn" data-del="' + i + '">✕</button></div>'
+          + '<textarea rows="3" data-x="' + i + '" placeholder="写她在这个群里是什么样…">' + esc(it.x) + '</textarea>'
+          + '</div>').join('')
+      + '<button class="ghost-btn sm" id="gp-add">＋ 加一条</button>'
+      + '<div class="hint-text" id="gp-cnt"></div>';
+    cnt();
+    box.querySelectorAll('[data-del]').forEach(b => {
+      b.onclick = () => { read(); items.splice(Number(b.dataset.del), 1); if (!items.length) items = [{ t: '', x: '' }]; draw(); };
+    });
+    box.querySelectorAll('[data-x]').forEach(t2 => { t2.oninput = () => { read(); cnt(); }; });
+    box.querySelectorAll('[data-t]').forEach(t2 => { t2.oninput = () => { read(); }; });
+    $('gp-add').onclick = () => { read(); items.push({ t: '', x: '' }); draw(); };
+  };
+  draw();
+  $('modal').classList.remove('hidden');
+  $('modal-cancel').onclick = () => { $('modal').classList.add('hidden'); };
+  $('modal-ok').onclick = async () => {
+    read();
+    let total = 0;
+    const clean = [];
+    for (const it of items) {
+      const x0 = String(it.x || '').trim();
+      if (!x0) continue;
+      const room = Math.max(0, GROUP_PERSONA_MAX - total);
+      const x = x0.slice(0, room);
+      if (!x) continue;
+      total += x.length;
+      clean.push({ t: String(it.t || '').trim().slice(0, 40), x: x });
+    }
+    await memberCfgWrite(gid, cid, {
+      personaItems: clean.length ? clean : null,
+      persona: clean.length ? clean.map(it => (it.t ? it.t + '：' : '') + it.x).join('\n') : null,
+    });
+    $('modal').classList.add('hidden');
+    await renderGroupMemberPage();
+    toast(clean.length ? '改好了（只在这个群里生效）' : '已恢复成跟随她本人');
+  };
+}
+
+/** 群内补充：加在她设定后面的一两句话 */
+function openGroupNoteEditor(gid, cid) {
+  const g = allChars.find(x => x.id === gid);
+  const m = allChars.find(x => x.id === cid);
+  if (!isGroup(g) || !m) return;
+  const cfg = memberCfgOf(g, cid);
+  $('modal-title').textContent = '她在这个群里的补充';
+  $('modal-ok').textContent = '保存';
+  $('modal-cancel').textContent = '取消';
+  $('modal-text').innerHTML = '<p class="hint-text" style="margin:0 0 10px">加在她自己设定后面的一两句话，比如「在这个群里她话少，基本只跟乙搭腔」。</p>'
+    + '<textarea id="gn-note" rows="4" placeholder="在这个群里，她…">' + esc(cfg.note || '') + '</textarea>'
+    + '<div class="hint-text" id="gn-cnt"></div>';
+  const sync = () => {
+    const n = String($('gn-note').value || '').length;
+    $('gn-cnt').textContent = '共 ' + n + ' / ' + GROUP_NOTE_MAX + ' 字';
+  };
+  $('gn-note').oninput = sync;
+  sync();
+  $('modal').classList.remove('hidden');
+  $('modal-cancel').onclick = () => { $('modal').classList.add('hidden'); };
+  $('modal-ok').onclick = async () => {
+    const v = String($('gn-note').value || '').trim().slice(0, GROUP_NOTE_MAX);
+    await memberCfgWrite(gid, cid, { note: v || null });
+    $('modal').classList.add('hidden');
+    await renderGroupMemberPage();
+    toast(v ? '改好了（只在这个群里生效）' : '已清掉');
+  };
+}
+
+/** 她怎么看群里这些人（v0.4.1.4 新增）。
+ *  用户举的例子是「文文觉得芙兰比自己会照顾人」这种。
+ *  ⚠️ 它【不能】靠长期记忆做：记忆是事件、会过期、还会被话题相关性筛掉（只留 24 条），
+ *     而"她对某个人的判断"是每轮都该在场的东西 —— 所以它是设定，不是记忆。 */
+function openGroupViewsEditor(gid, cid) {
+  const g = allChars.find(x => x.id === gid);
+  const m = allChars.find(x => x.id === cid);
+  if (!isGroup(g) || !m) return;
+  const others = groupMembers(g).filter(x => x.id !== cid);
+  const cfg = memberCfgOf(g, cid);
+  const views = (cfg.views && typeof cfg.views === 'object') ? cfg.views : {};
+  $('modal-title').textContent = m.name + '怎么看她们';
+  $('modal-ok').textContent = '保存';
+  $('modal-cancel').textContent = '取消';
+  $('modal-text').innerHTML = '<p class="hint-text" style="margin:0 0 10px">用<b>她的口气</b>写她对每个人的看法 —— 每轮都会带上，所以写的是「她一直这么想」，不是「这一次提了一嘴」。留空 = 不提。</p>'
+    + (others.length ? others.map(o =>
+        '<label class="field" style="margin-top:10px"><span>' + esc(o.name) + '</span>'
+        + '<textarea rows="2" data-v="' + esc(o.id) + '" placeholder="比如：比他细心，也更会照顾人">'
+        + esc(views[o.id] || '') + '</textarea></label>').join('')
+      : '<p class="hint-text">群里还没有别人。</p>');
+  $('modal').classList.remove('hidden');
+  $('modal-cancel').onclick = () => { $('modal').classList.add('hidden'); };
+  $('modal-ok').onclick = async () => {
+    const next = {};
+    $('modal-text').querySelectorAll('[data-v]').forEach(t2 => {
+      const v = String(t2.value || '').trim().slice(0, 120);
+      if (v) next[t2.dataset.v] = v;
+    });
+    await memberCfgWrite(gid, cid, { views: Object.keys(next).length ? next : null });
+    $('modal').classList.add('hidden');
+    await renderGroupMemberPage();
+    toast('改好了（只在这个群里生效）');
+  };
+}
+
+/** 她在群里的参数（温度 / 最大长度）。不勾 = 跟随全局那份。 */
+function openGroupParamsEditor(gid, cid) {
+  const g = allChars.find(x => x.id === gid);
+  const m = allChars.find(x => x.id === cid);
+  if (!isGroup(g) || !m) return;
+  const cfg = memberCfgOf(g, cid);
+  const pr = (cfg.params && typeof cfg.params === 'object') ? cfg.params : {};
+  const own = Object.keys(pr).length > 0;
+  const t0 = Number(own ? pr.temperature : S.temperature) || 1;
+  const k0 = Number(own ? pr.maxTokens : S.maxTokens) || 2048;
+  $('modal-title').textContent = '她在群里的参数';
+  $('modal-ok').textContent = '保存';
+  $('modal-cancel').textContent = '取消';
+  $('modal-text').innerHTML = '<p class="hint-text" style="margin:0 0 10px">只在这个群里生效。不勾就跟随 ⚙ 全局那份（也跟随这个群自己的参数）。</p>'
+    + '<label class="look-switch"><input type="checkbox" id="gmp-own"' + (own ? ' checked' : '') + '><span>她在群里用自己的参数</span></label>'
+    + '<label class="field" style="margin-top:10px"><span>温度 <b id="gmp-v-temp">' + t0.toFixed(2) + '</b></span>'
+    + '<input id="gmp-temp" type="range" min="0" max="2" step="0.05" value="' + t0 + '"></label>'
+    + '<label class="field"><span>最大回复长度 <b id="gmp-v-maxtok">' + Math.round(k0) + '</b></span>'
+    + '<input id="gmp-maxtok" type="range" min="256" max="8192" step="128" value="' + Math.round(k0) + '"></label>';
+  const sync = () => {
+    const on = $('gmp-own').checked;
+    $('gmp-temp').disabled = !on;
+    $('gmp-maxtok').disabled = !on;
+    $('gmp-v-temp').textContent = Number($('gmp-temp').value).toFixed(2);
+    $('gmp-v-maxtok').textContent = String(Math.round(Number($('gmp-maxtok').value)));
+  };
+  $('gmp-own').onchange = sync;
+  $('gmp-temp').oninput = sync;
+  $('gmp-maxtok').oninput = sync;
+  sync();
+  $('modal').classList.remove('hidden');
+  $('modal-cancel').onclick = () => { $('modal').classList.add('hidden'); };
+  $('modal-ok').onclick = async () => {
+    const on = $('gmp-own').checked;
+    const params = on
+      ? { temperature: Number($('gmp-temp').value), maxTokens: Math.round(Number($('gmp-maxtok').value)) }
+      : null;
+    await memberCfgWrite(gid, cid, { params: params });
+    $('modal').classList.add('hidden');
+    await renderGroupMemberPage();
+    toast(on ? '改好了（只在这个群里生效）' : '已恢复成跟随全局');
+  };
+}
+
+/** 群记忆：跳去 ⚙ → 记忆管理，并把这个群展开、滚到它 */
+async function openGroupMemory(gid) {
+  _memOpen.add(gid);
+  const wrap = $('mem-wrap'), head = $('mem-fold');
+  if (wrap) wrap.classList.add('open');
+  if (head) head.classList.add('open');
+  bindSettings();
+  await renderMem();
+  showView('settings');
+  setTimeout(() => {
+    const el = document.querySelector('#mem-groups .mem-group[data-cid="' + gid + '"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, 420);
 }
 
 /**
@@ -7937,139 +8651,7 @@ function openGroupChatCreator() {
   });
 }
 
-/**
- * 编辑一个群：选成员（v0.4.0）。
- *
- * ⚠️ 群【不走】普通的角色编辑页 —— 那页能改人设，而群的人设是
- *    从成员算出来的（refreshGroupPersona 每次载入都会覆盖它）。
- *    让人在那里改一个"改了也没用"的字段，比不给入口更糟。
- */
-function editGroupChat(gid) {
-  const g = allChars.find(x => x.id === gid);
-  if (!isGroup(g)) return;
-  openCharPicker({
-    title: '编辑群聊',
-    name: g.name || '',
-    selected: (g.memberIds || []).slice(),
-    excludeGroups: true,
-    pickName: '群聊名字',
-    namePlaceholder: '比如：周末茶会',
-    okText: '保存',
-    delText: '删除这个群',
-    // ⚠️ v0.4.1：群的"设定"原来一个入口都没有 ——
-    //    groupNote（这个群是怎么回事）注入逻辑早就写好了，但**全项目没有一处写它**，
-    //    所以永远是空串；narrative（小说式一幕）是这一版新加的。
-    //    小说的质感很吃"这一幕在哪、你们是什么关系"，所以这两个入口是必须的。
-    extraHtml:
-      '<label class="field" style="margin-top:14px"><span>这个群是怎么回事</span>'
-      + '<textarea id="g-note" rows="3" placeholder="比如：每周六下午在她家喝茶。三个人认识很多年了，说话不客气。">'
-      + esc(g.groupNote || '') + '</textarea></label>'
-      + '<label class="look-switch" style="margin-top:6px"><input type="checkbox" id="g-narr"'
-      + (g.narrative === false ? '' : ' checked') + '><span>小说式一幕（一轮里可以几个人说话，并带旁白）</span></label>'
-      // 篇幅（v0.4.1.1）：用户实测"聊两轮 token 就没了"。
-      // 小说感是拿 token 换的，得让他自己选换多少 —— 默认中档。
-      + '<label class="field" style="margin-top:14px"><span>在她们眼里，他是谁（这个群共用一份）</span>'
-      + '<textarea id="g-he" rows="3" placeholder="比如：他是常来的老客，三个人都认识他，但只有甲知道他姓什么。">'
-      + esc(g.heNote || '') + '</textarea></label>'
-      + '<label class="field" style="margin-top:10px"><span>这一幕写多长（直接决定花多少 token）</span>'
-      + '<select id="g-len">'
-      + '<option value="short"' + ((g.sceneLen || 'mid') === 'short' ? ' selected' : '') + '>短 · 120~220 字，最多两个人开口</option>'
-      + '<option value="mid"' + ((g.sceneLen || 'mid') === 'mid' ? ' selected' : '') + '>中 · 200~350 字（默认）</option>'
-      + '<option value="long"' + (g.sceneLen === 'long' ? ' selected' : '') + '>长 · 350~600 字</option>'
-      + '</select></label>'
-      // 群头像（v0.4.1.1）：用户反馈"群聊头像改不了"。原来群记录 avatar 建群时置 null，没有任何 UI 能改。
-      + '<label class="field" style="margin-top:10px"><span>群头像</span>'
-      + '<input type="file" id="g-avatar" accept="image/*"></label>'
-      + '<div class="hint-text" style="margin-top:2px">选张图会自动压到 512 像素存进群记录（太大导备份会变慢）。</div>'
-      + '<div class="hint-text" style="margin-top:8px">想单独调某个人在这个群里的样子，点她名字右边那个 <b>⚙</b>。</div>',
-    // ⚠️ 删群入口（v0.4.0 复查）：原来【没有正常路径能删群】——
-    //    角色编辑页有删除按钮，但群不进那页；唯一能删到的是"长按气泡头像误进编辑页"
-    //    那条 bug 路径（见 缺陷 2）。等于用户的群是删不掉的。
-    onDelete: async () => {
-      if (destructiveBlocked('删群')) return;
-      let n = 0;
-      try { n = (await msgs.list(gid, 0, true)).length; } catch { n = 0; }
-      const ok = await confirmBox('删除这个群聊',
-        '<p>把「' + esc(g.name || '未命名') + '」和它的 <b>' + n + ' 条</b>聊天记录、'
-        + '以及<b>群自己的那份长期记忆</b>一起删掉？</p>'
-        + '<p><b>成员角色本身不受影响</b> —— 她们各自的单聊、设定、记忆都还在。</p>'
-        + '<p>这件事<b>无法撤销</b>。</p>', '删除');
-      if (!ok) return;
-      await purgeCharEverywhere(gid);
-      await settleAfterDelete(gid);
-      toast('已删除这个群（成员都还在）');
-    },
-    // 头像选完立刻压缩入库（不等"保存"）—— 用户在选图那一步的预期是"马上就换好了"，
-    // 而 file input 的 change 是异步的，拖到 onOk 里读还得再把 File 存一遍。
-    onRendered: (box) => {
-      const inp = elv('g-avatar');
-      if (!inp) return;
-      inp.onchange = async () => {
-        const file = inp.files && inp.files[0];
-        inp.value = '';                    // 允许再选同一张
-        if (!file) return;
-        try {
-          const raw = await fileToDataUrl(file);
-          const big = await compressImage(raw, 1600, 0.95);   // 和角色头像一样：先压再进裁剪器
-          $('modal').classList.add('hidden');                 // 裁剪页要露出来
-          openCropper(big, 'group', gid);
-        } catch (e) { console.error(e); toast('这张图读不出来，换一张试试'); }
-      };
-    },
-    // 齿轮 → 二级设置。⚠️ 先把弹窗里已经改过的东西存下来，
-    //    否则"改了群名→点齿轮→回来"会发现群名没了。
-    onMemberCfg: async (cid, sel) => {
-      const nmNow = String(($('pk-name') && $('pk-name').value) || '').trim();
-      const box = $('modal-text');
-      const cur = (await chars.get(gid)) || g;
-      if (nmNow) cur.name = nmNow;
-      const ids = [...sel];
-      if (ids.length >= 2) cur.memberIds = ids;
-      const noteEl = elv('g-note');
-      const narrEl = elv('g-narr');
-      const lenEl = elv('g-len');
-      const heEl = elv('g-he');
-      if (noteEl) cur.groupNote = String(noteEl.value || '').trim().slice(0, 2000);
-      if (narrEl) cur.narrative = !!narrEl.checked;
-      if (lenEl) cur.sceneLen = lenEl.value || 'mid';
-      if (heEl) cur.heNote = String(heEl.value || '').trim().slice(0, 1000);
-      await refreshGroupPersona(cur);
-      await chars.put(cur);
-      $('modal').classList.add('hidden');
-      await loadChars();
-      await openGroupMemberCfg(gid, cid);
-    },
-    onOk: async (nm, ids, box) => {
-      if (ids.length < 2) { toast('至少要留两个人，不然就是单聊了', 3200); return; }
-      g.name = nm;
-      g.memberIds = ids;
-      // 从弹窗里读那几个字段（box 就是 #modal-text，openCharPicker 传过来的）
-      const noteEl = elv('g-note');
-      const narrEl = elv('g-narr');
-      const lenEl = elv('g-len');
-      if (noteEl) g.groupNote = String(noteEl.value || '').trim().slice(0, 2000);
-      if (narrEl) g.narrative = !!narrEl.checked;
-      if (lenEl) g.sceneLen = lenEl.value || 'mid';
-      const heEl2 = elv('g-he');
-      if (heEl2) g.heNote = String(heEl2.value || '').trim().slice(0, 1000);
-      // ⚠️ 移出群的人，她的"群内设置"也要一起删（v0.4.1.1 自查）。
-      //    留着的话：她回来时旧设置【悄无声息地复活】，而用户以为早就清掉了。
-      //    这类孤儿键在这个项目里出过好几次（kv 前缀表漏项那三次），所以顺手扫一遍。
-      if (g.memberCfg && typeof g.memberCfg === 'object') {
-        const keep = new Set(ids);
-        for (const k of Object.keys(g.memberCfg)) if (!keep.has(k)) delete g.memberCfg[k];
-      }
-      await refreshGroupPersona(g);   // 人设跟着成员重算
-      await chars.put(g);
-      await loadChars();
-      if (curCharId === g.id) { curChar = allChars.find(x => x.id === g.id) || g; renderGroupRoster(); }
-      renderCharList();
-      // 成员里有人走了的话，轮次指针可能越界 —— 夹回范围内
-      if ((Number(g.turnIndex) || 0) >= ids.length) { g.turnIndex = 0; await chars.put(g); }
-      toast('已更新「' + nm + '」', 2600);
-    },
-  });
-}
+// editGroupChat 已搬到上面的「群设置页」一节（v0.4.1.4）：群不再走选人弹窗。
 
 /**
  * 彻底删掉一个「角色 / 群」以及挂在它名下的一切（v0.4.0 复查抽出来的）。
@@ -9763,6 +10345,25 @@ function appendLook(text) {
 let _memOpen = new Set();     // 展开了哪些角色（存 charId）
 let _memDraft = {};           // charId -> 还没提交的输入内容
 
+/** 群记忆：按"谁记得的"分组（v0.4.1.4）。没有 who 的是全群共识。 */
+function memBodyByWho(items) {
+  const cons = items.filter(m => m && !m.who);
+  const map = new Map();
+  for (const m of items) {
+    if (!m || !m.who) continue;
+    if (!map.has(m.who)) map.set(m.who, []);
+    map.get(m.who).push(m);
+  }
+  let html = '';
+  for (const [wid, arr] of map) {
+    const c = allChars.find(x => x.id === wid);
+    html += '<div class="mem-sub">「' + esc(c ? c.name : '已经不在群里的人') + '」记得的</div>'
+      + arr.map(m => memItemHtml(m)).join('');
+  }
+  if (cons.length) html += '<div class="mem-sub">这个群里大家都知道的事</div>' + cons.map(m => memItemHtml(m)).join('');
+  return html || '<div class="sys-line">她还没记住什么。</div>';
+}
+
 async function renderMem() {
   const all = await mem.all();
   const cs = await chars.all();
@@ -9802,8 +10403,16 @@ async function renderMem() {
     const n = g.items.length;
     const num = n ? `${n} 条` : '还没有';
     // 用共用的渲染（和角色页一致：内容在上，标签另起一行）
-    const body = g.items.map(m => memItemHtml(m)).join('')
-      || '<div class="sys-line">她还没记住什么。</div>';
+    //
+    // ⚠️ 群聊的记忆再按【谁的视角】分一层（v0.4.1.4）。
+    //    订正一处在复查清单里写错的判断：清单说"群的记忆没有任何界面能看"，
+    //    其实 ⚙ → 记忆管理本来就按 charId 分组、群也在里面（群就是一条 characters 记录）。
+    //    真正缺的是【按人分】这一层 —— 甲的私事和大家都知道的混在一起，
+    //    而注入时它们已经分开了（persona.js 按 who 筛），界面必须跟着说清楚。
+    const owner = cs.find(c => c.id === g.id);
+    const body = (owner && isGroup(owner) && g.items.some(m => m && m.who))
+      ? memBodyByWho(g.items)
+      : (g.items.map(m => memItemHtml(m)).join('') || '<div class="sys-line">她还没记住什么。</div>');
     return `<div class="mem-group${open ? ' open' : ''}" data-cid="${esc(g.id)}">`
       + `<button class="fold-head sub" data-head="1"><span>${esc(g.name)}</span>`
       + `<em class="fold-num">${num}</em><i class="fold-arrow">▾</i></button>`
@@ -11722,7 +12331,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.1.3';
+const WEB_VERSION_FALLBACK = '0.4.1.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

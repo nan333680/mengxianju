@@ -436,6 +436,68 @@ if (mdFiles.length) {
   t('Markdown 里有内容（不是空文件）', md.length > 200, md.length);
 }
 
+
+console.log('');
+console.log('=== K. 「应用到其他角色」：真的覆盖到了吗（默认不勾之外，还要看填空）===');
+await reset();
+await importBackup(F.b1013);
+await putKey();   // 上面 §F 用的同一个补 Key 手法（这里不用发消息，但保持一致）
+await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
+const two = J.b1013.characters.filter(c => !c.isGroup).slice(0, 3);
+const src = two[0], tgtA = two[1], tgtB = two[2];
+await page.evaluate(() => document.getElementById('btn-chars').click());
+await sleep(800);
+await page.evaluate((cid) => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === cid); if (c) c.click(); }, src.id);
+await sleep(1000);
+// 打开编辑页（长按/编辑按钮），写一句"他的设定"，然后应用到别人
+await page.evaluate((cid) => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === cid); const b = c && c.querySelector('[data-edit]'); if (b) b.click(); }, src.id);
+await sleep(1200);
+const MARK = '回归测试写的这一句-' + Date.now();
+await page.evaluate((m) => { const el = document.getElementById('e-mine'); el.value = m; el.dispatchEvent(new Event('input', { bubbles: true })); }, MARK);
+await sleep(300);
+await page.evaluate(() => document.getElementById('btn-e-mine-apply').click());
+await sleep(1200);
+const pickState = await page.evaluate(() => ({
+  open: !document.getElementById('pick-chars-modal').classList.contains('hidden'),
+  checked: [...document.querySelectorAll('#pick-chars-list input[type=checkbox]')].filter(b => b.checked).length,
+  total: document.querySelectorAll('#pick-chars-list input[type=checkbox]').length,
+}));
+t('选人弹窗默认不勾（'+ pickState.total + ' 个候选）', pickState.open && pickState.checked === 0, pickState);
+await page.evaluate((id) => { const b = [...document.querySelectorAll('#pick-chars-list input[type=checkbox]')].find(x => x.dataset.id === id); if (b) b.checked = true; }, tgtA.id);
+await page.evaluate(() => document.getElementById('pick-chars-ok').click());
+await sleep(2500);
+const applyGot = await page.evaluate(async (ids) => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const cs = await new Promise(r => { const q = db.transaction('characters').objectStore('characters').getAll(); q.onsuccess = () => r(q.result); });
+  db.close();
+  const pick = (id) => { const c = cs.find(x => x.id === id) || {}; return String(c.myProfile || ''); };
+  return { a: pick(ids.a), b: pick(ids.b) };
+}, { a: tgtA.id, b: tgtB.id });
+console.log('   被勾上的那个：' + applyGot.a.slice(0, 24) + ' | 没勾的那个：' + (applyGot.b || '（空）').slice(0, 12));
+t('勾上的角色被覆盖了', applyGot.a === MARK, applyGot.a.slice(0, 30));
+t('没勾的角色一个字没动', applyGot.b !== MARK, applyGot.b.slice(0, 20));
+
+console.log('');
+console.log('=== L. 归档区展开回看（真实数据里 411 条已归档）===');
+// ⚠️ J 是"四份文件"的字典（J.b1013 等），不是备份本身 —— 第一版写成 J.b1013.messages 直接炸了
+const archChar = Object.keys(J.b1013.messages).map(cid => ({ cid: cid, n: (J.b1013.messages[cid] || []).filter(m => m.archived).length })).sort((a, b) => b.n - a.n)[0];
+const archName = (J.b1013.characters.find(c => c.id === archChar.cid) || {}).name;
+console.log('   用 ' + archName + '（已归档 ' + archChar.n + ' 条）');
+await page.evaluate(() => document.getElementById('btn-edit-back') && document.getElementById('btn-edit-back').click());
+await sleep(600);
+await page.evaluate((cid) => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === cid); if (c) c.click(); }, archChar.cid);
+await sleep(1500);
+const beforeT = await page.evaluate(() => ({ toggle: !!document.getElementById('arch-toggle'), text: (document.getElementById('arch-toggle') || {}).textContent || '', shown: document.querySelectorAll('#messages .msg').length }));
+console.log('   归档提示：' + JSON.stringify(beforeT));
+t('归档区入口在（说明有老对话）', beforeT.toggle === true, beforeT);
+await page.evaluate(() => document.getElementById('arch-toggle').click());
+await sleep(1200);
+const afterT = await page.evaluate(() => ({ hidden: document.getElementById('arch-list').classList.contains('hidden'), arch: document.querySelectorAll('#arch-list .msg').length, text: document.getElementById('arch-toggle').textContent }));
+console.log('   展开后：' + JSON.stringify(afterT));
+t('点开后能展开（不是空的）', afterT.hidden === false && afterT.arch > 0, afterT);
+t('按钮变成"收起"', /收起/.test(afterT.text), afterT.text);
+
 console.log('');
 t('全程没有 JS 报错', errs.length === 0, errs.slice(0, 4));
 console.log('通过 ' + pass + ' / 失败 ' + fail);

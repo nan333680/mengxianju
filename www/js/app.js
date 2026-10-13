@@ -1402,6 +1402,10 @@ function msgHtml(m, depth = 0) {
         // 群聊（v0.4.0）：头像用【说话的那个人】，不是群的头像 ——
         // 不这样的话一条聊天记录里所有人的话都顶着同一张脸，根本分不清谁在说。
         const spk = isGroup(curChar) ? speakerCharOf(m) : null;
+        // ⚠️ 旁白没有说话人（v0.4.1.6）：原来回落到【群头像】——
+        //    群头像要是某个角色的脸，所有旁白看起来都像"她在说"。
+        //    旁白给一个中性图标，也不挂 av-her（挂了点它会去开"说话人"的编辑页）。
+        if (isGroup(curChar) && !spk && m.narration === true) return '<span class="av">🎬</span>';
         return avatarHtml(spk || curChar, 'av av-her');
       })();
   let inner = '';
@@ -1520,6 +1524,13 @@ async function renderMessages() {
         saveClock().catch(() => {});
       }
       const g = { id: uid(), charId: curCharId, role: 'assistant', content: curChar.greeting, story: storyStamp(now), ts: Date.now() };
+      // ⚠️ 群的开场白是【场面】（建群时自动生成的是「（甲、乙都在。）」这种），
+      //    要标成旁白（v0.4.1.6）。不标的后果：喂给记忆/归档模型时 memLabel 找不到
+      //    说话人 → 回落到【群名】，正文里就出现「周末茶会：三个人都在。」——
+      //    正是 v0.4.1 修过的那个"三个成员全被标成同一个名字"的静默污染，
+      //    只是开场白这条路当时没走到（要等这条消息真的落进总结窗口才会现形）。
+      //    单聊不用标：开场白就是她说的第一句，memLabel 回落到的正是她自己的名字。
+      if (isGroup(curChar)) g.narration = true;
       await msgs.add(g);
       await kv.set('greeted:' + curCharId, true);
       box.insertAdjacentHTML('beforeend', msgHtml(g));
@@ -5223,6 +5234,8 @@ let namedInText = false;
     //   · 点名模式 / 文本里写了「@名字」或「名字：」→ 就是那个人
     //   · 否则按 memberIds 的顺序轮到谁是谁
     //   · 群里一个人都没了的话 speaker 为 null，退化成普通单聊（不炸）
+    // 这一幕有几个人开口（v0.4.1.6）：必须在拼 turnNote 之前定下来
+    let sceneRoster = [];
     if (isGroup(myChar)) {
       // 群里"这一轮谁说话"的判据（v0.4.0 复查，用户拍板走 A）：
       //   ① 明确指定了同一个人（重新生成 / 换一个版本）→ 就是她
@@ -5242,6 +5255,8 @@ let namedInText = false;
       const namedCh = spk ? null : pickSpeakerByText(myChar, visibleText);
       speaker = spk || namedCh || groupSpeaker(myChar);
       namedInText = !!namedCh;
+      // 这一幕到场的都有谁（起头的那个人一定在）
+      sceneRoster = pickSceneRoster(myChar, speaker, myChar.sceneLen || 'mid');
       // 优先级：全局 < 角色/群自己的 < 群内成员参数。
       // ⚠️ 群勾了「覆盖全局设定」时，只跳过【群自己那一层】，成员参数照样生效 ——
       //    globalOverride 是"这一层的参数作废"的开关，不是"整条链作废"。
@@ -5272,8 +5287,13 @@ let namedInText = false;
       // 群聊：这一轮轮到谁（v0.4.0）。单聊时是空串，那段提示不会出现。
       speaker: speaker ? speaker.name : '',
       // v0.4.1 小说式一幕：开不开、在场都有谁（用来约束【名字】只能用这几个）
-      narrative: !!(isGroup(myChar) && myChar.narrative !== false),
-      memberNames: isGroup(myChar) ? groupMembers(myChar).map(m => m.name) : [],
+      // ⚠️ v0.4.1.6：这一幕只有【抽到的这几个人】在场 —— 抽到 1 个人时直接换成
+      //    "这一轮只写她一个人"那一套提示词（关掉小说模式时用的那套，两套本来互斥）。
+      //    这是治"二人转"最直接的一刀：不改提示词，只改"这一幕几个人"。
+      narrative: !!(isGroup(myChar) && myChar.narrative !== false && sceneRoster.length > 1),
+      memberNames: sceneRoster.length
+        ? sceneRoster.map(m => m.name)
+        : (isGroup(myChar) ? groupMembers(myChar).map(m => m.name) : []),
       named: namedInText,
       // 篇幅档位（v0.4.1.1）：直接决定这一幕花多少 token
       sceneLen: myChar.sceneLen || 'mid',
@@ -7758,6 +7778,46 @@ function groupSpeaker(c) {
   return ms[i % ms.length];
 }
 
+/**
+ * 这一幕【几个人开口】（v0.4.1.6）。
+ *
+ * 起因（用户实测 + 26 轮统计）：两个人群里 54% 的轮次是严格的 A>B>A>B 二人转，
+ * 只有 12% 出现连发。提示词里那句"最多三个人开口"是【上限】，
+ * 而模型把它当成了【目标】—— 群里正好两个人，那就永远两个人都来一段。
+ *
+ * 做法：生成前先抽一次这一幕有几个人（1 / 2 / 3，受在场人数和篇幅档位限制），
+ * 抽到 1 个人时，调用方把提示词换成现成的【这一轮只写她一个人】那一套
+ * （persona.js 的 else 分支，原来只在关掉小说模式时才走）。
+ * 除了起头那个人，其余按活跃度加权抽 —— 活跃度从此不只管"谁先开口"。
+ */
+const SCENE_SIZE_P = { one: 0.30, two: 0.50 };   // 抽到 3 人的概率 = 剩下的 0.20
+
+function pickSceneRoster(g, starter, sceneLen) {
+  const ms = groupMembers(g);
+  if (!ms.length || !starter) return [];
+  const live = ms.filter(m => !memberCfgOf(g, m.id).muted);
+  const pool = live.length ? live : ms;
+  const cap = Math.min(pool.length, sceneLen === 'short' ? 2 : 3);
+  if (cap <= 1) return [starter];
+  const r = Math.random();
+  let want = r < SCENE_SIZE_P.one ? 1 : (r < SCENE_SIZE_P.one + SCENE_SIZE_P.two ? 2 : 3);
+  want = Math.max(1, Math.min(want, cap));
+  const chosen = [starter];
+  const rest = pool.filter(m => m.id !== starter.id);
+  while (chosen.length < want && rest.length) {
+    const tot = rest.reduce((a, m) => a + talkOf(g, m.id), 0);
+    let pick = 0;
+    if (tot > 0) {
+      let rr = Math.random() * tot;
+      pick = rest.length - 1;
+      for (let i = 0; i < rest.length; i++) { rr -= talkOf(g, rest[i].id); if (rr <= 0) { pick = i; break; } }
+    }
+    chosen.push(rest[pick]);
+    rest.splice(pick, 1);
+  }
+  return chosen;
+}
+
 /** 发言模式：round（轮流）/ weight（按活跃度抽，v0.4.1.4）/ call（点名，认「@名字」和「名字：」） */
 function groupMode(c) {
   if (c.speakMode === 'call') return 'call';
@@ -7834,8 +7894,29 @@ function splitBySpeaker(text, members, primary) {
       }
       continue;
     }
-    if (!narrBuf) narrBuf = { text: s };
-    else narrBuf.text += '\n' + s;
+    // ── 没有【】的行分两种（v0.4.1.6）──
+    //   · 【整行被括号包住】= 场面描写 → 旁白（老行为）
+    //   · 其它 = 模型省略了重复的名字标记，而它写的多半是台词 → 归【上一个说话人】
+    //     （认不出上一个就归这一轮的主说话人）
+    // ⚠️ 起因（用户实测 + 截图）：模型写成
+    //      【芙兰】（她光着一只脚往前挪了半步）
+    //      回来了就好。那半句话你发了一半，我没看明白。
+    //      【文文】（厨房那边锅盖响了）
+    //    中间那行没标名字，老逻辑把【整句台词】当成了旁白 ——
+    //    界面上一句台词躺在虚线框里，看着就是"她说了话但没有说话人"。
+    //    解析器原来只认"有没有【】"，不认"这是不是台词"。
+    const wrapped = /^[（(][\s\S]*[）)]$/.test(s);
+    if (wrapped) {
+      if (!narrBuf) narrBuf = { text: s };
+      else narrBuf.text += '\n' + s;
+      continue;
+    }
+    flushNarr();
+    let prevSpk = '';
+    for (let k = out.length - 1; k >= 0; k--) {
+      if (out[k] && out[k].speakerId) { prevSpk = out[k].speakerId; break; }
+    }
+    out.push({ text: s, speakerId: prevSpk || (primary ? primary.id : ''), narration: false });
   }
   flushNarr();
   // ⚠️ 一个【】都没有 = 模型压根没按格式来 → 整段归主说话人（老行为），不拆也不丢
@@ -12399,7 +12480,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.1.5';
+const WEB_VERSION_FALLBACK = '0.4.1.6';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

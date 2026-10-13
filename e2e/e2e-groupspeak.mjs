@@ -93,6 +93,11 @@ await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').click(); });
 await sleep(1400);
 
+// ⚠️ v0.4.1.6：这一幕几个人是【抽】的（1/2/3）。抽到 1 个人会换成"只写她一个人"
+//    那套提示词，而这一套断言是冲着"小说式一幕"的措辞来的 —— 先把随机数压在
+//    "2 个人"那一档让它可以复现。用带计数的小扰动，别用常数（uid 会撞车）。
+await page.evaluate(() => { let n = 0; Math.random = () => { n++; return 0.45 + (n % 97) / 100000; }; });
+
 console.log('=== 1. 一个人连发几条：提示词不再和解析器对着干 ===');
 chatReq = null;
 replyText = '【甲】我先去倒杯水。' + NL + '【甲】你要吗？';

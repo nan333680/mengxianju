@@ -86,12 +86,25 @@ await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').click(); });
 await sleep(1400);
 
+// ⚠️ v0.4.1.6：这一幕【几个人】是抽的（1/2/3）。抽到 1 个人时会换成"只写她一个人"
+//    那套提示词，而下面大部分断言是冲着"小说式一幕"来的 —— 先把随机数压在
+//    "2 个人"那一档，让这一套可复现；要测随机本身，第 9d 节自己会重设。
+//    用【带计数的】小扰动而不是常数：常数会让 uid() 在同一毫秒里撞车。
+await page.evaluate(() => { let n = 0; Math.random = () => { n++; return 0.45 + (n % 97) / 100000; }; });
+
 const waitDone = async () => { for (let i = 0; i < 80; i++) { await sleep(300); const b = await page.$eval('#btn-stop', e => !e.classList.contains('hidden')).catch(() => false); if (!b) break; } await sleep(800); };
 const send = async (s) => {
-  await page.evaluate(x => { const el = document.getElementById('input'); el.value = x; el.dispatchEvent(new Event('input', { bubbles: true })); }, s);
-  await sleep(150);
-  await page.evaluate(() => document.getElementById('btn-send').click());
-  await waitDone();
+  // ⚠️ 上一轮的记忆任务还在跑时 send 会被拦下（"她还在打字"），输入框不会被清空 ——
+  //    判据就用【输入框有没有被清掉】：清了 = 过了 busy 检查、真的发出去了。
+  for (let k = 0; k < 4; k++) {
+    await page.evaluate(x => { const el = document.getElementById('input'); el.value = x; el.dispatchEvent(new Event('input', { bubbles: true })); }, s);
+    await sleep(150);
+    await page.evaluate(() => document.getElementById('btn-send').click());
+    await waitDone();
+    const left = await page.evaluate(() => document.getElementById('input').value);
+    if (!left) break;
+    await sleep(2500);
+  }
 };
 const aiMsgs = async () => page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
@@ -108,13 +121,23 @@ const aiMsgs = async () => page.evaluate(async () => {
 const sysOf = () => ((chatReq || lastReq) && (chatReq || lastReq).messages ? (chatReq || lastReq).messages : []).filter(m => m.role === 'system').map(m => String(m.content || ''));
 
 console.log('=== 1. 默认就该是"小说式一幕"，而且提示词里说清了格式 ===');
-replyText = '【甲】我先说。' + NL + '窗外的雨小了些，谁都没急着接话。' + NL + '【乙】那我接着说。';
+// ⚠️ v0.4.1.6：中间那行必须【用括号包住】才算旁白 —— 没包住的裸行现在归上一个说话人
+replyText = '【甲】我先说。' + NL + '（窗外的雨小了些，谁都没急着接话）' + NL + '【乙】那我接着说。';
 await send('开始吧');
 const sys1 = sysOf();
 t('本轮段走的是「这一幕怎么写」', sys1.some(s => s.includes('这一幕怎么写')), sys1.map(s => s.slice(0, 16)));
 t('明确要求换人说话另起一行、行首标【名字】', sys1.some(s => s.includes('行首用【名字】标出来')), '');
-t('明确说了不带【】的算旁白', sys1.some(s => s.includes('旁白')), '');
-t('把在场名单给了它（约束名字只能这几个）', sys1.some(s => s.includes('甲') && s.includes('乙') && s.includes('丙') && s.includes('只能用这几个')), '');
+t('说清了「场面描写整行用括号包起来」', sys1.some(s => s.includes('场面描写整行用括号包起来')), '');
+t('并且说明了没标名字、又没括号的会被算成上一个人说的', sys1.some(s => s.includes('系统会算成【上一个说话人】说的')), '');
+t('旁白只写大家都看得见的（不许拿旁白写某个人的动作）', sys1.some(s => s.includes('别丢给旁白')), '');
+t('旁白里不许出现不指名的「她」', sys1.some(s => s.includes('不要出现不指名的「她」')), '');
+// ⚠️ v0.4.1.6：这一场到场的【只是抽到的那几个人】（不再是把全群名单报一遍）——
+//    断言改成"列出来的名字是一部分、而且都在成员里"，顺便钉住"这一幕只有 2 个人"。
+const rosterLine = sys1.find(s => s.includes('名字只能用这几个')) || '';
+const listed = ((rosterLine.match(/只能用这几个[：:]\s*([^\n]+)/) || [])[1] || '').trim();
+const listedArr = listed ? listed.split('、').map(x => x.trim()) : [];
+t('把这一场到场的名单给了它（只列抽到的那几个）',
+  listedArr.length === 2 && listedArr.every(n => ['甲','乙','丙'].indexOf(n) >= 0), listed);
 t('并且仍然点名"你现在是「甲」"', sys1.some(s => s.includes('你现在是「甲」')), '');
 t('写明了"要点是她们之间真的在互动"', sys1.some(s => s.includes('真的在互动')), '');
 t('要求后开口的人接住前一个人的话', sys1.some(s => s.includes('接住前一个人的话')), '');
@@ -133,6 +156,29 @@ t('第二条是旁白（没有 speakerId，带 narration 标记）', scene[1] &&
 t('第三条归乙', scene[2] && scene[2].s === 'gb' && scene[2].c.includes('那我接着说'), scene[2]);
 t('旁白那条的正文里没有【】残留', scene[1] && !scene[1].c.includes('【'), scene[1]);
 t('轮次从【最后开口的那个人】往后推（乙 → 丙）', r.turnIndex === 2, r.turnIndex);
+
+console.log('=== 2b. 模型漏标名字的台词：归【上一个说话人】，不再变成旁白 ===');
+// 用户实测截图里的那条：「回来了就好。那半句话你发了一半，我没看明白。」
+// 前面是【芙兰】的一句（旁白），后面是【文文】的一句 —— 中间那行没标名字。
+// ⚠️ 第一行必须是【裸的】括号行 —— 带【甲】标记的行本来就归甲（那是她的动作），
+//    不是旁白（第一版把断言打在"有标记的行"上了）。
+replyText = '（她往前挪了半步）' + NL + '回来了就好。那半句话你发了一半，我没看明白。'
+  + NL + '【乙】（锅盖响了）' + NL + '我去看看。';
+await send('接着说');
+const r2b = await aiMsgs();
+const last3b = r2b.ai.slice(-4);
+console.log('   ' + JSON.stringify(last3b));
+t('拆成了四条（两句台词各自成段）', last3b.length === 4, last3b.map(x => x.c));
+// ⚠️ 这一段前面【没有】带名字的行（第一行是裸旁白），所以它会归到"这一轮的起头人"——
+//    而起头人每轮都在转（不是固定甲）。从提示词里把她读出来对一下。
+const starterName = (sysOf().find(x => x.includes('必须有「')) || '').match(/必须有「([^」]+)」/);
+const NAME2ID = { '甲': 'ga', '乙': 'gb', '丙': 'gc' };
+const starterId = starterName ? NAME2ID[starterName[1]] : '';
+t('没标名字的台词归【这一轮的起头人】', last3b[1] && !!starterId && last3b[1].s === starterId && last3b[1].c.indexOf('回来了就好') >= 0,
+  { got: last3b[1], starter: starterName && starterName[1], starterId: starterId });
+t('它【不再】是旁白', last3b[1] && last3b[1].narr !== true, last3b[1]);
+t('括号包住的那行仍然是旁白', last3b[0] && last3b[0].s === null && last3b[0].narr === true, last3b[0]);
+t('换了名字之后归到乙', last3b[3] && last3b[3].s === 'gb' && last3b[3].c.indexOf('我去看看') >= 0, last3b[3]);
 
 console.log('=== 3. 界面上旁白和"谁说的"看得出来 ===');
 const dom = await page.evaluate(() => {
@@ -331,9 +377,13 @@ const saved = await page.evaluate(async () => {
 });
 console.log('   DBG 存进去的: ' + JSON.stringify(saved));
 t('篇幅和小说模式都存进了群记录', !!saved && saved.sceneLen === 'short' && saved.narrative === true, saved);
+// ⚠️ 这一幕几个人是【抽】的：抽到 1 个人就会换成"只写她一个人"那套提示词，
+//    里面没有篇幅那句话。要测篇幅，先把随机数压到"2 个人"那一档。
+await page.evaluate(() => { window.__rndS = Math.random; let n = 0; Math.random = () => { n++; return 0.45 + (n % 97) / 100000; }; });
 replyText = '【甲】短一点。';
 await send('试试短档');
 const sysS = sysOf();
+await page.evaluate(() => { if (window.__rndS) Math.random = window.__rndS; });
 {
   const blk = sysS.find(s => s.includes('这一幕怎么写')) || '';
   console.log('   DBG 这一幕段: ' + blk.replace(/\n/g, ' | ').slice(0, 400));
@@ -432,6 +482,54 @@ console.log('   ' + JSON.stringify({ he: heOut && heOut.he }));
 t('存进了群记录', !!heOut && heOut.he === '他是常来的老客，三个人都认识他。', heOut && heOut.he);
 t('进了群人设，而且标明【优先于】她们各自的说法', String((heOut && heOut.persona) || '').includes('在她们眼里，他是谁')
   && String((heOut && heOut.persona) || '').includes('优先于'), String((heOut && heOut.persona) || '').slice(-160));
+
+console.log('=== 9d. 这一幕几个人开口：抽 1/2/3 人，抽到 1 人就用"只写她一个人"那套 ===');
+// Math.random 换成"带计数的小值"，既能落进想要的档，又不会让 uid() 撞车
+await page.evaluate(() => { window.__rnd0 = Math.random; });
+const stubRandom = (band) => page.evaluate((b) => {
+  let n = 0;
+  Math.random = () => { n++; return b + (n % 97) / 100000; };
+}, band);
+const sceneSys = () => sysOf().filter(x => x.includes('这一幕怎么写') || x.includes('这一轮你演谁')).join(' | ');
+// ⚠️ 第 9 节把乙设成了"少开口"，而少开口的人不进这一幕的池子 ——
+//    live 只有 2 个人的话，抽到 3 个人那条断言永远测不到（上限被池子卡在 2）。
+await page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const g = await new Promise(r => { const q = db.transaction('characters').objectStore('characters').get('ggrp1'); q.onsuccess = () => r(q.result); });
+  if (g && g.memberCfg && g.memberCfg.gb) { delete g.memberCfg.gb.muted; if (!Object.keys(g.memberCfg.gb).length) delete g.memberCfg.gb; }
+  await new Promise(r => { const tx = db.transaction('characters', 'readwrite'); tx.objectStore('characters').put(g); tx.oncomplete = r; });
+  db.close();
+});
+await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
+await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').click(); });
+await sleep(1000);
+await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').querySelector('[data-edit]').click(); });
+// ⚠️ renderGroupSettings 是【异步】的（里面要读记忆和世界书），它会把 g-len 按库里的值重写一遍 ——
+//    改早了会被它覆盖，于是"明明设成 mid，实际还是 short"（第一版就栽在这儿）。
+await sleep(1600);
+const lenOk = await page.evaluate(() => {
+  const n = document.getElementById('g-narr'); if (n) n.checked = true;
+  const c = document.getElementById('g-len'); if (c) c.value = 'mid';
+  return (document.getElementById('g-len') || {}).value;
+});
+t('篇幅先切成中档（这一幕人数上限跟着它走）', lenOk === 'mid', lenOk);
+await page.evaluate(() => document.getElementById('btn-group-save').click());
+await sleep(1200);
+for (const [band, want, note] of [[0.05, 1, '抽到 1 个人'], [0.45, 2, '抽到 2 个人'], [0.95, 3, '抽到 3 个人']]) {
+  await stubRandom(band);
+  await send('这一幕几个人');
+  const sys2 = sceneSys();
+  if (want === 1) {
+    t(note + ' → 换成「这一轮你演谁」那套', sys2.includes('这一轮你演谁') && !sys2.includes('这一幕怎么写'), sys2.slice(0, 80));
+    t('并且明确"这一轮只写她一个人的反应"', sys2.includes('一个人的反应'), '');
+  } else {
+    t(note + ' → 还是「这一幕怎么写」', sys2.includes('这一幕怎么写'), sys2.slice(0, 60));
+    t(note + ' → 人数上限写成「最多' + (want === 2 ? '两' : '三') + '个人开口」',
+      sys2.includes('最多' + (want === 2 ? '两' : '三') + '个人开口'), sys2.slice(sys2.indexOf('最多'), sys2.indexOf('最多') + 40));
+  }
+}
+await page.evaluate(() => { if (window.__rnd0) Math.random = window.__rnd0; });
 
 console.log('=== 10. 自查抓到的两个 bug ===');
 // bug 1：点"在场的人"里被设成"少开口"的那个 —— 界面说轮到她，实际会被静音跳过。

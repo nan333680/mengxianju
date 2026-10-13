@@ -213,13 +213,22 @@ const backup = {
     { id: 'bk_xiaoman', name: '小满', greeting: '（备份里的）', persona: '备份里的小满。', presetKey: 'blank', createdAt: 1 },
     { id: 'bk_aqi', name: '阿七', greeting: '（在）', persona: '阿七。', presetKey: 'blank', createdAt: 2 },
     { id: 'bk_group', name: '周末茶会', isGroup: true, memberIds: ['bk_xiaoman', 'bk_aqi'], groupNote: '',
-      speakMode: 'round', turnIndex: 0, greeting: '（都在。）', presetKey: 'blank', createdAt: 3 },
+      speakMode: 'round', turnIndex: 0, greeting: '（都在。）', presetKey: 'blank', createdAt: 3,
+      // v0.4.1.6：memberCfg 的【键】是成员 charId，views 的【内层键】也是 ——
+      // 导入时必须一起翻，否则认领过的成员在新机上"群内设置全部消失"。
+      memberCfg: {
+        bk_xiaoman: { note: '备份里的群内补充', talk: 0, views: { bk_aqi: '比他细心' } },
+        bk_aqi: { muted: true },
+      } },
   ],
   messages: { bk_group: [
     { id: 'm1', charId: 'bk_group', role: 'assistant', content: '小满说的第一句', speakerId: 'bk_xiaoman', ts: 1000 },
     { id: 'm2', charId: 'bk_group', role: 'assistant', content: '阿七说的第二句', speakerId: 'bk_aqi', ts: 2000 },
   ] },
-  memories: [],
+  memories: [
+    { id: 'mm1', charId: 'bk_group', who: 'bk_xiaoman', text: '芙兰对他的好感太明显了',
+      kind: 'fact', freq: 'normal', ts: 5000 },
+  ],
 };
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mxj-g2-'));
 const bkFile = path.join(dir, 'bk.json');
@@ -256,6 +265,46 @@ t('群成员 id 被重映射了（不是备份里的 bk_*）',
   !!afterImp.members && afterImp.members.includes('local_xiaoman'), afterImp.members);
 t('另一个新成员按备份 id 建出来了', !!afterImp.members && afterImp.members.some(id => afterImp.ids.includes(id) && id !== 'local_xiaoman'), afterImp.members);
 t('「仅角色」确实不带聊天记录（所以 speakerId 那条单独说）', afterImp.msgCount === 0, afterImp.msgCount);
+
+// v0.4.1.6：memberCfg 的键也要重映射（不然她的群内设置全静默失效）
+const cfgAfter = await page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const cs = await new Promise(r => { const q = db.transaction('characters').objectStore('characters').getAll(); q.onsuccess = () => r(q.result); });
+  db.close();
+  const g = cs.find(c => c.name === '周末茶会');
+  const aqi = cs.find(c => c.name === '阿七');
+  return { keys: Object.keys((g && g.memberCfg) || {}), one: (g && g.memberCfg && g.memberCfg['local_xiaoman']) || null,
+           aqiId: aqi && aqi.id, persona: (g && g.persona) || '', members: (g && g.memberIds) || [] };
+});
+console.log('   ' + JSON.stringify(cfgAfter));
+// 判据要写成"每个键都指向本机真实成员"，不能写成"不许有 bk_ 前缀"：
+// 阿七在本机没有同名角色，是按【备份 id 原样建出来】的 —— 它的本机 id 就是 bk_aqi，
+// 那个键本来就该保持 bk_aqi。留在旧 id 上的情况（认领过的成员）才是 bug，
+// 而它表现为"键不在 memberIds 里"。
+const badKeys = cfgAfter.keys.filter(k => cfgAfter.members.indexOf(k) < 0);
+t('群内设置的键全都指向本机真实成员（认领过的那位也翻过来了）',
+  badKeys.length === 0 && cfgAfter.keys.includes('local_xiaoman'), { keys: cfgAfter.keys, members: cfgAfter.members, bad: badKeys });
+t('活跃度 0 也活下来了（不是被当成空壳删掉）', !!cfgAfter.one && Number(cfgAfter.one.talk) === 0, cfgAfter.one);
+t('views 的内层键也翻成了本机 id', !!cfgAfter.one && cfgAfter.one.views && cfgAfter.one.views[cfgAfter.aqiId] === '比他细心', cfgAfter.one && cfgAfter.one.views);
+t('群人设里带上了这份群内补充（说明设置真的生效）', cfgAfter.persona.indexOf('备份里的群内补充') >= 0, '');
+t('「她私下怎么看别人」也进了群人设', cfgAfter.persona.indexOf('她私下怎么看别人') >= 0, '');
+
+// 再导一次「仅聊天记录」（这个模式带记忆）—— 验 memories.who 的重映射
+const inp2 = await page.$('#file-import');
+await inp2.uploadFile(bkFile);
+await pickImportMode(page, 'msgs', sleep);
+await sleep(2500);
+const memAfter = await page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const ms = await new Promise(r => { const q = db.transaction('memories').objectStore('memories').getAll(); q.onsuccess = () => r(q.result); });
+  db.close();
+  return ms.map(m => ({ text: m.text, who: m.who || '' }));
+});
+console.log('   ' + JSON.stringify(memAfter));
+const whoOne = memAfter.find(m => m.text.indexOf('芙兰对他的好感') >= 0);
+t('记忆的 who 也翻成了本机 id（不然谁都不会被注入到）', !!whoOne && whoOne.who === 'local_xiaoman', whoOne);
 
 console.log('=== 8. speakerId 的重映射：诚实说清它现在【到不了】 ===');
 // 实测结论（v0.4.0 复查）：五个导入模式里，会【同名认领】的两个（仅角色 / 设置与角色）

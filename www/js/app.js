@@ -8128,8 +8128,12 @@ async function renderGroupSettings() {
   const own = (g.temperature !== undefined && g.temperature !== null)
            || (g.maxTokens !== undefined && g.maxTokens !== null);
   $('g-ownparams').checked = own;
-  $('g-temp').value = String(Number(own ? g.temperature : S.temperature) || 1);
-  $('g-maxtok').value = String(Number(own ? g.maxTokens : S.maxTokens) || 2048);
+  // ⚠️ 不能用 `|| 1` 兜底：温度的 0 是合法值（滑杆下限就是 0）——
+  //    兜了的话，把群温度调到 0 再进这一页，滑杆显示 1，一保存就把 0 悄悄改成 1。
+  const gT = Number(own ? g.temperature : S.temperature);
+  const gK = Number(own ? g.maxTokens : S.maxTokens);
+  $('g-temp').value = String(Number.isFinite(gT) ? gT : 1);
+  $('g-maxtok').value = String(Number.isFinite(gK) ? gK : 2048);
   syncGroupParamUI();
   $('g-try-out').textContent = '';
   // 资料小字
@@ -8246,9 +8250,16 @@ function trySpeakerPreview() {
     out.textContent = '轮流顺序：' + ms.map((m, i) => (i + 1) + '.' + m.name).join(' → ') + ' → 回到第一个';
     return;
   }
-  const tot = ms.reduce((a, m) => a + talkOf(g, m.id), 0) || 1;
+  const sum = ms.reduce((a, m) => a + talkOf(g, m.id), 0);
+  // ⚠️ 全是 0 的时候，groupSpeaker 会兜底给第一个人 —— 预览要跟它说的一样，
+  //    否则界面写着"每人 0%"，实际却总是同一个人开口（v0.4.1.6）。
+  if (sum <= 0) {
+    out.textContent = '每个人的活跃度都是 0 —— 抽不出来，实际会固定由「' + (ms[0].name || '') + '」开口。'
+      + '把想让她多说话的人往上调一点就行。';
+    return;
+  }
   out.textContent = '每次开口的机会：' + ms.map(m =>
-    m.name + ' ' + Math.round(talkOf(g, m.id) / tot * 100) + '%').join(' · ')
+    m.name + ' ' + Math.round(talkOf(g, m.id) / sum * 100) + '%').join(' · ')
     + '（刚说过的人下一轮权重减半）';
 }
 
@@ -8356,7 +8367,11 @@ function memberCfgEmpty(one) {
   if (String(one.persona || '').trim()) return false;
   if (Array.isArray(one.personaItems) && one.personaItems.length) return false;
   if (one.muted) return false;
-  if (Number(one.talk) && Number(one.talk) !== 50) return false;
+  // ⚠️ 判据不能用 Number(...) 的真假（v0.4.1.6）：活跃度【0 是合法值】
+  //    （把某人在概率模式下压到 0 = 基本不让她开口），
+  //    而 Number(0) 是 falsy —— 原来会把"只设了活跃度 0"的成员整个当成空壳删掉，
+  //    界面上滑杆悄悄回到 50。这一条的判据必须是"键存在且不等于默认值"。
+  if (one.talk !== undefined && one.talk !== null && Number(one.talk) !== 50) return false;
   if (one.views && Object.keys(one.views).length) return false;
   if (one.params && Object.keys(one.params).length) return false;
   return true;
@@ -8565,8 +8580,11 @@ function openGroupParamsEditor(gid, cid) {
   const cfg = memberCfgOf(g, cid);
   const pr = (cfg.params && typeof cfg.params === 'object') ? cfg.params : {};
   const own = Object.keys(pr).length > 0;
-  const t0 = Number(own ? pr.temperature : S.temperature) || 1;
-  const k0 = Number(own ? pr.maxTokens : S.maxTokens) || 2048;
+  // 同上：0 是合法的温度值，不能拿 || 兜
+  const tRaw = Number(own ? pr.temperature : S.temperature);
+  const kRaw = Number(own ? pr.maxTokens : S.maxTokens);
+  const t0 = Number.isFinite(tRaw) ? tRaw : 1;
+  const k0 = Number.isFinite(kRaw) ? kRaw : 2048;
   $('modal-title').textContent = '她在群里的参数';
   $('modal-ok').textContent = '保存';
   $('modal-cancel').textContent = '取消';
@@ -11154,12 +11172,45 @@ async function applyImport(data, p, file) {
       //    但它让"这个群本来有几个人"永远对不上。顺手摘掉并计数。
       const next = mapped.filter(id => liveIds.has(id));
       droppedMembers += mapped.length - next.length;
+
+      // ⚠️【memberCfg 的键也是成员 charId】，必须跟着一起翻（v0.4.1.6 修）。
+      //    不翻的后果是纯静默的：被"按名字认领"的成员在新机上换了 id，
+      //    而她的群内设置（人设 / 补充 / 少开口 / 活跃度 / 参数 / 她怎么看）
+      //    还挂在旧 id 上 —— 界面上一律退回"跟随她本人"，一个字都不提示。
+      //    这是"成员 id 在数据模型里一共有几处"那个老清单的【第七处】
+      //    （第六处是 messages.speakerId，v0.4.0 修的）。
+      //    views 的【内层键】同样是成员 id，两层都要翻。
+      const oldCfg = (cur0.memberCfg && typeof cur0.memberCfg === 'object') ? cur0.memberCfg : {};
+      const cfgNext = {};
+      let cfgChanged = false;
+      for (const k of Object.keys(oldCfg)) {
+        const nk = remap(k);
+        if (!liveIds.has(nk)) { cfgChanged = true; continue; }   // 那个人这次没进来，设置留着也没用
+        const one = Object.assign({}, oldCfg[k]);
+        if (one.views && typeof one.views === 'object') {
+          const nv = {};
+          for (const vk of Object.keys(one.views)) {
+            const nvk = remap(vk);
+            if (liveIds.has(nvk)) nv[nvk] = one.views[vk];
+            else cfgChanged = true;
+            if (nvk !== vk) cfgChanged = true;
+          }
+          one.views = nv;
+        }
+        cfgNext[nk] = one;
+        if (nk !== k) cfgChanged = true;
+      }
+      const cfgSame = !cfgChanged && Object.keys(cfgNext).length === Object.keys(oldCfg).length;
       const same = next.length === (cur0.memberIds || []).length
-        && next.every((v, i) => v === (cur0.memberIds || [])[i]);
+        && next.every((v, i) => v === (cur0.memberIds || [])[i])
+        && cfgSame;
       if (same) continue;                              // 一个都没变就别多写一次
       try {
         // 成员变了就把轮次指针收回 0：它是个【下标】，留着会指到别人身上
-        await chars.put({ ...cur0, memberIds: next, turnIndex: 0 });
+        await chars.put({ ...cur0, memberIds: next, memberCfg: cfgNext, turnIndex: 0 });
+        // 人设是按成员名单算出来的，名单变了要跟着重算（否则群里还写着旧名单）
+        const g2 = await chars.get(gid);
+        if (g2) await refreshGroupPersona(g2);
         fixedGroups++;
       } catch { /* 单个群失败不影响其他 */ }
     }
@@ -11302,7 +11353,12 @@ async function applyImport(data, p, file) {
                         //    这一段是白名单式重建，漏一个字段就永久丢一个 ——
                         //    漏了 who 的后果：整个群的记忆在恢复备份之后全部退化成
                         //    "全群共识"，甲的私事会被读成大家都知道，而且【不可逆】。
-                        who: String(m.who || ''),
+                        // ⚠️ who 也是【成员 charId】，认领后同样要翻（v0.4.1.6）。
+                        //    不翻的话：这条记忆既不是"当前发言人的"、也不是"全群共识"，
+                        //    于是【谁都不会被注入到】—— 记忆还在库里，但等于消失。
+                        //    翻完仍指向本机没有的人时【保持原样】（不改写成共识）：
+                        //    「把甲的私事读成大家都知道」比"她暂时想不起来"更糟。
+                        who: m.who ? String(remap(m.who)) : '',
                         kind: m.kind === 'event' ? 'event' : 'fact',
                         untilDay: typeof m.untilDay === 'number' ? m.untilDay : null,
                         // ⚠️ 白名单式重建，少写一个字段就永久丢掉（v1.21.25 修，复审 ★4）。
@@ -12343,7 +12399,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.1.5';
+const WEB_VERSION_FALLBACK = '0.4.1.6';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

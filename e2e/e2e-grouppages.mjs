@@ -102,14 +102,58 @@ for (const id of ['g-note','g-he','g-place','g-home','g-mode','g-len','g-narr','
 }
 t('群设定回填了', (await val('g-note')) === '每周六喝茶', '');
 
-console.log('=== 1.5 群世界书入口：点进去是这个群自己的条目页 ===');
+console.log('=== 1.5 群世界书：先给一个"带进来了什么"的面板 ===');
+// v0.4.1.6：这一行原来直接跳去"这个群自己的条目页"—— 那一页默认是空的，
+// 用户看到空页就以为"世界书在群里没生效"（他实测就是这么问的）。
 await page.evaluate(() => document.getElementById('g-wb-open').click());
 await sleep(900);
-t('进的是 view-wbsolo', (await active()).includes('view-wbsolo'), await active());
-t('标题写的是这个群', String(await txt('wbs-title')).includes('周六茶会') || String(await txt('wbs-title')).includes('周末茶会'), await txt('wbs-title'));
+const wbPanel = await page.evaluate(() => ({
+  open: !document.getElementById('modal').classList.contains('hidden'),
+  title: document.getElementById('modal-title').textContent,
+  text: document.getElementById('modal-text').textContent,
+}));
+t('开的是面板，不是一个空页', wbPanel.open === true && wbPanel.title.includes('世界书'), wbPanel.title);
+t('面板里说清了"成员带进来的也生效"', wbPanel.text.includes('成员带进来的'), '');
+t('并且报了这个群里一共有多少条在生效', wbPanel.text.includes('在生效'), '');
+await page.evaluate(() => document.getElementById('modal-ok').click());
+await sleep(900);
+t('面板上的按钮能进这个群自己的条目页', (await active()).includes('view-wbsolo'), await active());
+t('条目页标题是这个群', String(await txt('wbs-title')).includes('茶会'), await txt('wbs-title'));
 await page.evaluate(() => document.getElementById('btn-wbs-back').click());
 await sleep(700);
 t('返回一级页', (await active()).includes('view-group'), await active());
+
+console.log('=== 1.6 折叠 / 加人只有一个入口 / 表达方式 / 旁白开关 ===');
+const foldSt = await page.evaluate(() => ['members','set','talk','scene','style','params','data'].map(k => {
+  const w = document.getElementById('gfw-' + k);
+  return k + ':' + (w && w.classList.contains('open') ? 'open' : 'closed');
+}));
+console.log('   ' + JSON.stringify(foldSt));
+t('群设定那一块是折叠块，而且默认展开', foldSt.includes('set:open'), foldSt);
+t('表达方式默认收着', foldSt.includes('style:closed'), foldSt);
+t('「加人」只有一个入口（九宫格末尾那个 ＋）', !(await page.evaluate(() => !!document.getElementById('g-add-member'))) && await page.evaluate(() => !!document.querySelector('#g-members [data-gm-add]')), '');
+await page.evaluate(() => document.getElementById('gf-style').click());
+await sleep(300);
+t('点折叠头能展开', await page.evaluate(() => document.getElementById('gfw-style').classList.contains('open')), '');
+t('不勾"用自己的表达方式"时整块是灰的、点不动', await page.evaluate(() => document.getElementById('g-style-box').classList.contains('off-box')), '');
+await page.evaluate(() => { const c = document.getElementById('g-ownstyle'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); });
+await sleep(400);
+t('勾上之后控件活了', await page.evaluate(() => !document.getElementById('g-style-box').classList.contains('off-box')), '');
+t('叙事视角那一排画出来了（5 档）', (await page.evaluate(() => document.getElementById('g-pov').children.length)) === 5, '');
+t('视角说明跟着当前档位走', String(await page.evaluate(() => document.getElementById('g-pov-note').textContent)).length > 8, '');
+await page.evaluate(() => {
+  document.getElementById('g-verbosity').value = 'short';
+  document.getElementById('g-pov').dataset.v = 'L2';
+  document.getElementById('g-narr-on').checked = false;
+});
+await click('btn-group-save');
+await sleep(900);
+// ⚠️ 变量名别再用 st —— 下面第 2 节才 `let st`，在这里赋值会撞 TDZ
+const st16 = await gGet();
+t('表达方式写进了群记录', st16.g.verbosity === 'short' && st16.g.povStyle === 'L2', { v: st16.g.verbosity, p: st16.g.povStyle });
+t('旁白开关也存下来了', st16.g.showNarration === false, st16.g.showNarration);
+t('小字变成「本群自定义」', (await txt('g-style-brief')) === '本群自定义', await txt('g-style-brief'));
+t('她的角色卡没被改', !st16.a || st16.a.verbosity !== 'short', st16.a && st16.a.verbosity);
 
 console.log('=== 2. 改群名 → 保存 → 库里和列表都变 ===');
 await setVal('g-name', '周六茶会');

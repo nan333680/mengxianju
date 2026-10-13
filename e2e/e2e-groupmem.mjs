@@ -192,19 +192,22 @@ await sleep(1200);
 await page.evaluate(() => document.getElementById('chat-titletxt').click());
 await sleep(800);
 t('群设置页上有「群记忆」入口', await page.evaluate(() => !!document.getElementById('g-mem-open')), '');
+// v0.4.1.6：群记忆不再"跳去全局设置"，就地开一个小窗口（用户原话：太笨了）
 await page.evaluate(() => document.getElementById('g-mem-open').click());
-await sleep(1500);
-t('跳到了记忆管理页', (await page.evaluate(() => [...document.querySelectorAll('.view.active')].map(v => v.id))).includes('view-settings'), '');
-// 展开这个群那一组
-await page.evaluate(() => {
-  const head = document.querySelector('#mem-groups .mem-group[data-cid="ggrp1"] [data-head]');
-  if (head) head.click();
-});
-await sleep(800);
-const memHtml = await page.evaluate(() => {
-  const box = document.querySelector('#mem-groups .mem-group[data-cid="ggrp1"]');
-  return box ? box.textContent : '';
-});
+await sleep(1200);
+const memPanel = await page.evaluate(() => ({
+  open: !document.getElementById('modal').classList.contains('hidden'),
+  title: document.getElementById('modal-title').textContent,
+  text: document.getElementById('modal-text').textContent,
+}));
+console.log('   ' + JSON.stringify({ title: memPanel.title }));
+t('群记忆就地开小窗口（不跳全局设置）', memPanel.open === true && memPanel.title.includes('记忆'), memPanel.title);
+t('里面按"谁的视角"分了组', memPanel.text.includes('记得的') && memPanel.text.includes('大家都知道'), '');
+t('甲私下的那条看得见', memPanel.text.includes('芙兰对他的好感太明显了'), '');
+t('还说明了"别人的私事她看不到"', memPanel.text.includes('别人的私事'), '');
+await page.evaluate(() => document.getElementById('modal-cancel').click());
+await sleep(500);
+const memHtml = memPanel.text;
 t('群那一组里有「甲」记得的', memHtml.indexOf('甲') >= 0 && memHtml.indexOf('记得的') >= 0, memHtml.slice(0, 100));
 t('也有「大家都知道的事」', memHtml.indexOf('大家都知道的事') >= 0, '');
 t('甲私下的那条在界面里看得到', memHtml.indexOf('芙兰对他的好感太明显了') >= 0, '');

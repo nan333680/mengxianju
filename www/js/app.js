@@ -1408,6 +1408,16 @@ function msgHtml(m, depth = 0) {
         if (isGroup(curChar) && !spk && m.narration === true) return '<span class="av">🎬</span>';
         return avatarHtml(spk || curChar, 'av av-her');
       })();
+  // 群里的旁白（v0.4.1.6）：不占气泡位、不带头像，做成居中的细线小字。
+  // 起因（用户实测原话）：「旁白那个我感觉有些累赘了？感觉效果不大而且会卡角色的输出框导致看着怪」——
+  // 它原来和角色气泡是同一套版式（头像 + 气泡），只是边框虚线，看着就像"一个没说话的人的空框"。
+  if (!isMe && isGroup(curChar) && m.narration === true) {
+    const st0 = fmtStory(m.story);
+    // ⚠️ 类名里必须留着 ai（v0.4.1.6 自查）：别处（样式、e2e 的 DOM 断言）
+    //    都按 .msg.ai 找"她说的话"，去掉它旁白就整条"消失"了。
+    return '<div class="msg ai narr" data-id="' + esc(m.id) + '"><div class="bub narr-line">'
+      + esc(m.content || '') + (st0 ? '<div class="t">' + st0 + '</div>' : '') + '</div></div>';
+  }
   let inner = '';
   // 群聊：气泡顶上标出这是谁说的（单聊不显示，看着更干净）
   const spkName = isGroup(curChar) ? speakerCharOf(m) : null;
@@ -5291,6 +5301,8 @@ let namedInText = false;
       //    "这一轮只写她一个人"那一套提示词（关掉小说模式时用的那套，两套本来互斥）。
       //    这是治"二人转"最直接的一刀：不改提示词，只改"这一幕几个人"。
       narrative: !!(isGroup(myChar) && myChar.narrative !== false && sceneRoster.length > 1),
+      // 旁白开关（v0.4.1.6）：关掉时提示词不再要求场面描写，改成"每行都要有名字"
+      narrLines: !(isGroup(myChar) && myChar.showNarration === false),
       memberNames: sceneRoster.length
         ? sceneRoster.map(m => m.name)
         : (isGroup(myChar) ? groupMembers(myChar).map(m => m.name) : []),
@@ -5551,8 +5563,10 @@ let namedInText = false;
     //    没有名字的段落当旁白，不挂人。
     //    单聊 / 关掉小说模式：还是老样子（由「分段发送」开关决定要不要拆）。
     const narr = !!(isGroup(myChar) && myChar.narrative !== false);
+    // 「带旁白」开关（v0.4.1.6）：关掉之后不用再生旁白条 —— 没标名字的行归上一个说话人
+    const narrOk = !(isGroup(myChar) && myChar.showNarration === false);
     const pieces = (narr && speaker)
-      ? splitBySpeaker(full, groupMembers(myChar), speaker)
+      ? splitBySpeaker(full, groupMembers(myChar), speaker, narrOk)
       : (P.splitMessages ? splitMessages(full, S.splitMax || 3) : [full])
           .map(x => ({ text: x, speakerId: speaker ? speaker.id : '', narration: false }));
 
@@ -7857,7 +7871,8 @@ function pickSpeakerByText(c, text) {
  *      · **整段一个名字都没认出来 → 整段归主说话人**，退化成老行为
  *    绝不允许"解析失败就丢内容"，也绝不允许"猜一个名字挂上去"。
  */
-function splitBySpeaker(text, members, primary) {
+function splitBySpeaker(text, members, primary, allowNarr) {
+  const narrOk = (allowNarr !== false);   // 群里关掉旁白时传 false（见群设置的「带旁白」开关）
   const raw = String(text == null ? '' : text).trim();
   const fallback = [{ text: raw, speakerId: primary ? primary.id : '', narration: false }];
   if (!raw) return fallback;
@@ -7905,7 +7920,7 @@ function splitBySpeaker(text, members, primary) {
     //    中间那行没标名字，老逻辑把【整句台词】当成了旁白 ——
     //    界面上一句台词躺在虚线框里，看着就是"她说了话但没有说话人"。
     //    解析器原来只认"有没有【】"，不认"这是不是台词"。
-    const wrapped = /^[（(][\s\S]*[）)]$/.test(s);
+    const wrapped = narrOk && /^[（(][\s\S]*[）)]$/.test(s);
     if (wrapped) {
       if (!narrBuf) narrBuf = { text: s };
       else narrBuf.text += '\n' + s;
@@ -8171,6 +8186,38 @@ function groupModeLabel(g) {
   return m === 'weight' ? '按活跃度抽人开口' : (m === 'call' ? '你点名才开口' : '按顺序轮流开口');
 }
 
+/**
+ * 群设置页的折叠（v0.4.1.6）。
+ *
+ * 起因（用户实测反馈）：一屏里平铺了成员九宫格 + 4 个文本框 + 发言方式 + 输出 +
+ * 参数 + 资料，滚起来太长，「群设定做展开或者小窗口或者二级界面」。
+ * 这里复用角色页那套 fold-head / fold-wrap，不另造一套。
+ * 展开状态只存在内存（_gFold），不落库 —— 它是"这次看着顺不顺"，不是设定。
+ */
+let _gFold = {};
+const G_FOLDS = [
+  ['members', true], ['set', true], ['talk', true],
+  ['scene', false], ['style', false], ['params', false], ['data', true],
+];
+function applyGroupFolds() {
+  for (const pair of G_FOLDS) {
+    const k = pair[0], def = pair[1];
+    const head = $('gf-' + k), wrap = $('gfw-' + k);
+    if (!head || !wrap) continue;
+    const open = (_gFold[k] === undefined) ? def : !!_gFold[k];
+    wrap.classList.toggle('open', open);
+    head.classList.toggle('open', open);
+    head.onclick = () => {
+      _gFold[k] = !wrap.classList.contains('open');
+      wrap.classList.toggle('open', _gFold[k]);
+      head.classList.toggle('open', _gFold[k]);
+    };
+  }
+}
+
+/** 群记录上属于「表达方式」的那些键（和角色页同一套） */
+const G_STYLE_KEYS = ['verbosity', 'descLevel', 'detailDrive', 'povStyle', 'kaomojiFreq', 'kaomojiStyle', 'emojiFreq'];
+
 /** 一级页：把群记录整个画一遍 */
 async function renderGroupSettings() {
   const g = allChars.find(x => x.id === _gId);
@@ -8204,7 +8251,15 @@ async function renderGroupSettings() {
   $('g-auto').value = String(autoN);
   $('g-v-auto').textContent = String(autoN);
   $('g-narr').checked = g.narrative !== false;
+  // 旁白开关（v0.4.1.6）：不勾 = 不出旁白条，没标名字的行算成上一个说话的人
+  $('g-narr-on').checked = g.showNarration !== false;
   $('g-len').value = g.sceneLen || 'mid';
+  // 表达方式（v0.4.1.6）：这一块和角色页是同一套参数，作用范围换成这个群
+  const styleOwn = G_STYLE_KEYS.some(k => g[k] !== undefined && g[k] !== null);
+  $('g-ownstyle').checked = styleOwn;
+  $('g-style-brief').textContent = styleOwn ? '本群自定义' : '跟随全局';
+  loadGroupStyle(g);
+  applyGroupFolds();
   // 群自己的参数（三态：不勾 = 跟随全局；勾了才把值写进群记录）
   const own = (g.temperature !== undefined && g.temperature !== null)
            || (g.maxTokens !== undefined && g.maxTokens !== null);
@@ -8231,6 +8286,46 @@ async function renderGroupSettings() {
     $('g-wb-sub').textContent = n ? (n + ' 条') : '给这个群单独写的词条';
   } catch (e) { $('g-wb-sub').textContent = '—'; }
   bindGroupSettingsOnce();
+}
+
+/** 把表达方式那一块画出来（值取"当前生效值"，勾了才写进群记录） */
+function groupPovNote(k) {
+  const el = $('g-pov-note');
+  if (!el) return;
+  const p = POV_STYLE_PRESETS.find(x => x.value === k) || POV_STYLE_PRESETS[0];
+  el.innerHTML = p.note;
+}
+function loadGroupStyle(g) {
+  const P = effSettings(g, S);
+  const own = !!($('g-ownstyle') && $('g-ownstyle').checked);
+  const box = $('g-style-box');
+  if (box) box.classList.toggle('off-box', !own);
+  if ($('g-verbosity')) $('g-verbosity').value = String(P.verbosity || 'medium');
+  if ($('g-kao-style')) $('g-kao-style').value = String(P.kaomojiStyle || 'jp-soft');
+  const descV = (g.descLevel !== undefined && g.descLevel !== null && g.descLevel !== '') ? g.descLevel : 'global';
+  if ($('g-desc')) {
+    $('g-desc').dataset.v = descV;
+    renderSeg('g-desc', DESC_PRESETS, descV, v => { $('g-desc').dataset.v = v; });
+  }
+  const driveV = g.detailDrive ? g.detailDrive : 'global';
+  if ($('g-drive')) {
+    $('g-drive').dataset.v = driveV;
+    $('g-drive-brief').textContent = driveLabel(driveV);
+  }
+  const povKey = POV_STYLE_PRESETS.some(x => x.value === (g.povStyle || '')) ? (g.povStyle || '') : (g.povLock ? 'L1' : '');
+  if ($('g-pov')) {
+    $('g-pov').dataset.v = povKey;
+    renderSeg('g-pov', POV_STYLE_PRESETS, povKey, v => { $('g-pov').dataset.v = v; groupPovNote(v); });
+    groupPovNote(povKey);
+  }
+  if ($('g-kao-freq')) {
+    $('g-kao-freq').dataset.v = String(Number(P.kaomojiFreq) || 0);
+    renderSeg('g-kao-freq', FREQ_PRESETS, Number($('g-kao-freq').dataset.v), v => { $('g-kao-freq').dataset.v = v; });
+  }
+  if ($('g-emoji')) {
+    $('g-emoji').dataset.v = String(Number(P.emojiFreq) || 0);
+    renderSeg('g-emoji', EMOJI_PRESETS, Number($('g-emoji').dataset.v), v => { $('g-emoji').dataset.v = v; });
+  }
 }
 
 function syncGroupParamUI() {
@@ -8271,9 +8366,27 @@ function bindGroupSettingsOnce() {
   $('g-try').onclick = () => trySpeakerPreview();
   $('g-auto').oninput = () => { $('g-v-auto').textContent = $('g-auto').value; };
   $('g-ownparams').onchange = () => syncGroupParamUI();
+  $('g-ownstyle').onchange = async () => {
+    const g = allChars.find(x => x.id === _gId) || {};
+    if ($('g-ownstyle').checked && !G_STYLE_KEYS.some(k => g[k] !== undefined && g[k] !== null)) {
+      // 第一次勾上：把"当前生效值"当起点填进去，免得一勾全空
+      // （和群参数那个滑杆一个道理：用户看到的就是现在生效的那套）
+      $('g-ownstyle').checked = true;
+    }
+    loadGroupStyle(g);
+  };
+  $('g-drive').onclick = () => {
+    if (!$('g-ownstyle').checked) return;
+    const cur = $('g-drive').dataset.v || 'global';
+    openDrivePicker(cur, v => {
+      const nv = v || 'global';
+      $('g-drive').dataset.v = nv;
+      $('g-drive-brief').textContent = driveLabel(nv);
+    }, true);
+  };
   $('g-temp').oninput = () => syncGroupParamUI();
   $('g-maxtok').oninput = () => syncGroupParamUI();
-  $('g-wb-open').onclick = () => { openWbSolo(_gId); };
+  $('g-wb-open').onclick = () => { openGroupWorldbook(_gId); };
   $('g-mem-open').onclick = () => { openGroupMemory(_gId); };
   $('g-del').onclick = () => { deleteGroupConfirm(_gId); };
 }
@@ -8293,7 +8406,25 @@ async function saveGroupSettings(silent) {
   g.allowSilence = !!$('g-silence').checked;
   g.autoScene = Math.max(0, Math.min(5, Number($('g-auto').value) || 0));
   g.narrative = !!$('g-narr').checked;
+  g.showNarration = !!$('g-narr-on').checked;
   g.sceneLen = $('g-len').value || 'mid';
+  // 表达方式：勾了才写进群记录，不勾就把这些键【删掉】回到跟随全局
+  if ($('g-ownstyle').checked) {
+    g.verbosity = $('g-verbosity').value || 'medium';
+    g.kaomojiStyle = $('g-kao-style').value || 'jp-soft';
+    const dv = $('g-desc').dataset.v || 'global';
+    if (dv === 'global') delete g.descLevel; else g.descLevel = dv;
+    const drv = $('g-drive').dataset.v || 'global';
+    if (drv === 'global') delete g.detailDrive; else g.detailDrive = drv;
+    g.povStyle = $('g-pov').dataset.v || '';
+    g.kaomojiFreq = Number($('g-kao-freq').dataset.v) || 0;
+    g.emojiFreq = Number($('g-emoji').dataset.v) || 0;
+  } else {
+    for (const k of G_STYLE_KEYS) delete g[k];
+  }
+  // 保存后小字跟着变
+  const styleOwnNow = G_STYLE_KEYS.some(k => g[k] !== undefined && g[k] !== null);
+  if ($('g-style-brief')) $('g-style-brief').textContent = styleOwnNow ? '本群自定义' : '跟随全局';
   if ($('g-ownparams').checked) {
     g.temperature = Number($('g-temp').value);
     g.maxTokens = Math.round(Number($('g-maxtok').value));
@@ -8702,19 +8833,97 @@ function openGroupParamsEditor(gid, cid) {
 
 /** 群记忆：跳去 ⚙ → 记忆管理，并把这个群展开、滚到它 */
 async function openGroupMemory(gid) {
-  _memOpen.add(gid);
-  const wrap = $('mem-wrap'), head = $('mem-fold');
-  if (wrap) wrap.classList.add('open');
-  if (head) head.classList.add('open');
-  bindSettings();
-  await renderMem();
-  showView('settings');
-  setTimeout(() => {
-    const el = document.querySelector('#mem-groups .mem-group[data-cid="' + gid + '"]');
-    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, 420);
+  const g = allChars.find(x => x.id === gid);
+  if (!isGroup(g)) return;
+  $('modal-title').textContent = '这个群的长期记忆';
+  $('modal-ok').textContent = '关闭';
+  $('modal-cancel').textContent = '关闭';
+  const box = $('modal-text');
+  const draw = async () => {
+    const items = await mem.list(gid);
+    const mineN = items.filter(m => m && m.mine).length;
+    box.innerHTML = '<p class="hint-text" style="margin:0 0 10px">'
+      + '按<b>谁的视角</b>分开：她自己的 + 全群共识会进她的上下文，别人的私事她看不到。<br>'
+      + '你自己加的（' + mineN + ' 条）在自动整理时受保护。'
+      + '</p>'
+      + '<div id="gm-list">' + memBodyByWho(items) + '</div>'
+      + '<div class="mem-add-row"><input id="gm-new" type="text" placeholder="给这个群加一条（算大家都知道的）…">'
+      + '<button class="ghost-btn sm" id="gm-add">加</button></div>';
+    // 这一层只做"看 / 删 / 加"：点一条去改文本仍然走 ⚙ 的记忆管理，
+    // 免得两个弹窗叠在一起（#modal 只有一个）。
+    box.querySelectorAll('.mem-item.tap').forEach(el => el.classList.remove('tap'));
+    box.querySelectorAll('[data-cdel]').forEach(b => {
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        await mem.del(b.dataset.cdel);
+        await draw();
+      };
+    });
+    const addBtn = $('gm-add');
+    if (addBtn) addBtn.onclick = async () => {
+      const t = String(($('gm-new') || {}).value || '').trim();
+      if (!t) return;
+      await mem.add({ id: uid(), charId: gid, text: t, kind: 'fact', untilDay: null, mine: true, ts: Date.now() });
+      await draw();
+      toast('加上了');
+    };
+  };
+  await draw();
+  $('modal').classList.remove('hidden');
+  const close = () => { $('modal').classList.add('hidden'); };
+  $('modal-ok').onclick = close;
+  $('modal-cancel').onclick = close;
 }
 
+/**
+ * 群世界书（v0.4.1.6）：一次看清"这个群里到底有哪些词条在生效"。
+ *
+ * 起因（用户实测提问）：他给群加了人之后，群世界书页是空的 ——
+ * 因为那一页显示的是【群自己的】条目，而成员的单独条目和她们所在的世界书角色组
+ * 是走 wbEffectiveIds(charId) 自动带进来的，界面上一个字都没说。
+ * 这里上半写这个群自己的，下半把成员带进来的列出来（只读，标上属于谁）。
+ */
+async function openGroupWorldbook(gid) {
+  const g = allChars.find(x => x.id === gid);
+  if (!isGroup(g)) return;
+  const own = await wb.solo(gid);
+  const ownN = (own && Array.isArray(own.entries)) ? own.entries.length : 0;
+  const allGroups = await wb.groups();
+  const ms = groupMembers(g);
+  let total = 0;
+  const blocks = [];
+  for (const m of ms) {
+    const solo = await wb.solo(m.id);
+    const se = (solo && Array.isArray(solo.entries)) ? solo.entries : [];
+    const inGroups = allGroups.filter(x => (x.members || []).indexOf(m.id) >= 0);
+    const ge = [];
+    for (const grp of inGroups) for (const e of (grp.entries || [])) ge.push({ e: e, from: grp.name || '角色组' });
+    const list = [];
+    for (const e of se) list.push({ e: e, from: '她的单独设定' });
+    for (const x of ge) list.push(x);
+    total += list.filter(x => x.e.on !== false).length;
+    if (!list.length) continue;
+    blocks.push('<div class="mem-sub">' + esc(m.name) + ' 带来的 ' + list.length + ' 条</div>'
+      + list.map(x => '<div class="wb-item" style="padding:8px 10px">'
+          + '<div class="wi-head"><span class="wi-title">' + esc(x.e.title || '（没标题）') + '</span>'
+          + (x.e.pos === 'always' ? '<span class="wi-pos">一直生效</span>'
+             : (x.e.pos === 'tail' ? '<span class="wi-pos">临场</span>' : ''))
+          + (x.e.on === false ? '<span class="wi-off">已关闭</span>' : '')
+          + '<span class="wi-key" style="margin-left:auto">' + esc(x.from) + '</span>'
+          + '</div></div>').join(''));
+  }
+  $('modal-title').textContent = '这个群的世界书';
+  $('modal-ok').textContent = '去编辑群自己的条目';
+  $('modal-cancel').textContent = '关闭';
+  $('modal-text').innerHTML = '<p class="hint-text" style="margin:0 0 10px">'
+    + '群里生效的词条 = <b>这个群自己的 ' + ownN + ' 条</b> + <b>成员带进来的</b>（她们各自的单独设定，'
+    + '以及她们所在的世界书角色组）。现在一共 <b>' + (ownN + total) + ' 条</b>在生效。'
+    + '</p>'
+    + (blocks.length ? blocks.join('') : '<div class="sys-line">成员还没有任何单独词条。</div>');
+  $('modal').classList.remove('hidden');
+  $('modal-cancel').onclick = () => { $('modal').classList.add('hidden'); };
+  $('modal-ok').onclick = () => { $('modal').classList.add('hidden'); openWbSolo(gid); };
+}
 /**
  * 新建一个群。
  * ⚠️ 群不是"角色的复制品"，它自己的角色级参数一律【不设】——

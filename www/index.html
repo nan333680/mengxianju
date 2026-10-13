@@ -107,76 +107,137 @@
     </div>
 
     <section class="group">
-      <h3>群成员<em class="fold-num" id="g-member-num"></em></h3>
-      <div class="g-members" id="g-members"></div>
-      <div class="hint-text">点她的头像 = 改「她在这个群里是什么样」；长按 = 把她移出群。<br>这里的顺序就是轮流发言的顺序。</div>
-      <button class="ghost-btn sm" id="g-add-member">＋ 加人</button>
+      <button class="fold-head" id="gf-members"><span>群成员</span><em class="fold-num" id="g-member-num">—</em><i class="fold-arrow">▾</i></button>
+      <div class="fold-wrap" id="gfw-members"><div class="fold-inner">
+        <div class="g-members" id="g-members"></div>
+        <div class="hint-text">点她的头像 = 改「她在这个群里是什么样」；长按 = 把她移出群。<br>末尾那个 ＋ 是加人，这里的顺序就是轮流发言的顺序。</div>
+      </div></div>
     </section>
 
     <section class="group">
-      <h3>群设定</h3>
-      <label class="field"><span>这个群是怎么回事</span>
-        <textarea id="g-note" rows="3" placeholder="比如：每周六下午在她家喝茶。三个人认识很多年了，说话不客气。"></textarea>
-      </label>
-      <label class="field"><span>在她们眼里，他是谁（这个群共用一份）</span>
-        <textarea id="g-he" rows="3" placeholder="比如：他是常来的老客，三个人都认识他，但只有甲知道他姓什么。"></textarea>
-      </label>
-      <label class="field"><span>群所在的地方（城市 / 季节 / 这间屋子）</span>
-        <textarea id="g-place" rows="3" placeholder="比如：南方小城，梅雨季。老居民楼六层，客厅堆着书和一架旧钢琴。"></textarea>
-      </label>
-      <label class="field"><span>这个群里的「他住哪」（留空 = 用你全局那份）</span>
-        <textarea id="g-home" rows="3" placeholder="留空就用 ⚙ 里全局的「他的居处」。群里另有一处住处时才填。"></textarea>
-      </label>
-      <div class="hint-text">「群所在的地方」是常驻的（每轮都发、能命中缓存）；聊天页那个「场景」是临时的，改得勤。</div>
+      <button class="fold-head" id="gf-set"><span>群设定</span><i class="fold-arrow">▾</i></button>
+      <div class="fold-wrap" id="gfw-set"><div class="fold-inner">
+        <label class="field"><span>这个群是怎么回事</span>
+          <textarea id="g-note" rows="3" placeholder="比如：每周六下午在她家喝茶。三个人认识很多年了，说话不客气。"></textarea>
+        </label>
+        <label class="field"><span>在她们眼里，他是谁（这个群共用一份）</span>
+          <textarea id="g-he" rows="3" placeholder="比如：他是常来的老客，三个人都认识他，但只有甲知道他姓什么。"></textarea>
+        </label>
+        <label class="field"><span>这个群在哪儿（城市 / 季节 / 这间屋子）</span>
+          <textarea id="g-place" rows="3" placeholder="比如：南方小城，梅雨季。老居民楼六层，客厅堆着书和一架旧钢琴。"></textarea>
+        </label>
+        <p class="hint-text">这条是<b>常驻</b>的（每轮都发、能命中缓存）。聊天页那个「场景」是<b>临时</b>的，改得勤。</p>
+        <label class="field"><span>他在这个群里的住处（一般不填）</span>
+          <textarea id="g-home" rows="3" placeholder="留空 = 用 ⚙ 里全局那份「他的居处」。"></textarea>
+        </label>
+        <p class="hint-text">和上面那条的分工：上面写<b>这个群在哪</b>，这条写<b>他家什么样</b>。
+          群就在他家的时候留空就行 —— 只有「群在别处、你还想写他家里的样子」时才要填。</p>
+      </div></div>
     </section>
 
     <section class="group">
-      <h3>发言方式</h3>
-      <label class="field"><span>谁先开口</span>
-        <select id="g-mode">
-          <option value="round">轮流（按上面的成员顺序，一轮一个）</option>
-          <option value="weight">概率（按各人的活跃度抽，可连发）</option>
-          <option value="call">点名（你 @谁 或写「谁：」才由她开口）</option>
-        </select>
-      </label>
-      <button class="ghost-btn sm" id="g-try">试一次（看这一轮会轮到谁）</button>
-      <div class="hint-text" id="g-try-out"></div>
-      <label class="look-switch" style="margin-top:10px"><input type="checkbox" id="g-silence"><span>允许冷场（小概率这一轮没人接话）</span></label>
-      <label class="field" style="margin-top:10px"><span>你不说话时自动再写 <b id="g-v-auto">0</b> 幕（0 = 关）</span>
-        <input id="g-auto" type="range" min="0" max="5" step="1">
-      </label>
-      <div class="hint-text">自动续一幕 = 你发一句之后，她们自己往下再演几幕。<b>每一幕都是一次完整请求，token 成倍</b>，默认关。</div>
+      <button class="fold-head" id="gf-talk"><span>发言方式</span><i class="fold-arrow">▾</i></button>
+      <div class="fold-wrap" id="gfw-talk"><div class="fold-inner">
+        <label class="field"><span>谁先开口</span>
+          <select id="g-mode">
+            <option value="round">轮流（按上面的成员顺序，一轮一个）</option>
+            <option value="weight">概率（按各人的活跃度抽，可连发）</option>
+            <option value="call">点名（你 @谁 或写「谁：」才由她开口）</option>
+          </select>
+        </label>
+        <button class="ghost-btn sm" id="g-try">试一次（看这一轮会轮到谁）</button>
+        <div class="hint-text" id="g-try-out"></div>
+        <label class="look-switch" style="margin-top:10px"><input type="checkbox" id="g-silence"><span>允许冷场（小概率这一轮没人接话）</span></label>
+        <label class="field" style="margin-top:10px"><span>你不说话时自动再写 <b id="g-v-auto">0</b> 幕（0 = 关）</span>
+          <input id="g-auto" type="range" min="0" max="5" step="1">
+        </label>
+        <div class="hint-text">自动续一幕 = 你发一句之后，她们自己往下再演几幕。<b>每一幕都是一次完整请求，token 成倍</b>，默认关。</div>
+      </div></div>
     </section>
 
     <section class="group">
-      <h3>这一幕怎么写</h3>
-      <label class="look-switch"><input type="checkbox" id="g-narr"><span>小说式一幕（一轮里可以几个人说话，并带旁白）</span></label>
-      <label class="field" style="margin-top:10px"><span>这一幕写多长（直接决定花多少 token）</span>
-        <select id="g-len">
-          <option value="short">短 · 120~220 字，最多两个人开口</option>
-          <option value="mid">中 · 200~350 字（默认）</option>
-          <option value="long">长 · 350~600 字</option>
-        </select>
-      </label>
+      <button class="fold-head" id="gf-scene"><span>这一幕怎么写</span><i class="fold-arrow">▾</i></button>
+      <div class="fold-wrap" id="gfw-scene"><div class="fold-inner">
+        <label class="look-switch"><input type="checkbox" id="g-narr"><span>小说式一幕（一轮里可以几个人说话）</span></label>
+        <label class="look-switch" style="margin-top:8px"><input type="checkbox" id="g-narr-on"><span>带旁白（场面描写单独成一条，标成旁白）</span></label>
+        <p class="hint-text">关掉旁白：她说的话照样能拆成几条，但没标名字的行会算成<b>上一个说话的人</b>说的，不再出旁白条。</p>
+        <label class="field" style="margin-top:10px"><span>这一幕写多长（直接决定花多少 token）</span>
+          <select id="g-len">
+            <option value="short">短 · 120~220 字，最多两个人开口</option>
+            <option value="mid">中 · 200~350 字（默认）</option>
+            <option value="long">长 · 350~600 字</option>
+          </select>
+        </label>
+        <p class="hint-text">一幕里几个人开口是<b>抽</b>的（1 人 30% / 2 人 50% / 3 人 20%），所以不会每次都人人来一段。</p>
+      </div></div>
     </section>
 
     <section class="group">
-      <h3>群自己的参数</h3>
-      <label class="look-switch"><input type="checkbox" id="g-ownparams"><span>这个群用自己的参数（不勾 = 跟随 ⚙ 全局那份）</span></label>
-      <label class="field" style="margin-top:10px"><span>温度 <b id="g-v-temp">1.0</b>（低=沉稳，高=活泼）</span>
-        <input id="g-temp" type="range" min="0" max="2" step="0.05">
-      </label>
-      <label class="field"><span>最大回复长度 <b id="g-v-maxtok">2048</b></span>
-        <input id="g-maxtok" type="range" min="256" max="8192" step="128">
-      </label>
-      <div class="hint-text">这里不填 = 跟随 ⚙ 里全局那份。<br>想在群里单独调某个人，去她的二级页设「她在群里的参数」。</div>
+      <button class="fold-head" id="gf-style"><span>表达方式</span><em class="fold-num" id="g-style-brief">跟随全局</em><i class="fold-arrow">▾</i></button>
+      <div class="fold-wrap" id="gfw-style"><div class="fold-inner">
+        <label class="look-switch"><input type="checkbox" id="g-ownstyle"><span>这个群用自己的表达方式（不勾 = 跟随 ⚙ 全局那份）</span></label>
+        <p class="hint-text">和角色页的「表达方式」是同一套参数，只是作用范围换成这个群。<br>想只给群里某一个人单独定，去她的二级页。</p>
+        <div id="g-style-box">
+        <div class="field" style="margin-top:10px"><span>回复长度（只管说出口的话）</span>
+          <select id="g-verbosity">
+            <option value="veryShort">很短</option>
+            <option value="short">短</option>
+            <option value="medium">中等</option>
+            <option value="long">长</option>
+          </select>
+        </div>
+        <div class="field"><span>非对话描写（只管括号里的）</span>
+          <div class="seg" id="g-desc"></div>
+        </div>
+        <div class="field"><span>描写详细程度（括号里必须写成什么形状）</span>
+          <button class="pick-row slim" id="g-drive">
+            <em id="g-drive-brief">跟随全局</em>
+            <i class="fold-arrow">›</i>
+          </button>
+        </div>
+        <div class="field"><span>叙事视角（群聊里最容易飘的就是这个）</span>
+          <div class="seg" id="g-pov"></div>
+        </div>
+        <p class="hint-text" id="g-pov-note">—</p>
+        <div class="field"><span>颜文字频率</span>
+          <div class="seg" id="g-kao-freq"></div>
+        </div>
+        <div class="field"><span>颜文字风格</span>
+          <select id="g-kao-style">
+            <option value="jp-soft">日式 · 温和</option>
+            <option value="jp-cute">日式 · 可爱</option>
+            <option value="cn">中式</option>
+            <option value="mix">混合</option>
+          </select>
+        </div>
+        <div class="field"><span>emoji 频率</span>
+          <div class="seg" id="g-emoji"></div>
+        </div>
+        </div>
+      </div></div>
     </section>
 
     <section class="group">
-      <h3>这个群的资料</h3>
-      <button class="pick-row" id="g-wb-open"><span>群世界书</span><em id="g-wb-sub">—</em><i class="fold-arrow">›</i></button>
-      <button class="pick-row" id="g-mem-open"><span>群记忆</span><em id="g-mem-sub">—</em><i class="fold-arrow">›</i></button>
-      <div class="hint-text">成员各自的单独词条<b>已经自动生效</b>，这里是用来看/补这个群自己的。</div>
+      <button class="fold-head" id="gf-params"><span>群自己的参数</span><i class="fold-arrow">▾</i></button>
+      <div class="fold-wrap" id="gfw-params"><div class="fold-inner">
+        <label class="look-switch"><input type="checkbox" id="g-ownparams"><span>这个群用自己的参数（不勾 = 跟随 ⚙ 全局那份）</span></label>
+        <label class="field" style="margin-top:10px"><span>温度 <b id="g-v-temp">1.0</b>（低=沉稳，高=活泼）</span>
+          <input id="g-temp" type="range" min="0" max="2" step="0.05">
+        </label>
+        <label class="field"><span>最大回复长度 <b id="g-v-maxtok">2048</b></span>
+          <input id="g-maxtok" type="range" min="256" max="8192" step="128">
+        </label>
+        <div class="hint-text">这里不填 = 跟随 ⚙ 里全局那份。<br>想在群里单独调某个人，去她的二级页设「她在群里的参数」。</div>
+      </div></div>
+    </section>
+
+    <section class="group">
+      <button class="fold-head" id="gf-data"><span>这个群的资料</span><i class="fold-arrow">▾</i></button>
+      <div class="fold-wrap" id="gfw-data"><div class="fold-inner">
+        <button class="pick-row" id="g-wb-open"><span>群世界书</span><em id="g-wb-sub">—</em><i class="fold-arrow">›</i></button>
+        <button class="pick-row" id="g-mem-open"><span>群记忆</span><em id="g-mem-sub">—</em><i class="fold-arrow">›</i></button>
+        <div class="hint-text">成员各自的单独词条、以及她们所在的世界书角色组，<b>进群后自动生效</b>；点上面那行能看见到底带进来了哪些。</div>
+      </div></div>
     </section>
 
     <button class="danger-btn" id="g-del">删除这个群</button>

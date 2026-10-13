@@ -1203,9 +1203,16 @@ input[type="range"] { touch-action: pan-y; }
 
 /* 群聊「小说式一幕」的旁白（v0.4.1）：
    没有说话人，样式上也和"谁说的"分开 —— 不然环境描写会看起来像某个人在说话。 */
-.msg.narr .bub{
-  background:transparent; border:1px dashed var(--line);
-  color:var(--fg2); font-style:italic;
+.msg.narr{
+  /* v0.4.1.6：旁白不再占"头像 + 气泡"的位置，整条居中，用细线和斜体区分。
+     用户实测的反馈是"会卡角色的输出框导致看着怪"—— 它原来和角色气泡同版式。 */
+  justify-content:center; padding:2px 0;
+}
+.msg.narr .bub.narr-line{
+  background:transparent; border:0; color:var(--fg3); font-style:italic;
+  font-size:13px; max-width:88%; text-align:center; padding:2px 10px;
+  border-top:1px solid var(--line); border-bottom:1px solid var(--line);
+  border-radius:0;
 }
 .msg.narr .bub .t{ opacity:.7; }
 
@@ -1260,3 +1267,6 @@ input[type="range"] { touch-action: pan-y; }
 .gp-item .icon-btn{ width:30px; height:30px; flex:0 0 auto; font-size:14px; }
 /* 群记忆按「谁记得的」分组（v0.4.1.4） */
 .mem-sub{ font-size:12px; color:var(--fg3); margin:12px 0 6px; }
+
+/* 群设置页里"不勾就用全局"的整块参数：置灰且点不动（勾选框本身在框外，照样能点） */
+.off-box{ opacity:.45; pointer-events:none; }

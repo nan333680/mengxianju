@@ -5242,6 +5242,9 @@ let namedInText = false;
       const namedCh = spk ? null : pickSpeakerByText(myChar, visibleText);
       speaker = spk || namedCh || groupSpeaker(myChar);
       namedInText = !!namedCh;
+      // 优先级：全局 < 角色/群自己的 < 群内成员参数。
+      // ⚠️ 群勾了「覆盖全局设定」时，只跳过【群自己那一层】，成员参数照样生效 ——
+      //    globalOverride 是"这一层的参数作废"的开关，不是"整条链作废"。
       // 她在群里的参数（v0.4.1.4，复查清单 §9.3）：成员的温度 / 长度上限
       // 原来在群里【完全不生效】—— P 是拿群记录算的（effSettings(myChar, S)），
       // 成员自己设的一律读不到。选定这一轮的发言人之后，把她的覆盖叠上去。
@@ -6694,8 +6697,11 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
           // 直接落到这份残缺备份上。v1.21.29 新增的 destructive 判据让这条路更常走。
           //
           // 语义上「撤销 = 回到整理前的样子」，本来就该存全量。
+          // ⚠️ who 也要存（v0.4.1.4）：这是"整理前快照"，漏了它，「撤销上次整理」
+          //    就会把群记忆的视角一起抹掉 —— 而撤销的承诺是"还原成整理之前的样子"。
           items: listAll.map(m => ({ id: m.id, text: m.text, kind: m.kind, untilDay: m.untilDay,
                                     untilHour: m.untilHour, untilMinute: m.untilMinute,
+                                    who: m.who || '',
                                     freq: m.freq, mine: !!m.mine })),
         });
         }
@@ -9698,6 +9704,7 @@ function bindSettings() {
         // ⚠️ 同样要带上 untilHour/untilMinute（v1.21.25 修，复审 ★4）——
         // 撤销如果丢了字段，用户点"撤销上次整理"反而把到期时刻改错，等于没救回来。
         await mem.add({ id: it.id || uid(), charId: curCharId, text: it.text, kind: it.kind || 'fact',
+                        who: String(it.who || ''),   // 群记忆的视角（v0.4.1.4）
                         untilDay: typeof it.untilDay === 'number' ? it.untilDay : null,
                         untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                         untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
@@ -11291,6 +11298,11 @@ async function applyImport(data, p, file) {
         // mine 尤其要紧：丢了之后你自己写的记忆会失去「自定义」标记，
         // 保护开关就再也护不住它们（会被当成她记的一起交给模型改写/删除）。
         await mem.add({ id: m.id || uid(), charId: _cid, text: String(m.text),
+                        // ⚠️ who = 这条记忆属于【谁的视角】（v0.4.1.4 群聊加的）。
+                        //    这一段是白名单式重建，漏一个字段就永久丢一个 ——
+                        //    漏了 who 的后果：整个群的记忆在恢复备份之后全部退化成
+                        //    "全群共识"，甲的私事会被读成大家都知道，而且【不可逆】。
+                        who: String(m.who || ''),
                         kind: m.kind === 'event' ? 'event' : 'fact',
                         untilDay: typeof m.untilDay === 'number' ? m.untilDay : null,
                         // ⚠️ 白名单式重建，少写一个字段就永久丢掉（v1.21.25 修，复审 ★4）。
@@ -12331,7 +12343,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.1.4';
+const WEB_VERSION_FALLBACK = '0.4.1.5';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

@@ -106,6 +106,16 @@ const dbState = () => page.evaluate(async () => {
     memGroups: mems.reduce((acc, m) => { acc[m.charId] = (acc[m.charId] || 0) + 1; return acc; }, {}),
   };
 });
+/** 每个角色各自的条数（用来判断"导入动了谁"——总数会被新角色的开场白 +1，那是正常的） */
+const perCharCounts = () => page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const ms = await new Promise(r => { const q = db.transaction('messages').objectStore('messages').getAll(); q.onsuccess = () => r(q.result); });
+  db.close();
+  const out = {};
+  for (const m of ms) out[m.charId] = (out[m.charId] || 0) + 1;
+  return out;
+});
 const importBackup = async (file) => {
   await (await page.$('#file-import')).uploadFile(file);
   await pickImportMode(page, 'all', sleep);      // 完全还原（会先清空本机）
@@ -323,6 +333,107 @@ if (soloAlways) {
   }
 } else {
   console.log('   （这份备份里没有"一直生效"档的单独条目，跳过）');
+}
+
+
+console.log('');
+console.log('=== H. 角色卡往返（真实角色：带单独世界书的那位）===');
+// 库此时是 10-13 那份（E 节重导过）。挑 灵梦（有 35 条单独条目）
+// ⚠️ yl / soloAlways 都在 G 节的块作用域里，这里拿不到（第一版就 ReferenceError 了）——
+//    重新算一份：挑"单独条目最多"的那个角色。
+const soloPick = (J.b1013.worldbook.solo || [])
+  .map(x => ({ s: x, n: (x.entries || []).length }))
+  .sort((a, b2) => b2.n - a.n)[0];
+const cardChar = J.b1013.characters.find(c => c.id === (soloPick && soloPick.s.charId)) || J.b1013.characters[0];
+const cardSoloN = (soloPick && soloPick.n) || 0;
+console.log('   用她来试：' + cardChar.name + '（单独条目 ' + cardSoloN + ' 条）');
+await page.evaluate(() => document.getElementById('btn-chars').click());
+await sleep(800);
+await page.evaluate((cid) => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === cid); if (c) c.click(); }, cardChar.id);
+await sleep(1200);
+const dl2 = 'C:\\AAA-DSH\\A-Apk\\tmp\\dl2';
+fs.mkdirSync(dl2, { recursive: true });
+for (const f of fs.readdirSync(dl2)) { try { fs.unlinkSync(path.join(dl2, f)); } catch (e) { /* 忽略 */ } }
+const cdp2 = await page.target().createCDPSession();
+await cdp2.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dl2, eventsEnabled: true });
+await page.evaluate(() => document.getElementById('btn-cc-export-json').click());
+for (let i = 0; i < 30; i++) { await sleep(500); if (fs.readdirSync(dl2).length) break; }
+const cardFiles = fs.readdirSync(dl2);
+console.log('   导出：' + JSON.stringify(cardFiles));
+t('角色卡导出成功', cardFiles.length > 0, cardFiles);
+let CARD = null;
+if (cardFiles.length) {
+  CARD = JSON.parse(fs.readFileSync(path.join(dl2, cardFiles[0]), 'utf8'));
+  const name2 = CARD.data ? CARD.data.name : CARD.name;
+  const persona2 = CARD.data ? CARD.data.description : CARD.description;
+  const book = CARD.data && CARD.data.character_book;
+  console.log('   卡里：name=' + name2 + ' 人设 ' + String(persona2 || '').length + ' 字，世界书条目 ' + ((book && book.entries) || []).length);
+  t('卡里带上了她的人设', String(persona2 || '').length > 100, String(persona2 || '').length);
+  t('卡里带上了她的单独世界书（' + cardSoloN + ' 条）', ((book && book.entries) || []).length === cardSoloN, { got: (book && book.entries || []).length, want: cardSoloN });
+  // 再导回来：应该多出一个新角色（同名会认领/新建，这里只验"能读进去、内容在"）
+  const before2 = await dbState();
+  const perBefore = await perCharCounts();
+  await (await page.$('#cc-import-file')).uploadFile(path.join(dl2, cardFiles[0]));
+  await sleep(4000);
+  const after2 = await dbState();
+  const perAfter = await perCharCounts();
+  console.log('   导入前角色 ' + before2.chars + ' → 导入后 ' + after2.chars + '（消息 ' + before2.msgs + ' → ' + after2.msgs + '）');
+  t('角色卡能导进来（角色数不变或 +1）', after2.chars >= before2.chars, { before: before2.chars, after: after2.chars });
+  // ⚠️ 别比"全库总条数"：导进来的新角色会补一条自己的开场白（+1），那是正常的。
+  //    要比的是【原来那些角色各自的条数】有没有被动过。
+  const changedChars = Object.keys(perBefore).filter(id => perBefore[id] !== (perAfter[id] || 0));
+  console.log('   条数被改动的老角色：' + JSON.stringify(changedChars));
+  t('导卡不会动已有角色的聊天记录', changedChars.length === 0, { changed: changedChars });
+  t('多出来的那 1 条属于新导进来的角色（它的开场白）', after2.msgs - before2.msgs <= 1, { delta: after2.msgs - before2.msgs });
+  const newOne = await page.evaluate(async (nm) => {
+    const o = indexedDB.open('ai-companion');
+    const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+    const cs = await new Promise(r => { const q = db.transaction('characters').objectStore('characters').getAll(); q.onsuccess = () => r(q.result); });
+    const solo = await new Promise(r => { const q = db.transaction('wbSolo').objectStore('wbSolo').getAll(); q.onsuccess = () => r(q.result); });
+    db.close();
+    return cs.filter(c => c.name === nm).map(c => ({ id: c.id, persona: String(c.persona || '').length, solo: (solo.find(s => s.charId === c.id) || {}).entries ? solo.find(s => s.charId === c.id).entries.length : 0 }));
+  }, cardChar.name);
+  console.log('   同名角色现在有 ' + newOne.length + ' 个：' + JSON.stringify(newOne));
+  t('导进来的角色人设不是空的', newOne.some(x => x.persona > 100), newOne);
+  t('导进来的角色带着世界书条目', newOne.some(x => x.solo > 0), newOne);
+}
+
+console.log('');
+console.log('=== I. 两种"部分导入"模式（不清空本机）===');
+// 「仅角色」：只覆盖角色和世界书，本机聊天记录/记忆一条都不动
+const s1 = await dbState();
+await (await page.$('#file-import')).uploadFile(F.b0929);
+await pickImportMode(page, 'chars', sleep);
+await sleep(9000);
+const s2 = await dbState();
+console.log('   仅角色：角色 ' + s1.chars + '→' + s2.chars + '，消息 ' + s1.msgs + '→' + s2.msgs + '，记忆 ' + s1.mems + '→' + s2.mems);
+t('「仅角色」不动聊天记录', s2.msgs === s1.msgs, { before: s1.msgs, after: s2.msgs });
+t('「仅角色」不动长期记忆', s2.mems === s1.mems, { before: s1.mems, after: s2.mems });
+t('「仅角色」把角色带进来了', s2.chars >= s1.chars, { before: s1.chars, after: s2.chars });
+// 「仅聊天记录」：只覆盖消息和记忆，角色表不动
+await (await page.$('#file-import')).uploadFile(F.b0924);
+await pickImportMode(page, 'msgs', sleep);
+await sleep(12000);
+const s3 = await dbState();
+console.log('   仅聊天记录：角色 ' + s2.chars + '→' + s3.chars + '，消息 ' + s2.msgs + '→' + s3.msgs + '，记忆 ' + s2.mems + '→' + s3.mems);
+t('「仅聊天记录」不动角色表', s3.chars === s2.chars, { before: s2.chars, after: s3.chars });
+t('「仅聊天记录」把消息/记忆带进来了', s3.msgs > 0 && s3.mems > 0, { msgs: s3.msgs, mems: s3.mems });
+
+console.log('');
+console.log('=== J. 导出当前角色的对话（Markdown）===');
+const dl3 = 'C:\\AAA-DSH\\A-Apk\\tmp\\dl3';
+fs.mkdirSync(dl3, { recursive: true });
+for (const f of fs.readdirSync(dl3)) { try { fs.unlinkSync(path.join(dl3, f)); } catch (e) { /* 忽略 */ } }
+const cdp3 = await page.target().createCDPSession();
+await cdp3.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dl3, eventsEnabled: true });
+await page.evaluate(() => document.getElementById('btn-export-md').click());
+for (let i = 0; i < 30; i++) { await sleep(500); if (fs.readdirSync(dl3).length) break; }
+const mdFiles = fs.readdirSync(dl3);
+t('Markdown 导出下来了', mdFiles.length > 0, mdFiles);
+if (mdFiles.length) {
+  const md = fs.readFileSync(path.join(dl3, mdFiles[0]), 'utf8');
+  console.log('   ' + mdFiles[0] + '：' + md.length + ' 字，前 60 字：' + md.slice(0, 60).replace(/\n/g, ' / '));
+  t('Markdown 里有内容（不是空文件）', md.length > 200, md.length);
 }
 
 console.log('');

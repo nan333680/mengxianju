@@ -7725,7 +7725,17 @@ function composeGroupPersona(c) {
     if (cfg.muted) tail += '（她这会儿基本不开口）';
     // 「只做动作，不说话」（v0.4.1.7）：冷淡的角色也该在场，只是不出声 ——
     // 用户原话「冷淡的可以做到不说话，但行为表达和神态反应输出出来了能够看得到」。
-    if (cfg.actOnly) tail += '（她几乎不说话 —— 只写她的动作、神态和反应，别给她台词）';
+    // 说话分量（v0.4.1.8）：从"一个绝对开关"改成连续档 ——
+    // 用户要的是"能保证对对应的角色设定的稳定"，所以这一条每轮都写进人设，
+    // 而不是靠这一轮的气氛随机决定她说不说。
+    const sp = speakOf(c, m.id);
+    if (sp <= 0) {
+      tail += '（她几乎不说话 —— 只写她的动作、神态和反应，别给她台词）';
+    } else if (sp <= 30) {
+      tail += '（她话很少：能一句就一句，多数时候只写动作和神态，别给她长台词）';
+    } else if (sp >= 71) {
+      tail += '（她话多：愿意多说，会主动递话、接话，别把她写得沉默）';
+    }
     // 群内覆盖给足字数（GROUP_PERSONA_MAX）；跟随她本人时只取前 400 字 ——
     // 她自己的卡可能几千字，三个人一起塞进群上下文太贵。这条规矩要在二级页写明。
     const cap = p.overridden ? GROUP_PERSONA_MAX : 400;
@@ -7798,6 +7808,9 @@ function groupSpeaker(c) {
     const w = pool.map(m => {
       let x = talkOf(c, m.id);
       if (m.id === lastId) x *= 0.5;
+      // 说话分量很低的人，少让她当"这段开场的那个人"（v0.4.1.8）——
+      // 但**不是不可能**：她一个人在场、或者被点名时照样开口。
+      if (speakOf(c, m.id) <= 20) x *= 0.5;
       return x;
     });
     const tot = w.reduce((a, b) => a + b, 0);
@@ -7862,10 +7875,40 @@ function groupMode(c) {
   return 'round';
 }
 
-/** 她在这个群里的活跃度（0~100，默认 50）—— 概率模式下开口的权重 */
+/** 她在这个群里的【出场频率】（0~100，默认 50）—— 抽签权重：她这一幕在不在场、谁先开口 */
 function talkOf(g, cid) {
   const v = Number(memberCfgOf(g, cid).talk);
   return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 50;
+}
+
+/**
+ * 她的【说话分量】（0~100，默认 50）—— 出场之后给她多少台词（v0.4.1.8）。
+ *
+ * 起因（用户实测反馈）："只做动作，不说话"是个开关，他嫌"太绝对"，
+ * 想要"一个进度条…来保证对对应的角色设定的稳定"。所以：
+ *   · 0     = 只做动作，不说话（就是原来那个开关，退化成最底一档）
+ *   · 1~30  = 话很少（能一句就一句，多数时候只写动作）
+ *   · 31~70 = 正常（不额外约束）
+ *   · 71~100= 话多（愿意多说、会主动递话）
+ * ⚠️ 它和「出场频率」是【正交】的两件事，别合并：
+ *    有人常在场但基本不说话，也有人不常出现但一开口一大段。
+ * ⚠️ 老数据里只有 actOnly=true（没有 speak）→ 当成 0，界面和提示词都按 0 走。
+ */
+function speakOf(g, cid) {
+  const cfg = memberCfgOf(g, cid);
+  if (cfg.speak !== undefined && cfg.speak !== null && Number.isFinite(Number(cfg.speak))) {
+    return Math.max(0, Math.min(100, Number(cfg.speak)));
+  }
+  return cfg.actOnly ? 0 : 50;
+}
+
+/** 说话分量的档位名（界面和提示词共用一套文案，别各写各的） */
+function speakBand(v) {
+  const n = Number(v);
+  if (n <= 0) return '只做动作';
+  if (n <= 30) return '话很少';
+  if (n <= 70) return '正常';
+  return '话多';
 }
 
 function escRe(s) { return String(s).replace(/[.*+?^$(){}|[\]\\]/g, '\\$&'); }
@@ -8254,7 +8297,10 @@ async function renderGroupSettings() {
   $('g-members').innerHTML = ms.map(m => {
     const mc = memberCfgOf(g, m.id);
     const hasP = (Array.isArray(mc.personaItems) && mc.personaItems.length) || String(mc.persona || '').trim();
-    const mk = mc.muted ? '少开口' : (mc.actOnly ? '只做动作' : (hasP ? '群内人设' : (String(mc.note || '').trim() ? '有补充' : '')));
+    const spk = speakOf(g, m.id);
+    const mk = mc.muted ? '不参与'
+      : (spk <= 0 ? '只做动作' : (spk <= 30 ? '话很少' : (spk >= 71 ? '话多'
+        : (hasP ? '群内人设' : (String(mc.note || '').trim() ? '有补充' : '')))));
     const av = m.avatar ? ('<img src="' + esc(m.avatar) + '">') : '🎎';
     return '<div class="g-tile' + (mc.muted ? ' mute' : '') + '" data-gm="' + esc(m.id) + '">'
       + '<div class="av">' + av + '</div>'
@@ -8612,6 +8658,8 @@ function memberCfgEmpty(one) {
   if (Array.isArray(one.personaItems) && one.personaItems.length) return false;
   if (one.muted) return false;
   if (one.actOnly) return false;
+  // 说话分量同理：0（只做动作）是合法值，判据必须是"键存在且不等于默认 50"
+  if (one.speak !== undefined && one.speak !== null && Number(one.speak) !== 50) return false;
   // ⚠️ 判据不能用 Number(...) 的真假（v0.4.1.6）：活跃度【0 是合法值】
   //    （把某人在概率模式下压到 0 = 基本不让她开口），
   //    而 Number(0) 是 falsy —— 原来会把"只设了活跃度 0"的成员整个当成空壳删掉，
@@ -8661,21 +8709,32 @@ async function renderGroupMemberPage() {
   $('gm-params-brief').textContent = hasP
     ? ('温度 ' + Number(pr.temperature).toFixed(2) + ' · ' + Math.round(Number(pr.maxTokens))) : '跟随全局';
   $('gm-talk').value = String(talkOf(g, m.id));
-  $('gm-v-talk').textContent = String(talkOf(g, m.id));
+  $('gm-speak').value = String(speakOf(g, m.id));
   $('gm-muted').checked = !!cfg.muted;
-  $('gm-actonly').checked = !!cfg.actOnly;
+  // 两个滑块旁边各写一句"这一档是什么意思"，滑动时实时变
+  const paint = () => {
+    const t = Number($('gm-talk').value), sp = Number($('gm-speak').value);
+    $('gm-v-talk').textContent = String(t);
+    $('gm-v-speak').textContent = String(sp);
+    $('gm-t-talk').textContent = t <= 10 ? '几乎不出现' : (t <= 30 ? '偶尔露面' : (t <= 70 ? '正常' : (t <= 90 ? '经常在' : '几乎场场都在')));
+    $('gm-t-speak').textContent = speakBand(sp);
+  };
+  paint();
   $('btn-gm-back').onclick = async () => { goBack(); await renderGroupSettings(); };
   $('btn-gm-save').onclick = async () => {
     const t = Number($('gm-talk').value);
+    const sp = Number($('gm-speak').value);
     await memberCfgWrite(_gId, _gmId, {
       talk: (t === 50 ? null : t),
+      speak: (sp === 50 ? null : sp),
       muted: !!$('gm-muted').checked,
-      actOnly: !!$('gm-actonly').checked || null,
+      actOnly: null,   // 老开关退化成"说话分量 = 0"，不再单独存
     });
     await renderGroupMemberPage();
     toast('改好了（只在这个群里生效）');
   };
-  $('gm-talk').oninput = () => { $('gm-v-talk').textContent = $('gm-talk').value; };
+  $('gm-talk').oninput = paint;
+  $('gm-speak').oninput = paint;
   $('gm-persona-open').onclick = () => { openGroupPersonaEditor(_gId, _gmId); };
   $('gm-note-open').onclick = () => { openGroupNoteEditor(_gId, _gmId); };
   $('gm-views-open').onclick = () => { openGroupViewsEditor(_gId, _gmId); };
@@ -8686,7 +8745,7 @@ async function renderGroupMemberPage() {
       '<p>把「' + esc(m.name) + '」在<b>这个群里</b>的全部单独设置清掉？</p>'
       + '<p>清掉之后她在这个群里就是用她自己那份设定。<b>她本人的卡一个字都不会动。</b></p>', '恢复');
     if (!ok) return;
-    await memberCfgWrite(_gId, _gmId, { note: null, persona: null, personaItems: null, muted: null, talk: null, views: null, params: null });
+    await memberCfgWrite(_gId, _gmId, { note: null, persona: null, personaItems: null, muted: null, talk: null, speak: null, actOnly: null, views: null, params: null });
     await renderGroupMemberPage();
     toast('已恢复成跟随她本人');
   };
@@ -12887,7 +12946,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.1.7';
+const WEB_VERSION_FALLBACK = '0.4.1.8';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

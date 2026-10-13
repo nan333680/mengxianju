@@ -1270,3 +1270,6 @@ input[type="range"] { touch-action: pan-y; }
 
 /* 群设置页里"不勾就用全局"的整块参数：置灰且点不动（勾选框本身在框外，照样能点） */
 .off-box{ opacity:.45; pointer-events:none; }
+
+/* 群成员二级页：滑块旁边的档位名（v0.4.1.8） */
+.gm-band{ font-style:normal; color:var(--fg3); font-size:12px; margin-left:6px; }

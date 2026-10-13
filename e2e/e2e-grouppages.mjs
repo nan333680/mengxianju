@@ -306,7 +306,7 @@ st = await gGet();
 t('少开口存进库', st.g.memberCfg.ga.muted === true, '');
 await click('btn-gm-back');
 await sleep(500);
-t('九宫格上标了「少开口」', await page.evaluate(() => document.querySelector('#g-members [data-gm="ga"]').textContent.includes('少开口')), '');
+t('九宫格上标了「少开口」', await page.evaluate(() => document.querySelector('#g-members [data-gm="ga"]').textContent.includes('不参与')), '');
 
 console.log('=== 11. 恢复成跟随她本人 / 长按移出 ===');
 await page.evaluate(() => document.querySelector('#g-members [data-gm="ga"]').click());
@@ -330,6 +330,91 @@ await sleep(900);
 const confirmShown = await page.evaluate(() => !document.getElementById('modal').classList.contains('hidden'));
 t('长按成员弹出确认框', confirmShown, '');
 if (confirmShown) { await click('modal-cancel'); await sleep(300); }
+console.log('');
+console.log('=== 14. 说话分量：连续档（v0.4.1.8） ===');
+// 起因（用户实测）："只做动作"是个开关，他嫌"太绝对"，要一个进度条 + 稳定的设定约束。
+// 所以现在成员二级页是两个滑块：【出场频率】和【说话分量】，后者 0 = 只做动作。
+await page.evaluate(() => document.querySelector('#g-members [data-gm="ga"]').click());
+await sleep(700);
+const sliders = await page.evaluate(() => ({
+  talk: !!document.getElementById('gm-talk'),
+  speak: !!document.getElementById('gm-speak'),
+  talkT: (document.getElementById('gm-t-talk') || {}).textContent,
+  speakT: (document.getElementById('gm-t-speak') || {}).textContent,
+  range: document.getElementById('gm-speak') && document.getElementById('gm-speak').type,
+}));
+t('二级页有两个滑块', sliders.talk && sliders.speak, sliders);
+t('滑块是 range（进度条形态）', sliders.range === 'range', sliders.range);
+t('每个滑块旁边有档位名', !!sliders.talkT && !!sliders.speakT, sliders);
+// 拉到 0 → 档位文字应该跟着变，保存后进库的是 speak=0（不是老的那个 actOnly）
+await setVal('gm-speak', '0');
+await sleep(250);
+t('拉到 0 时显示「只做动作」', (await txt('gm-t-speak')) === '只做动作', await txt('gm-t-speak'));
+await click('btn-gm-save');
+await sleep(800);
+st = await gGet();
+t('库里存的是 speak=0', Number(st.g.memberCfg.ga.speak) === 0, JSON.stringify(st.g.memberCfg.ga.speak));
+t('老开关 actOnly 不再写库', st.g.memberCfg.ga.actOnly === undefined, JSON.stringify(st.g.memberCfg.ga.actOnly));
+t('群人设里写进了「几乎不说话」', String(st.g.persona).includes('几乎不说话'), '');
+// 拉到 80 → 话多
+await setVal('gm-speak', '80');
+await sleep(250);
+t('拉到 80 时显示「话多」', (await txt('gm-t-speak')) === '话多', await txt('gm-t-speak'));
+await click('btn-gm-save');
+await sleep(800);
+st = await gGet();
+t('库里存的是 speak=80', Number(st.g.memberCfg.ga.speak) === 80, JSON.stringify(st.g.memberCfg.ga.speak));
+t('群人设里写进了「她话多」', String(st.g.persona).includes('她话多'), '');
+// 30 档 → 话很少
+await setVal('gm-speak', '30');
+await sleep(250);
+t('30 显示「话很少」', (await txt('gm-t-speak')) === '话很少', await txt('gm-t-speak'));
+await click('btn-gm-save');
+await sleep(800);
+st = await gGet();
+t('群人设里写进了「她话很少」', String(st.g.persona).includes('话很少'), '');
+// 回默认 50 → 键被删掉（不留在库里当空壳）
+await setVal('gm-speak', '50');
+await sleep(200);
+await click('btn-gm-save');
+await sleep(800);
+st = await gGet();
+console.log('   此刻的 memberCfg: ' + JSON.stringify(st.g.memberCfg));
+t('回到 50 时 speak 键被删掉（不占库）', !st.g.memberCfg.ga || st.g.memberCfg.ga.speak === undefined, JSON.stringify(st.g.memberCfg.ga));
+t('档位回到「正常」', (await txt('gm-t-speak')) === '正常', await txt('gm-t-speak'));
+// 生成器权重：说话分量很低的人少当开场（读代码验不了，这里只验"不影响出场频率"）
+await setVal('gm-talk', '100');
+await setVal('gm-speak', '0');
+await click('btn-gm-save');
+await sleep(800);
+st = await gGet();
+t('两个滑块互不干扰（出场 100 存住、分量 0 也存住）',
+  Number(st.g.memberCfg.ga.talk) === 100 && Number(st.g.memberCfg.ga.speak) === 0,
+  JSON.stringify({ t: st.g.memberCfg.ga.talk, s: st.g.memberCfg.ga.speak }));
+
+// 老数据兼容：库里只有 actOnly=true（没有 speak）时，界面按"只做动作"显示
+await page.evaluate(async () => {
+  const { chars } = await import('/js/db.js');
+  const g = await chars.get('ggrp1');
+  g.memberCfg = g.memberCfg || {};
+  g.memberCfg.ga = { actOnly: true };
+  await chars.put(g);
+});
+await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
+await page.evaluate(() => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1'); if (c) c.click(); });
+await sleep(1200);
+await page.evaluate(() => document.getElementById('chat-titletxt').click());
+await sleep(1400);
+await page.evaluate(() => document.querySelector('#g-members [data-gm="ga"]').click());
+await sleep(800);
+const mig = await page.evaluate(() => ({
+  v: document.getElementById('gm-speak').value,
+  band: document.getElementById('gm-t-speak').textContent,
+}));
+t('老数据（只有 actOnly）在界面上是「只做动作」', mig.v === '0' && mig.band === '只做动作', mig);
+await click('btn-gm-back');
+await sleep(500);
+
 t('没有页面报错', errs.length === 0, errs.slice(0, 3));
 
 console.log('');

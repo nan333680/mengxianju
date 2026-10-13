@@ -267,13 +267,18 @@
       <button class="pick-row" id="gm-params-open"><span>她在群里的参数</span><em id="gm-params-brief">跟随全局</em><i class="fold-arrow">›</i></button>
     </section>
     <section class="group">
-      <label class="field"><span>活跃度 <b id="gm-v-talk">50</b>（概率发言时她开口的权重）</span>
+      <label class="field"><span>出场频率 <b id="gm-v-talk">50</b><em class="gm-band" id="gm-t-talk">正常</em></span>
         <input id="gm-talk" type="range" min="0" max="100" step="5">
+        <em class="hint-text">她这一场戏<b>在不在场</b>。概率发言时就是抽签的权重。</em>
       </label>
-      <label class="look-switch"><input type="checkbox" id="gm-muted"><span>在群里少开口（不参与轮流，你点名仍会答）</span></label>
-      <label class="look-switch" style="margin-top:8px"><input type="checkbox" id="gm-actonly"><span>只做动作，不说话（神态和举动照样写出来，但不给她台词）</span></label>
-      <p class="hint-text">「少开口」管的是<b>轮到谁开口</b>；「只做动作」管的是<b>她开口时写什么</b>。<br>
-        冷淡的角色可以用后者 —— 人还在场，眼神和动作都看得见，就是不出声。</p>
+      <label class="field" style="margin-top:12px"><span>说话分量 <b id="gm-v-speak">50</b><em class="gm-band" id="gm-t-speak">正常</em></span>
+        <input id="gm-speak" type="range" min="0" max="100" step="5">
+        <em class="hint-text">她出场时<b>给她多少台词</b>。拉到 0 = 只做动作不说话 ——
+          人还在场，眼神和举动照样写出来，只是不出声。</em>
+      </label>
+      <p class="hint-text">这两个是分开的：有人<b>常在场但基本不说话</b>，也有人<b>不常出现但一开口就一大段</b>。<br>
+        这两个数<b>每一轮都会写进她的人设</b>，所以是稳定的，不会被这一轮的气氛带跑。</p>
+      <label class="look-switch" style="margin-top:8px"><input type="checkbox" id="gm-muted"><span>她整个不参与（连出场都不抽她，你点名时仍会答）</span></label>
       <div class="hint-text">这些<b>只影响这个群</b>。她在单聊里的设定、参数、记忆一个字都不会动。</div>
     </section>
     <section class="group">

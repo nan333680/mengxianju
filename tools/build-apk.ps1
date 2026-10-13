@@ -150,9 +150,13 @@ if (Test-Path $signer) {
   Write-Host ("   ⚠️ 找不到 apksigner（" + $signer + "），本次【没有做签名校验】") -ForegroundColor Yellow
 }
 
-# 复制到桌面并改名成带版本号的（默认保留其它版本，-CleanOld 才清理）
+# 复制到【桌面的 mxj 文件夹】并改名成带版本号的（默认保留其它版本，-CleanOld 才清理）。
+# ⚠️ v0.4.1.6：交付位置从"桌面根目录"改成"桌面\mxj\" —— 用户要的是
+#    桌面根目录保持干净、安装包统一收在那个文件夹里（他明说的）。
 $desk = [Environment]::GetFolderPath("Desktop")
-$dest = Join-Path $desk ("梦弦居-v" + $vn + ".apk")
+$outDir = Join-Path $desk "mxj"
+if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out-Null }
+$dest = Join-Path $outDir ("梦弦居-v" + $vn + ".apk")
 # ⚠️ 顺序反了会出事（v1.21.54，审计发现）：原来是【先删旧包、再 Copy】——
 #    万一 Copy 失败（桌面文件被占用、磁盘满），桌面上就只剩一个不完整的文件，
 #    而唯一的旧包已经被自己删掉了。现在先拷到 .new，成功了才动旧包。
@@ -165,28 +169,16 @@ try {
   exit 1
 }
 if ($CleanOld) {
-  Get-ChildItem $desk -Filter "梦弦居-v*.apk" | Where-Object { $_.FullName -ne $dest -and $_.FullName -ne $tmpDest } | ForEach-Object {
+  Get-ChildItem $outDir -Filter "梦弦居-v*.apk" | Where-Object { $_.FullName -ne $dest -and $_.FullName -ne $tmpDest } | ForEach-Object {
     Write-Host ("   移除旧包 " + $_.Name)
     Remove-Item $_.FullName -Force
   }
 } else {
-  Write-Host "   （桌面保留其它版本的包；要只留最新一个就加 -CleanOld）"
+  Write-Host "   （mxj 文件夹里保留其它版本的包；要只留最新一个就加 -CleanOld）"
 }
 Move-Item -LiteralPath $tmpDest -Destination $dest -Force
 Write-Host ""
-Write-Host ("已放到桌面：" + $dest) -ForegroundColor Green
-
-# 再往桌面的 mxj 文件夹放一份（v0.4.1.4）：那是用户自己攒各版本安装包的地方。
-# 两处都留 —— 桌面根目录那份方便直接传手机，mxj 那份是留档。
-$mxjDir = Join-Path $desk "mxj"
-$mxjDest = Join-Path $mxjDir ("梦弦居-v" + $vn + ".apk")
-try {
-  if (-not (Test-Path $mxjDir)) { New-Item -ItemType Directory -Path $mxjDir | Out-Null }
-  Copy-Item $dest $mxjDest -Force -ErrorAction Stop
-  Write-Host ("也放了一份到：" + $mxjDest) -ForegroundColor Green
-} catch {
-  Write-Host ("复制到 mxj 文件夹失败（桌面上那份不受影响）：" + $_.Exception.Message) -ForegroundColor Yellow
-}
+Write-Host ("已放到：" + $dest) -ForegroundColor Green
 
 # 顺带归档一份完整快照（脚本自己会拒绝覆盖已存在的版本目录）
 & (Join-Path $PSScriptRoot "archive-release.ps1") -Version $vn -Apk $dest

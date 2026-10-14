@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
-import { seedChar } from './e2e-helper.mjs';
+import { seedChar, pinLang } from './e2e-helper.mjs';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW=`${R}/www`;
 const CHROME='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -23,6 +23,8 @@ await sleep(1200);
 await page.evaluate(()=>indexedDB.deleteDatabase('ai-companion'));
 await page.reload({waitUntil:'networkidle0'}); await sleep(600);
 await seedChar(page, '语言测试');
+// ⚠️ CI 的 runner 是 en-US，而语言默认「跟随系统」→ 不钉中文的话下面第一批断言必红
+await pinLang(page, 'zh');
 await page.reload({waitUntil:'networkidle0'}); await sleep(700);
 
 console.log('=== 默认是中文，且和以前逐字相同 ===');

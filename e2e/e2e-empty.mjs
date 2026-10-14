@@ -8,6 +8,7 @@
 //   openSceneEditor()   能开空弹窗
 import puppeteer from 'puppeteer-core';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import { pinLang } from './e2e-helper.mjs';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW=`${R}/www`;
 const CHROME='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -34,6 +35,10 @@ await page.goto('http://127.0.0.1:'+port+'/',{waitUntil:'networkidle0',timeout:4
 await sleep(1200);
 await page.evaluate(()=>indexedDB.deleteDatabase('ai-companion'));
 await page.reload({waitUntil:'networkidle0'}); await sleep(900);
+// ⚠️ CI 的 runner 是 en-US，语言默认「跟随系统」→ 空态引导那类文案断言会读成英文。
+//    必须在【App 建好库之后】钉（也就是上面这次 reload 之后），钉完再 reload 一次让语言生效。
+await pinLang(page, 'zh');
+await page.reload({waitUntil:'networkidle0'}); await sleep(700);
 
 console.log('=== 前置：一个角色都没有 ===');
 t('角色数 0', (await dbCount('characters')) === 0);

@@ -6,7 +6,7 @@
 #
 # 定位说清楚：
 #   · 这里【不是】给陌生人看信用的，是给作者自己用的"改完立刻知道"。
-#   · 全量 114 套需要真实模型的 key（DSH_API_KEY），不进 CI。
+#   · 全量 128 套需要真实模型的 key（DSH_API_KEY），不进 CI。
 #     这里只跑【不需要任何 key】的那一批 —— 它们自己假造 API 或者压根不联网。
 #   · GitHub 的 windows 镜像自带 Chrome，而且路径正好是各套件里写死的那个
 #     （C:\Program Files\Google\Chrome\Application\chrome.exe），所以直接能用。

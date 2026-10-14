@@ -10,6 +10,7 @@
 import puppeteer from 'puppeteer-core';
 import { seedChars } from './e2e-helper.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
+import os from 'os';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = R + '/www';
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -442,7 +443,14 @@ await sleep(1000);
 const avIn = await page.$('#g-avatar-file');
 t('群头像的选图入口在', !!avIn, !!avIn);
 if (avIn) {
-  await avIn.uploadFile(R + '/tmp/av.png');
+  // ⚠️ 原来传的是工作区里的 tmp/av.png —— 而 tmp/ 在 .gitignore 里（第 48 行），
+  //    CI 上这个文件永远不存在，于是这一套在 CI 必红（本地反正有，看不出来）。
+  //    现在当场写一张 1×1 PNG 到系统临时目录，测试不再依赖工作区里的任何图片。
+  const avFile = path.join(os.tmpdir(), 'mxj-e2e-av.png');
+  if (!fs.existsSync(avFile)) {
+    fs.writeFileSync(avFile, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+  }
+  await avIn.uploadFile(avFile);
   await sleep(1800);
   const cropOn = await page.evaluate(() => {
     const v = document.getElementById('view-crop');

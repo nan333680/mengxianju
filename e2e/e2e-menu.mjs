@@ -1,5 +1,5 @@
 import puppeteer from 'puppeteer-core';
-import { seedChar, seedChars } from './e2e-helper.mjs';
+import { seedChar, seedChars, pinLang } from './e2e-helper.mjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -42,6 +42,8 @@ await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只�
 
 // 建一个角色并进去（原来靠默认模板，模板删了要自己准备）
 await seedChar(page, '菜单测试', { greeting: '（她看了你一眼）你来了。' });
+// ⚠️ CI 的 runner 是 en-US，语言默认「跟随系统」→ 不钉中文，菜单文案断言必红
+await pinLang(page, 'zh');
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
 await page.click('#btn-chars'); await sleep(700);
 await page.evaluate(() => {

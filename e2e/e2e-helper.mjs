@@ -180,3 +180,38 @@ export async function pickImportMode(page, mode = 'msgs', sleep = (ms) => new Pr
 }
 
 export default { seedChars, seedChar, waitIdle, tap, pickImportMode };
+
+/**
+ * 把 App 语言钉成中文（v0.4.1 修）。
+ *
+ * 起因：CI（GitHub runner）的系统语言是 en-US，而 App 的语言设置默认是「跟随系统」，
+ * 于是在 CI 上整个界面直接渲染成英文 —— 任何断言中文文案的套件都会红
+ * （e2e-i18n 的「抽屉是中文」、e2e-menu 的「编辑重发」、e2e-empty 的空态引导都是这么红的）。
+ * 本地跑没事，因为开发机是中文系统。
+ *
+ * 用法：page 加载完、断言中文之前调一次 await pinLang(page)。
+ * ⚠️ 要在 reload 之前写库，之后再 reload 才生效（App 是启动时读 settings.lang）。
+ */
+export async function pinLang(page, lang = 'zh') {
+  await page.evaluate(async (v) => {
+    // ⚠️ 必须先确认库已经存在：直接 open 一个不存在的库会【创建一个空的】，
+    //    里面没有 kv/characters 这些表，App 下一次初始化就会炸（实测就是这么炸的）。
+    const dbs = await indexedDB.databases();
+    if (!dbs.some(d => d.name === 'ai-companion')) {
+      throw new Error('pinLang: App 还没建库 —— 先让它启动加载一次（或先 seed 一个角色）再调');
+    }
+    const o = indexedDB.open('ai-companion');
+    const db = await new Promise((res, rej) => { o.onsuccess = () => res(o.result); o.onerror = () => rej(o.error); });
+    const rec = await new Promise(res => {
+      const q = db.transaction('kv').objectStore('kv').get('settings');
+      q.onsuccess = () => res(q.result);
+    });
+    const s = Object.assign({}, (rec && rec.v) || {}, { lang: v });
+    await new Promise(res => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put({ k: 'settings', v: s });
+      tx.oncomplete = res;
+    });
+    db.close();
+  }, lang);
+}

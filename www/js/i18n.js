@@ -61,6 +61,17 @@ const EN = {
 
 const MAP = { en: EN };
 
+/** 展示用的短词（v0.4.2 补全翻译时加的）：时段 / 季节 / 天气 / 计数 / 空态 */
+const EXTRA_ZH = {
+  '凌晨': 'Small hours', '早上': 'Morning', '上午': 'Late morning', '中午': 'Noon',
+  '下午': 'Afternoon', '傍晚': 'Dusk', '晚上': 'Evening', '深夜': 'Late night',
+  '春': 'Spring', '夏': 'Summer', '秋': 'Autumn', '冬': 'Winter',
+  '晴': 'Clear', '多云': 'Cloudy', '阴': 'Overcast', '雨': 'Rain',
+  '雷雨': 'Thunderstorm', '雪': 'Snow', '风': 'Windy', '雾': 'Fog',
+  '（空的）': '(empty)', '还没有': 'None yet', '未填': 'Not set', '未选择角色': 'No character selected',
+  '离线': 'Offline', '跟随手机时间': 'Following the phone clock', '无': 'none',
+};
+
 /**
  * 动态文本的翻译表：**直接用中文原文当 key**。
  *
@@ -139,9 +150,28 @@ export function t(key) {
 }
 
 /** 按中文原文翻译（动态拼出来的文案用它） */
+/**
+ * 组合出来的文案（v0.4.2）。
+ * 「第 4 天」「共 12 字」这种是拼出来的，查表查不到 —— 所以再给一张【按模式】的表。
+ * ⚠️ 只在英文下生效；中文路径一个字节都不动（和 tt 同一条硬约束）。
+ */
+const BY_PATTERN = [
+  [/^第 (\d+) 天$/, (m) => 'Day ' + m[1]],
+  [/^第 (\d+) 年 (\d+) 天$/, (m) => 'Year ' + m[1] + ', day ' + m[2]],
+  [/^共 (\d+) 字$/, (m) => m[1] + ' chars'],
+  [/^(\d+) 字$/, (m) => m[1] + ' chars'],
+  [/^已有 (\d+) 字$/, (m) => m[1] + ' chars so far'],
+  [/^已选 (\d+) \/ (\d+)$/, (m) => 'Selected ' + m[1] + ' / ' + m[2]],
+  [/^(.+?)（(\d+):00-(\d+):00）$/, (m) => m[1] + ' (' + m[2] + ':00–' + m[3] + ':00)'],
+  [/^(\d+):00-(\d+):00$/, (m) => m[1] + ':00–' + m[2] + ':00'],
+];
+
 export function tt(zh) {
   if (_lang !== 'en') return zh;          // 中文下原样返回，一个字节都不动
-  return BY_ZH[zh] || zh;
+  if (BY_ZH[zh]) return BY_ZH[zh];
+  if (EXTRA_ZH[zh]) return EXTRA_ZH[zh];
+  for (const [re, f] of BY_PATTERN) { const m = re.exec(String(zh)); if (m) return f(m); }
+  return zh;
 }
 
 /**

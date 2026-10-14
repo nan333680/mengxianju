@@ -452,7 +452,9 @@ function fmtStory(s) {
   const t = (S.clockDetail && typeof s.hour === 'number')
     ? ' ' + String(s.hour).padStart(2, '0') + ':' + String(s.minute || 0).padStart(2, '0')
     : '';
-  return dayLabel(s.day) + (ph ? ' ' + ph : '') + t;
+  // ⚠️ 这里是【显示】路径，英文界面下要翻（v0.4.2）；提示词那侧用的是 clockGap/clockFull 的
+  //    原文，一个字都没动 —— 界面语言不该改变她读到的东西。
+  return tt(dayLabel(s.day)) + (ph ? ' ' + tt(ph) : '') + t;
 }
 
 /** 把 hour/minute 格式化成 "14:05"；没设小时就返回空 */
@@ -471,7 +473,7 @@ function clockFull(c) {
     : `${ph}（${a}:00-${b === 24 ? 24 : b}:00）`;
   const se = (SEASONS.find(s => s.k === c.season) || {}).label;
   const we = (WEATHERS.find(w => w.k === c.weather) || {}).label;
-  return [se, dayLabel(c.day), phFull, we].filter(Boolean).join(' · ');
+  return [tt(se), tt(dayLabel(c.day)), tt(phFull), tt(we)].filter(Boolean).join(' · ');
 }
 
 function clockLabel(c) {
@@ -651,7 +653,7 @@ function renderClock() {
   // （showEmptyChat 里那句 el.textContent = '' 也因此是死代码，被这句覆盖掉。）
   if (!curCharId) { el.textContent = ''; el.classList.remove('readonly'); return; }
   const real = isRealClock();
-  el.textContent = clockLabel(clockState) + (real ? '　· 跟随手机时间' : '');
+  el.textContent = tt(clockLabel(clockState)) + (real ? '　· ' + tt('跟随手机时间') : '');
   // 现实模式下缩成一行只读小字（v1.20.21，需求「像抽屉那样缩进」）。
   // 保留位置让人看得见现在几点，但不再是可点的大按钮 —— 点了也调不了。
   el.classList.toggle('readonly', real);
@@ -866,8 +868,8 @@ function refreshEditMineBrief() {
   const pv = ($('e-mine') ? $('e-mine').value : '') || '';
   const hv = ($('e-home') ? $('e-home').value : '') || '';
   const p = pv.trim(), h = hv.trim();
-  const mc = $('e-mine-count'); if (mc) mc.textContent = p ? ('共 ' + pv.length + ' 字') : '（空的）';
-  const hc = $('e-home-count'); if (hc) hc.textContent = h ? ('共 ' + hv.length + ' 字') : '（空的）';
+  const mc = $('e-mine-count'); if (mc) mc.textContent = p ? tt('共 ' + pv.length + ' 字') : tt('（空的）');
+  const hc = $('e-home-count'); if (hc) hc.textContent = h ? tt('共 ' + hv.length + ' 字') : tt('（空的）');
   const mb = $('e-mine-brief');
   if (mb) mb.textContent = p ? (p.split('\n').filter(x => x.trim()).length + ' 行') : '未填';
   const hb = $('e-home-brief');
@@ -911,15 +913,15 @@ function closeTextEditor() {
 
 function updateTxtCount() {
   const b = $('txt-input'), c = $('txt-count');
-  if (b && c) c.textContent = b.value.trim() ? ('共 ' + b.value.length + ' 字') : '（空的）';
+  if (b && c) c.textContent = b.value.trim() ? tt('共 ' + b.value.length + ' 字') : tt('（空的）');
 }
 
 /** 入口行右边那个角标：不点开也知道里面写了多少 */
 function refreshCharTextBriefs() {
   const g = $('e-greeting'), p = $('e-persona');
   const gb = $('e-greeting-brief'), pb = $('e-persona-brief');
-  if (gb) gb.textContent = (g && g.value.trim()) ? (g.value.length + ' 字') : '未填';
-  if (pb) pb.textContent = (p && p.value.trim()) ? (p.value.length + ' 字') : '未填';
+  if (gb) gb.textContent = (g && g.value.trim()) ? tt(g.value.length + ' 字') : tt('未填');
+  if (pb) pb.textContent = (p && p.value.trim()) ? tt(p.value.length + ' 字') : tt('未填');
 }
 
 let _pickCharsCtx = null;

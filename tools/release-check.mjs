@@ -45,8 +45,11 @@ const dirty = git(['status', '--porcelain']);
 let tagSha = '';
 try { tagSha = git(['rev-list', '-n1', 'v' + version]); } catch (e) { /* 没有这个 tag */ }
 ok('tag v' + version + ' 存在', !!tagSha);
-ok('tag 正好指向 HEAD', !!tagSha && tagSha === head, 'tag ' + tagSha.slice(0, 7) + ' / HEAD ' + head.slice(0, 7));
-ok('工作区干净（checkout 出来的才是发布源码）', dirty === '', dirty ? '有未提交改动' : 'clean');
+// ⚠️ 这一条【不能】写成"tag 必须指向 HEAD"：发布之后只要再提交一次（比如补文档、修工具），
+//    它就永远为假，变成天天误报的假警报。真正要守住的不变量是【包 = tag 那份源码】，
+//    下面第 ④ 步直接用 git archive 取 tag 的内容来比。
+if (tagSha && tagSha !== head) console.log('  – tag 与 HEAD 不同（发布后又提交了，正常）：tag ' + tagSha.slice(0, 7) + ' / HEAD ' + head.slice(0, 7));
+if (dirty) console.log('  – 工作区有未提交改动（不影响"包 = tag 源码"这个判断）');
 
 // ③ 桌面交付包
 const desk = path.join(os.homedir(), 'Desktop', 'mxj', '梦弦居-v' + version + '.apk');
@@ -58,10 +61,16 @@ if (fs.existsSync(desk)) {
   const sdk = process.env.ANDROID_HOME || 'C:\\AAA-DSH\\Android\\sdk';
   const aapt2 = path.join(sdk, 'build-tools', '36.0.0', 'aapt2.exe');
   if (fs.existsSync(aapt2)) {
+    // ⚠️ 和【tag 上那份】gradle 比：包是从 tag 那份源码构建的。拿工作区的比会在"发布后
+    //    又改了版本号但没重打包"时给出误导性的结论。
+    let tagGradle = gradle;
+    if (tagSha) { try { tagGradle = git(['show', 'v' + version + ':android/app/build.gradle']); } catch (e) { /* 用工作区的 */ } }
+    const tagName = (tagGradle.match(/versionName\s+"([^"]+)"/) || [])[1];
+    const tagCode = (tagGradle.match(/versionCode\s+(\d+)/) || [])[1];
     const out = execFileSync(aapt2, ['dump', 'badging', desk]).toString();
     const m = out.match(/versionCode='(\d+)'\s+versionName='([^']+)'/);
-    ok('包里的 versionName 一致', !!m && m[2] === version, m ? m[2] : '读不到');
-    ok('包里的 versionCode 与 gradle 一致', !!m && m[1] === gCode, m ? m[1] + ' vs ' + gCode : '读不到');
+    ok('包里的 versionName = tag 上的 versionName', !!m && m[2] === tagName, m ? m[2] + ' vs ' + tagName : '读不到');
+    ok('包里的 versionCode = tag 上的 versionCode', !!m && m[1] === tagCode, m ? m[1] + ' vs ' + tagCode : '读不到');
   } else {
     console.log('  – 找不到 aapt2，跳过包内版本名校验（' + aapt2 + '）');
   }
@@ -81,11 +90,18 @@ if (fs.existsSync(desk)) {
       return out;
     };
     const shaOf = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-    const src = walk(path.join(root, 'www'));
+    // 取【tag 那一刻】的 www（不是工作区的）—— 发布源码的标志物就是 tag
+    const ref = 'v' + version;
+    const tarBuf = execFileSync('git', ['-C', root, 'archive', '--format=tar', ref, 'www'], { maxBuffer: 128 * 1024 * 1024 });
+    const tarPath = path.join(tmpDir, 'src.tar');
+    fs.writeFileSync(tarPath, tarBuf);
+    execFileSync('tar', ['-xf', tarPath, '-C', tmpDir], { stdio: 'ignore' });
+    const srcRoot = path.join(tmpDir, 'www');
+    const src = walk(srcRoot);
     const inApk = walk(inside);
     const missing = src.filter(f => !inApk.includes(f));
-    const differ = src.filter(f => inApk.includes(f) && shaOf(path.join(root, 'www', f)) !== shaOf(path.join(inside, f)));
-    ok('包里的 assets/public 就是这份 www（逐字节）', missing.length === 0 && differ.length === 0,
+    const differ = src.filter(f => inApk.includes(f) && shaOf(path.join(srcRoot, f)) !== shaOf(path.join(inside, f)));
+    ok('包里的 assets/public 就是 tag ' + ref + ' 的 www（逐字节）', missing.length === 0 && differ.length === 0,
       '缺 ' + missing.length + ' 个 / 不一样 ' + differ.length + ' 个');
     const extra = inApk.filter(f => !src.includes(f));
     if (extra.length) console.log('     （包里多出来的，Capacitor 自带：' + extra.join('、') + '）');

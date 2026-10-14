@@ -563,6 +563,7 @@ export function t(key) {
  * 「第 4 天」「共 12 字」这种是拼出来的，查表查不到 —— 所以再给一张【按模式】的表。
  * ⚠️ 只在英文下生效；中文路径一个字节都不动（和 tt 同一条硬约束）。
  */
+/** @type {Array<[RegExp, (m: RegExpExecArray) => string]>} */
 const BY_PATTERN = [
   [/^第 (\d+) 天$/, (m) => 'Day ' + m[1]],
   [/^第 (\d+) 年 (\d+) 天$/, (m) => 'Year ' + m[1] + ', day ' + m[2]],

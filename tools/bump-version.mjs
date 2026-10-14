@@ -77,7 +77,9 @@ fs.writeFileSync(gradlePath, g, 'utf8');
 
 // ④ app.js 的 Web 兜底版本
 if (webFallback) {
-  fs.writeFileSync(appPath, appjs.replace(/WEB_VERSION_FALLBACK(\s*=\s*)'[^']+'/, "$1'" + version + "'"), 'utf8');
+  // ⚠️ 分组必须【连标识符一起】捕获再放回去 —— 第一版只捕获了 = 号那一段，
+  //    替换完变成 `const  = '0.4.1';`，标识符被吃掉了（ci-check 立刻报语法错，算它尽责）。
+  fs.writeFileSync(appPath, appjs.replace(/(WEB_VERSION_FALLBACK\s*=\s*)'[^']+'/, "$1'" + version + "'"), 'utf8');
 }
 
 // 事后自检：形状对 + 四处一致 + 依赖版本一个没动

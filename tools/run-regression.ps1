@@ -75,6 +75,43 @@ foreach ($f in $files) {
     if ($code -ne 0) { $fails += "$($f.Name)  退出码 $code"; $fail++ }
   }
 
+  # 崩溃重试（v0.4.1 加）：套件【没有汇总行且退出码非 0】= 它是在 puppeteer 层崩的
+  #   （detached Frame / LifecycleWatcher disposed 那一类），整轮跑时会偶发 ——
+  #   仓库注释里早就写了"结果是随机的假失败"。这种重试一次是有意义的；
+  #   【断言失败绝不重试】—— 那才是真信号。崩溃那次的输出存到 tmp/failed/，不隐瞒。
+  $retried = $false
+  if ($verdict -eq 'FAIL' -and -not $m.Success) {
+    $retried = $true
+    cmd /c "node `"$($f.FullName)`" > `"$tmpOut`" 2>&1"
+    $code2 = $LASTEXITCODE
+    $out2 = if (Test-Path $tmpOut) { Get-Content $tmpOut -Raw -Encoding UTF8 } else { '' }
+    Remove-Item $tmpOut -Force -ErrorAction SilentlyContinue
+    $m2 = [regex]::Match($out2, 'pass=(\d+)\s+fail=(\d+)')
+    if (-not $m2.Success) { $m2 = [regex]::Match($out2, '通过\s+(\d+)\s*项[^0-9]*失败\s+(\d+)') }
+    if (-not $m2.Success) { $m2 = [regex]::Match($out2, '通过\s+(\d+)\s*/\s*失败\s+(\d+)') }
+    if ($m2.Success) {
+      $p2 = [int]$m2.Groups[1].Value; $fl2 = [int]$m2.Groups[2].Value
+      if ($fl2 -eq 0) {
+        $verdict = 'PASS'; $note = '（崩过一次，重试通过）'
+        $pass += $p2
+      } else {
+        $note = '通过 ' + $p2 + ' 项，失败 ' + $fl2 + ' 项（含重试）'
+        $pass += $p2; $fail += $fl2; $fails += ($f.Name + '  pass=' + $p2 + ' fail=' + $fl2)
+      }
+    } elseif ($code2 -eq 0) {
+      $verdict = 'PASS'; $note = '（崩过一次，重试通过）(无汇总)'
+    } else {
+      $note = '（崩 + 重试仍崩，退出码 ' + $code2 + '）'
+    }
+  }
+
+  # 失败的套件把完整输出留下来（v0.4.1 加）—— 整轮里某套红了，事后能直接看到原因
+  if ($verdict -eq 'FAIL') {
+    $dir = Join-Path $root 'tmp\failed'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+    $saveAs = Join-Path $dir ($f.Name -replace '\.mjs$', '.log')
+    Set-Content -Path $saveAs -Value $out -Encoding UTF8
+  }
   $line = "{0,-4} {1,-26} {2}   [{3:N1}s]" -f $verdict, $f.Name, $note, $t0.Elapsed.TotalSeconds
   Add-Content -Path $log -Value $line -Encoding UTF8
   Write-Host $line

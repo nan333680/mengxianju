@@ -635,7 +635,18 @@ function _applyI18n(root) {
     // 这类带结构的标签要拆开标记（给内层的纯文本节点标），不能整块标。
     if (el.children.length) continue;
     if (el.dataset.i18nZh === undefined) el.dataset.i18nZh = el.textContent;
-    el.textContent = _lang === 'en' ? el.dataset.i18nEn : el.dataset.i18nZh;
+    // ⚠️ 中文下【不要】无脑把缓存的原文写回去（v0.4.2 修）：
+    //    这些元素里有一部分是 JS 会改的（群世界书的标题、聊天页页眉、字数统计……）。
+    //    原来每次 applyI18n 都拿"第一次看到的那份中文"覆盖，于是 JS 刚写进去的值被改回旧值 ——
+    //    CI 上抓到的「标题变成了"单独角色"」「页眉变成了"未选择角色"」就是这么来的。
+    //    现在的规矩：只在【确实是我们写进去的英文】时才还原中文。
+    if (_lang === 'en') {
+      if (el.textContent !== el.dataset.i18nEn) el.textContent = el.dataset.i18nEn;
+      el.dataset.i18nApplied = '1';
+    } else if (el.dataset.i18nApplied === '1') {
+      if (el.textContent !== el.dataset.i18nZh) el.textContent = el.dataset.i18nZh;
+      delete el.dataset.i18nApplied;
+    }
   }
   // 【兜底扫一遍所有文本节点】（v0.4.2）：JS 拼出来的界面文案（toast/状态行/下拉项……）
   // 没法逐个标属性，但它们的文字恰好都在 BY_ZH / EXTRA_ZH 里 —— 所以整篇扫一遍，
@@ -663,20 +674,27 @@ function _applyI18n(root) {
         const raw = n.textContent;
         const t = raw.replace(/\s+/g, ' ').trim();
         if (!t || !/[\u4e00-\u9fa5]/.test(t)) continue;
-        if (n.__zh === undefined) n.__zh = raw;
-        let want = raw;
+        // ⚠️ 只动【我们自己写进去的那份】（v0.4.2 修）：
+        //    第一版在中文下无条件把节点恢复成"第一次看到时的原文"，于是 JS 后来更新过的
+        //    文字会被悄悄地改回旧值 —— 群世界书标题被改回「单独角色」、聊天页页眉被改回
+        //    「未选择角色」都是这么来的（CI 环境里被抓到的）。
+        //    现在的规矩：英文下命中词典才写，并记下我们写的是什么；中文下只把【还等于我们
+        //    写的那份】的节点还原 —— 别人改过的（JS 更新过的）一个字都不碰。
         if (_lang === 'en') {
           const en = tt(t);
-          if (en) {
+          if (en !== t) {
             const lead = (/^\s*/.exec(raw) || [''])[0];
             const tail = (/\s*$/.exec(raw) || [''])[0];
-            want = lead + en + tail;
+            const want = lead + en + tail;
+            if (n.textContent !== want) {
+              n.__zh = raw;
+              n.__en = want;
+              n.textContent = want;
+            }
           }
-        } else {
-          want = n.__zh;
+        } else if (n.__en !== undefined && n.textContent === n.__en) {
+          if (n.__zh !== undefined && n.textContent !== n.__zh) n.textContent = n.__zh;
         }
-        // ⚠️ 只有真的不一样才写 —— 否则 MutationObserver 会被自己的改动反复唤醒（自激）
-        if (n.textContent !== want) n.textContent = want;
       }
     }
   }

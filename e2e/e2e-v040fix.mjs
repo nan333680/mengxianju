@@ -16,7 +16,7 @@
 //   3) style.css 里 .wb-list-empty{' 多一个单引号 → 选择器非法 →
 //      整条规则被 CSS 解析器丢掉（"还没有条目"那块一直是无样式的裸文字）。
 import puppeteer from 'puppeteer-core';
-import { seedChar } from './e2e-helper.mjs';
+import {seedChar, pinLang } from './e2e-helper.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 import { readCode } from './e2e-src.mjs';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
@@ -62,6 +62,16 @@ const port = server.address().port;
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 120000,
   args: ['--no-sandbox','--disable-dev-shm-usage','--disable-gpu'] });
 const page = await browser.newPage();
+// ⚠️ CI 的 runner 是 en-US，而界面语言默认「跟随系统」。钉成中文，否则英文界面下
+//    断言中文文案的地方都会红（界面翻译补完之后尤其明显，v0.4.2）。
+//    用 defineProperty 而不是改库：不用等 reload、也不动 DOM，跟断言不抢。
+//    configurable: true 是为了能和预检工具自己的伪装共存。
+await page.evaluateOnNewDocument(() => {
+  Object.defineProperty(navigator, 'language', { get: () => 'zh-CN', configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
+});
+
+
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -82,6 +92,8 @@ await page.goto('http://127.0.0.1:' + port + '/', { waitUntil: 'networkidle0', t
 await sleep(1200);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil: 'networkidle0' }); await sleep(1000);
+// ⚠️ CI 的 runner 是 en-US：把语言钉成中文，否则英文界面下断言中文文案的地方会红（v0.4.2）
+await pinLang(page, 'zh');
 const CID = 'ck1';
 await seedChar(page, '钟', { greeting: '（开场）', id: CID });
 await page.evaluate(async (cid) => {

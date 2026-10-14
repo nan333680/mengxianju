@@ -1,5 +1,5 @@
 import puppeteer from 'puppeteer-core';
-import { seedChar, seedChars } from './e2e-helper.mjs';
+import {seedChar, seedChars } from './e2e-helper.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
@@ -16,6 +16,16 @@ await new Promise(r => server.listen(0,'127.0.0.1',r));
 const port = server.address().port;
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox','--disable-dev-shm-usage','--disable-gpu'] });
 const page = await browser.newPage();
+// ⚠️ CI 的 runner 是 en-US，而界面语言默认「跟随系统」。钉成中文，否则英文界面下
+//    断言中文文案的地方都会红（界面翻译补完之后尤其明显，v0.4.2）。
+//    用 defineProperty 而不是改库：不用等 reload、也不动 DOM，跟断言不抢。
+//    configurable: true 是为了能和预检工具自己的伪装共存。
+await page.evaluateOnNewDocument(() => {
+  Object.defineProperty(navigator, 'language', { get: () => 'zh-CN', configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
+});
+
+
 // ⚠️ CI 的 runner 报 prefers-reduced-motion: reduce，而产品在那种情况下【故意】把 .view 的过渡关掉
 //    （style.css 的 @media (prefers-reduced-motion: reduce)）—— 于是这套量到的位移恒为 0、
 //    过渡时长恒为 0s，三条断言全红。这里显式要求"要有动画"，测的才是动画那条路径。

@@ -206,7 +206,10 @@ export async function pinLang(page, lang = 'zh') {
       const q = db.transaction('kv').objectStore('kv').get('settings');
       q.onsuccess = () => res(q.result);
     });
-    const s = Object.assign({}, (rec && rec.v) || {}, { lang: v });
+    // ⚠️ 记录不存在就【别写】：写一个只带 lang 的 settings 会把全局设置冲掉
+    //    （第一版就是这么把 API Key 等默认值弄没的）
+    if (!rec || !rec.v) return;
+    const s = Object.assign({}, rec.v, { lang: v });
     await new Promise(res => {
       const tx = db.transaction('kv', 'readwrite');
       tx.objectStore('kv').put({ k: 'settings', v: s });

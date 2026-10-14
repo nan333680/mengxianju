@@ -9,7 +9,7 @@
 //   · 世界书要并上成员各自的（不然一进群集体失忆）
 //   · 点名要真的能点
 import puppeteer from 'puppeteer-core';
-import { seedChars } from './e2e-helper.mjs';
+import {seedChars } from './e2e-helper.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 import { readCode } from './e2e-src.mjs';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
@@ -46,6 +46,16 @@ const port = server.address().port;
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 120000,
   args: ['--no-sandbox','--disable-dev-shm-usage','--disable-gpu'] });
 const page = await browser.newPage();
+// ⚠️ CI 的 runner 是 en-US，而界面语言默认「跟随系统」。钉成中文，否则英文界面下
+//    断言中文文案的地方都会红（界面翻译补完之后尤其明显，v0.4.2）。
+//    用 defineProperty 而不是改库：不用等 reload、也不动 DOM，跟断言不抢。
+//    configurable: true 是为了能和预检工具自己的伪装共存。
+await page.evaluateOnNewDocument(() => {
+  Object.defineProperty(navigator, 'language', { get: () => 'zh-CN', configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
+});
+
+
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));

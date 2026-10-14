@@ -61,7 +61,9 @@ if (!lintBad) console.log('  ✓ ' + suites.length + ' 套都没有引用被忽�
 if (lintOnly) process.exit(lintBad ? 1 : 0);
 
 // ---------- ①② 生成副本：en-US + 强制关动画 ----------
-const spoofLang = "\n/* ci-precheck: 伪装 en-US */\nawait page.evaluateOnNewDocument(() => { Object.defineProperty(navigator, 'language', { get: () => 'en-US' }); Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] }); });\n";
+// ⚠️ configurable: true —— 套件自己要用 defineProperty 钉成中文时，不能在这里被锁死
+//    （第一版没写，套件一钉就抛 "Cannot redefine property: language"）。
+const spoofLang = "\n/* ci-precheck: 伪装 en-US（可被套件覆盖） */\nawait page.evaluateOnNewDocument(() => { Object.defineProperty(navigator, 'language', { get: () => 'en-US', configurable: true }); Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'], configurable: true }); });\n";
 const list = suites.filter(s => !only || s.includes(only));
 console.log('\n[2/2] 用 CI 的环境跑 ' + list.length + ' 套（en-US + prefers-reduced-motion: reduce）');
 let pass = 0, fail = 0, skipped = 0;

@@ -164,6 +164,12 @@ export async function readLatestBackup(o) {
   const { FS, directories = BACKUP_DIRS } = o || {};
   if (!FS) return { ok: false, reason: 'no-filesystem' };
   const folder = '梦弦居备份';
+  // ⚠️ 记下"第一个出问题的目录"，但【不立刻返回】（v0.4.2 修，用户复核）：
+  //    原来 DOCUMENTS 里那份最新的坏掉时直接 return —— EXTERNAL / DATA 里那份好的
+  //    永远不会被看到，面板就红着说"最近那份读不出来"。现在读坏就换下一个目录，
+  //    全试完还是没有可用的，才把记下的那条报出去。
+  let firstBad = null;
+  const keepBad = (info) => { if (!firstBad) firstBad = info; };
   for (const dir of directories) {
     let names;
     try {
@@ -182,22 +188,26 @@ export async function readLatestBackup(o) {
       raw = (rd && typeof rd.data === 'string') ? rd.data : null;
     } catch (e) { readFailed = String((e && e.message) || e); }
     if (readFailed !== null || raw == null) {
-      return { ok: false, reason: 'read-failed', dir, name: latest, error: readFailed || '' };
+      keepBad({ ok: false, reason: 'read-failed', dir, name: latest, error: readFailed || '' });
+      continue;
     }
     let obj;
     try { obj = JSON.parse(raw); }
     catch (e) {
-      return { ok: false, reason: 'corrupt', dir, name: latest, bytes: raw.length,
-               error: String((e && e.message) || e) };
+      keepBad({ ok: false, reason: 'corrupt', dir, name: latest, bytes: raw.length,
+                error: String((e && e.message) || e) });
+      continue;
     }
     // 光能 parse 还不够：一份 {} 也是合法 JSON。要确认它真是【备份】——
     // 至少得有导出时间，否则等于没有内容可恢复。
     if (!obj || typeof obj !== 'object' || !obj.exportedAt) {
-      return { ok: false, reason: 'empty', dir, name: latest, bytes: raw.length };
+      keepBad({ ok: false, reason: 'empty', dir, name: latest, bytes: raw.length });
+      continue;
     }
     // count = 这个目录里一共有几份自动备份（设置页的「保留份数 N / 7」要用）
     return { ok: true, dir, name: latest, bytes: raw.length, count: mine.length, data: obj };
   }
+  if (firstBad) return firstBad;   // 全试完了，报最靠前那个（最有信息量的那条）
   return { ok: false, reason: 'none' };
 }
 

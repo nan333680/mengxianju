@@ -422,6 +422,24 @@ export function buildStablePrompt(char, s, constWb) {
     ? `# 这个场合\n${char.persona || '（这个群还没有设定）'}`
     : `# 你的角色设定\n${char.persona || '你是一个友好的聊天伙伴。'}`);
 
+  // —— 卡里另外那几项（v0.4.2）——
+  // 起因（用户复核）：从 chub 导进来的卡里 personality / scenario / mes_example /
+  // system_prompt / post_history_instructions 这几项【读出来了但一个字都没用】，
+  // 于是"她"少了半个人，而且导入时的提示里也不提。
+  // 现在按标签拼在设定后面：它们是设定的一部分，不是"附加信息"。
+  // ⚠️ 不进 char.persona 本体（那样再导出会变成 description 里塞了一堆标签，
+  //    往返一次就膨胀一次）—— 只在这里拼给模型看。
+  if (!isGrp && char && char.cardFields && typeof char.cardFields === 'object') {
+    const cf = char.cardFields;
+    const blocks = [];
+    if (cf.personality) blocks.push('【性格】\n' + cf.personality);
+    if (cf.scenario) blocks.push('【场景】\n' + cf.scenario);
+    if (cf.mesExample) blocks.push('【对话范例】\n' + cf.mesExample + '\n（照这个的写法说话：格式、长度、动作和台词的排布都参照它）');
+    if (cf.systemPrompt) blocks.push('【卡里给的角色说明】\n' + cf.systemPrompt);
+    if (cf.postHistory) blocks.push('【对话之后要一直记着的】\n' + cf.postHistory);
+    if (blocks.length) parts.push('# 卡里另外带来的设定\n' + blocks.join('\n\n'));
+  }
+
   // ⚠️ 「外貌」（你此刻的样子）【挪到了本函数最末尾】（v1.21.42）。
   //
   // 原来它固定在角色设定之后（第 2 位），旧注释的理由是

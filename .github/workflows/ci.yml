@@ -37,12 +37,12 @@ jobs:
 
       # 这一批全部【不需要真 key】：要么是纯函数（node 直接 import），
       # 要么自己拦截请求假造一个模型回复。
-      - name: e2e（不依赖真实 key 的 20 套，清单在下面 $suites 里）
+      - name: e2e（不依赖真实 key 的 21 套，清单在下面 $suites 里）
         shell: pwsh
         run: |
           $suites = @(
             'e2e-stregex','e2e-stchat','e2e-ccv3','e2e-autobackup',
-            'e2e-v040card','e2e-v040fix','e2e-group','e2e-group2','e2e-group3',
+            'e2e-v040card','e2e-v040fix','e2e-cardfields','e2e-group','e2e-group2','e2e-group3',
             'e2e-grouppages','e2e-groupmem','e2e-groupspeak',
             'e2e-wbimport2',
             'e2e-nav','e2e-menu','e2e-empty','e2e-appearance','e2e-ellipsis',

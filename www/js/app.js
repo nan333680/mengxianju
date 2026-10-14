@@ -11075,6 +11075,26 @@ function isBackupKey(k) {
  * 不做 id 重映射：卡片是外来数据，本来就不带本机 id，直接新建最省事，
  * 也避免和 applyImport 那套"换成设备后 id 对不上"的认领逻辑纠缠。
  */
+/**
+ * 卡里的"另外几项"（v0.4.2）。
+ * V2 规范里 name/description/personality/scenario/first_mes/mes_example 是并列的六个字段，
+ * personality 和 mes_example 在很多卡里是正文量最大的一档 —— 丢了等于少了半个人。
+ * 只存非空的，空的不占地方（老卡导进来 cardFields 就是 {}）。
+ */
+function readCardFields(card) {
+  const pick = (v) => String(v || '').trim();
+  const out = {};
+  const map = {
+    personality: pick(card.personality),
+    scenario: pick(card.scenario),
+    mesExample: pick(card.mes_example),
+    systemPrompt: pick(card.system_prompt),
+    postHistory: pick(card.post_history_instructions),
+  };
+  for (const k of Object.keys(map)) if (map[k]) out[k] = map[k];
+  return out;
+}
+
 async function importCharacterCard(card, avatarDataUrl = '') {
   const preset = getPreset('blank');
   const c = {
@@ -11109,6 +11129,13 @@ async function importCharacterCard(card, avatarDataUrl = '') {
     // 卡的出处（作者填的来源链接）
     source: Array.isArray(card.source) ? card.source.slice(0, 5) : [],
     cardSpec: (card.spec || '') + (card.specVersion ? ' ' + card.specVersion : ''),
+    // ⚠️ 卡里这几项原来【读出来了但一个字都没用】（v0.4.2 修，用户复核发现）：
+    //    charcard 的 normalizeCard 明明把 personality / scenario / mes_example /
+    //    system_prompt / post_history_instructions 都读出来了，app.js 从头到尾没引用过它们 ——
+    //    chub 上大量卡把这些当正文写，导进来就永久少一块，而且 toast 一声不吭。
+    //    现在：原样存下来（导出能写回去，不再是单程票），
+    //    并且由 persona.js 按标签拼进她的设定（见那里的「卡里的补充」）。
+    cardFields: readCardFields(card),
   };
   await chars.put(c);
 
@@ -11175,6 +11202,18 @@ async function importCharacterCard(card, avatarDataUrl = '') {
   // ⚠️ 备选开场白本项目没有对应概念 —— 如实说出来，别假装导进去了
   if (card.alternate_greetings && card.alternate_greetings.length) {
     notes.push('忽略 ' + card.alternate_greetings.length + ' 条备选开场白（本软件没有这个概念）');
+  }
+  // 卡里那几项"读出来了、以前一声不吭"的（v0.4.2）：现在既存下来也拼进设定，这里报一句，
+  // 让用户知道她的设定里有这些内容、是从哪儿来的。
+  {
+    const cf = c.cardFields || {};
+    const bits = [];
+    if (cf.personality) bits.push('性格 ' + cf.personality.length + ' 字');
+    if (cf.scenario) bits.push('场景 ' + cf.scenario.length + ' 字');
+    if (cf.mesExample) bits.push('对话范例 ' + cf.mesExample.length + ' 字');
+    if (cf.systemPrompt) bits.push('卡内系统提示 ' + cf.systemPrompt.length + ' 字');
+    if (cf.postHistory) bits.push('后置要求 ' + cf.postHistory.length + ' 字');
+    if (bits.length) notes.push('一并收下了卡里的 ' + bits.join('、') + '（都进了她的设定）');
   }
   toast('已导入「' + card.name + '」' + (notes.length ? '：' + notes.join('；') : ''), 4000);
 }

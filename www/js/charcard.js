@@ -388,6 +388,22 @@ export async function parseCardAuto(buf) {
 }
 
 /** 在 IHDR 之后插入一个 tEXt chunk，返回新的字节数组 */
+/**
+ * 把 V3 卡投影成 V2（写进 PNG 的 chara 块用）。
+ * 规范说 chara 里放的是"给老软件回填的 V2 版"，所以 V3 专属字段要摘掉 ——
+ * 留着它们会让按 V2 读的实现拿到一个它不认识的形状。
+ */
+export function toV2Projection(card) {
+  const V3_ONLY = ['nickname', 'group_only_greetings', 'assets', 'creation_date',
+    'modification_date', 'creator_notes_multilingual', 'source'];
+  const data = {};
+  for (const k of Object.keys((card && card.data) || {})) {
+    if (V3_ONLY.indexOf(k) >= 0) continue;
+    data[k] = card.data[k];
+  }
+  return { spec: 'chara_card_v2', spec_version: '2.0', data };
+}
+
 export function insertTextChunk(pngBytes, keyword, text) {
   const src = new Uint8Array(pngBytes);
   if (!isPng(src)) throw new Error('底图不是 PNG');
@@ -545,19 +561,23 @@ export function buildCardV2(char, entries, opts) {
   const nick = String(char.nickname || '').trim();
   const grp = Array.isArray(char.groupGreetings) ? char.groupGreetings.map(String).filter(Boolean) : [];
   const isV3 = !!(nick || grp.length);
+  // 卡里"另外那几项"（v0.4.2 起存进 char.cardFields）
+  const cf = (char.cardFields && typeof char.cardFields === 'object') ? char.cardFields : {};
   /** @type {any} */
   const data = {
     name: String(char.name || '').trim() || '未命名',
     // 名称的对应关系：卡片 description ↔ 本项目 persona（都是"她是谁"）
     description: String(char.persona || ''),
-    personality: '',
-    scenario: '',
+    // ⚠️ 原来这四项【写死成空串】（v0.4.2 修）：导进来时没存、导出时抹掉，来回一次就没了。
+    //    现在从 char.cardFields 原样写回（老角色没有这个字段 → 还是空串，和以前一样）。
+    personality: cf.personality || '',
+    scenario: cf.scenario || '',
     // 卡片 first_mes ↔ 本项目 greeting（开场白）
     first_mes: String(char.greeting || ''),
-    mes_example: '',
+    mes_example: cf.mesExample || '',
     creator_notes: '由 梦弦居 导出',
-    system_prompt: '',
-    post_history_instructions: '',
+    system_prompt: cf.systemPrompt || '',
+    post_history_instructions: cf.postHistory || '',
     alternate_greetings: [],
     tags: [],
     creator: '',
@@ -639,7 +659,21 @@ export async function makeCardPng(char, entries, avatarDataUrl, size = 512) {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 
-  const json = JSON.stringify(buildCardV2(char, entries, cardOpts));
+  const card = buildCardV2(char, entries, cardOpts);
+  const json = JSON.stringify(card);
+  // ⚠️ V3 卡必须把 V3 对象放进 ccv3 块（用户复核发现：原来只有 chara，
+  //    而 chara 里塞的却是 spec=chara_card_v3 的对象）——
+  //    SPEC_V3 原文：「The CharacterCardV3 object MUST be embedded … as a tEXt chunk.
+  //    The tEXt chunk MUST be named ccv3」「Application MAY backfill Character Card V2
+  //    objects from the PNG/APNG files in chara chunk」。
+  //    也就是说：ccv3 = 完整 V3；chara = 给老软件（和给读 chara 的实现）看的 V2 降级版。
+  //    我们自己读的时候 ccv3 优先（见 extractCardFromPng），所以往返照旧完整。
+  if (card.spec === 'chara_card_v3') {
+    const v2 = toV2Projection(card);
+    return insertTextChunk(
+      insertTextChunk(bytes, 'ccv3', encodeB64Utf8(json)),
+      'chara', encodeB64Utf8(JSON.stringify(v2)));
+  }
   return insertTextChunk(bytes, 'chara', encodeB64Utf8(json));
 }
 

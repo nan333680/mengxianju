@@ -57,7 +57,7 @@ for (const s of suites) {
     hits.slice(0, 3).forEach(h => console.log('      ' + h));
   }
 }
-if (!lintBad) console.log('  ✓ 20 套都没有引用被忽略的路径');
+if (!lintBad) console.log('  ✓ ' + suites.length + ' 套都没有引用被忽略的路径');
 if (lintOnly) process.exit(lintBad ? 1 : 0);
 
 // ---------- ①② 生成副本：en-US + 强制关动画 ----------

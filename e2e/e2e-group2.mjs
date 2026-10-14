@@ -7,7 +7,7 @@
 //   缺陷 4  群没有删除入口
 //   导入    群成员的 id 没重映射（外部报告 W1）+ speakerId 没重映射
 import puppeteer from 'puppeteer-core';
-import { seedChars } from './e2e-helper.mjs';
+import { seedChars, pinLang } from './e2e-helper.mjs';
 import { pickImportMode } from './e2e-helper.mjs';
 import { readCode } from './e2e-src.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path'; import os from 'os';
@@ -64,6 +64,9 @@ await page.evaluate(async () => {
     presetKey: 'blank', createdAt: Date.now() });
   db.close();
 });
+// ⚠️ CI 的 runner 是 en-US：不钉中文的话，长按菜单上的「重新生成」会渲染成 Regenerate，
+//    下面按中文文案找按钮的断言就全落空（CI 上就是这么红的）。钉完再 reload 生效。
+await pinLang(page, 'zh');
 await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').click(); });
 await sleep(1400);

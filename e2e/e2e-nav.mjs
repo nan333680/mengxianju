@@ -16,6 +16,13 @@ await new Promise(r => server.listen(0,'127.0.0.1',r));
 const port = server.address().port;
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox','--disable-dev-shm-usage','--disable-gpu'] });
 const page = await browser.newPage();
+// ⚠️ CI 的 runner 报 prefers-reduced-motion: reduce，而产品在那种情况下【故意】把 .view 的过渡关掉
+//    （style.css 的 @media (prefers-reduced-motion: reduce)）—— 于是这套量到的位移恒为 0、
+//    过渡时长恒为 0s，三条断言全红。这里显式要求"要有动画"，测的才是动画那条路径。
+{
+  const cdp = await page.target().createCDPSession();
+  await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+}
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r=>setTimeout(r,ms));

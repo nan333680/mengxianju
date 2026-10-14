@@ -2,7 +2,7 @@ import { kv, chars, msgs, mem, wb, uid, wipeAll, dbAdmin } from './db.js';
 import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
 import { buildStablePrompt, buildTurnNote, decideKaomoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR } from './persona.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
-import { t, tt, applyI18n, setLang, getLang, getActiveLang, refreshLang, LANGS } from './i18n.js';
+import { t, tt, applyI18n, watchI18n, setLang, getLang, getActiveLang, refreshLang, LANGS } from './i18n.js';
 // 角色卡（实验，v1.21.40）：解析与 PNG 打包都在这个独立文件里，
 // 主文件只负责"选文件 / 落库 / 写出去"。
 // ⚠️ 只 import 真用到的（v0.4.0 复查）：卡片现在是 parseCardAuto 一把抓
@@ -483,7 +483,8 @@ function clockLabel(c) {
   const t = S.clockDetail ? hhmm(c) : '';
   const phShow = t ? ph + ' ' + t : ph;
   // 从大到小：季节 → 天 → 时段（+时刻）→ 天气
-  return [se, dayLabel(c.day), phShow, we].filter(Boolean).join(' · ');
+  // ⚠️ 按【部件】翻：整串（"秋 · 第 1 天 · 下午 · 晴"）查表是查不到的（v0.4.2）
+  return [tt(se), tt(dayLabel(c.day)), tt(phShow), tt(we)].filter(Boolean).join(' · ');
 }
 
 /** 没有任何记录时，拿真实钟点猜个起始时段，比一律"早上"自然些 */
@@ -821,7 +822,7 @@ function renderSceneBar() {
   const el = $('chat-scene');
   if (!el) return;
   const st = sceneOf(curChar).trim();
-  el.textContent = st ? ('场景 · ' + (st.length > 8 ? st.slice(0, 8) + '…' : st)) : '场景';
+  el.textContent = st ? (tt('场景') + ' · ' + (st.length > 8 ? st.slice(0, 8) + '…' : st)) : tt('场景');
   el.classList.toggle('on', !!st);
   el.title = st ? ('当前场景：' + st) : '点这里给这一段对话设一个场景';
 }
@@ -1093,6 +1094,9 @@ function _renderView(name) {
 function showView(name) {
   if (_stack[_stack.length - 1] !== name) _stack.push(name);
   _renderView(name);
+  // ⚠️ 切完视图要再扫一遍界面文案（v0.4.2）：设置页那些小字/状态行是【渲染时才拼出来】的，
+  //    启动时那一次 applyI18n 覆盖不到它们 —— 不扫就会出现"英文界面里夹着中文"。
+  try { applyI18n(); } catch (e) { /* 翻译不该把界面搞崩 */ }
 }
 
 /** 把栈清成只剩它（选完角色 / 存完角色回主界面时用） */
@@ -1527,7 +1531,11 @@ async function renderMessages() {
   if (!list.length && !archEarly.length) {
     const nm = esc(curChar?.name || '她');
     const fresh = !!curChar?.greeting && !greeted;
-    const tip = fresh ? `和「${nm}」的对话开始了` : `「${nm}」在等你先开口`;
+    // ⚠️ 这两句是拼出来的（带角色名），查表查不到 —— 直接在拼的时候按当前语言选（v0.4.2）
+    const en = getActiveLang() === 'en';
+    const tip = fresh
+      ? (en ? `Your chat with “${nm}” has begun` : `和「${nm}」的对话开始了`)
+      : (en ? `${nm} is waiting for you to speak first` : `「${nm}」在等你先开口`);
     box.insertAdjacentHTML('beforeend', `<div class="sys-line">${tip}</div>`);
 
     if (fresh) {
@@ -9941,7 +9949,7 @@ async function renderBackupHealth() {
   try { audit = await kv.get('dataAudit', null); } catch { audit = null; }
   if (audit && typeof audit === 'object') {
     rows.push(['主数据对账', audit.ok
-      ? ('✅ 对得上　角色 ' + (audit.chars || 0) + ' · 记录 ' + (audit.msgs || 0))
+      ? (tt('✅ 对得上') + '　' + tt('角色') + ' ' + (audit.chars || 0) + ' · ' + tt('记录') + ' ' + (audit.msgs || 0))
       : ('❌ 记账里有 ' + Math.max(audit.sendCount || 0, audit.seqSum || 0)
          + ' 条往来，但聊天记录表是空的 —— 像是被系统回收过')]);
   }
@@ -10498,6 +10506,7 @@ function bindSettings() {
       setLang(v);
       await saveSettings({ lang: v });
       applyI18n();          // 静态文本（h3 / 折叠头 / 提示）
+      watchI18n();          // 切到英文后挂观察者：异步渲染出来的文案也能跟上（v0.4.2）
       renderDrawerMenu();   // 抽屉是拼出来的
       toast(v === 'en' ? 'Language: English' : '界面语言：中文');
     };
@@ -10658,7 +10667,7 @@ async function renderMemHealth() {
       + (pending >= limit ? '<span class="warn">（够了，发一条消息就会整理）</span>' : '')
       + '<br>待清理队列 <b class="' + qCls + '">' + q + '</b> / 40 条'
       + (q >= 30 ? '<span class="warn">（积压较多，整理时容易出错）</span>' : '')
-      + '<br>长期记忆 <b>' + mems.length + '</b> 条　上次归档 ' + lastTxt;
+      + '<br>' + tt('长期记忆') + ' <b>' + mems.length + '</b> ' + tt('条') + '　' + tt('上次归档') + ' ' + tt(lastTxt);
   } catch (e) {
     el.textContent = '（读取失败：' + ((e && e.message) || e) + '）';
   }
@@ -13023,12 +13032,15 @@ async function init() {
   // 抽屉菜单那些是拼出来的、渲染时自己会过 t()。
   setLang(S.lang);
   applyI18n();
+  // ⚠️ 必须在【启动路径】上挂（v0.4.2）：设置页里那些状态行/小字是异步渲染出来的，
+  //    切视图那一次扫描扫在它们出现之前 —— 观察者负责补上后渲染出来的那些。
+  watchI18n();
   // 「跟随系统」时，用户在后台把手机语言改了，回到 App 要跟着变（v1.21.61）。
   // 只在【实际生效的语言变了】时才重刷，免得每次回前台都白跑一遍 DOM。
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     const before = getActiveLang();
-    if (refreshLang() !== before) { applyI18n(); renderDrawerMenu(); }
+    if (refreshLang() !== before) { applyI18n(); watchI18n(); renderDrawerMenu(); }
   });
   applyTheme();
   // ⚠️ 「跟随系统」要【当场】跟着变（v0.3.1）。

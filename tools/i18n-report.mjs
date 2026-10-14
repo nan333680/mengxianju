@@ -49,7 +49,7 @@ console.log('还差 ' + todo.length + ' 条。动态词典 ' + dictZh.length + '
 // 这类没法整块翻，要逐个拆开标 —— 先量出来，别让它变成一个说不清的数字。
 const mixedAll = [...html.matchAll(/<(p|div|span|label)([^>]*)>([\s\S]{0,400}?)<\/\1>/g)]
   .filter(m => /<[a-z]/.test(m[3]) && /[\u4e00-\u9fa5]/.test(m[3]));
-const mixedDone = mixedAll.filter(m => /data-i18n-en/.test(m[2]) || !/id=/.test(m[3])).length;
+const mixedDone = mixedAll.filter(m => /data-i18n-en|data-i18n-nodes/.test(m[2]) || !/id=/.test(m[3])).length;
 console.log('「文字 + 动态值」混排的块: ' + mixedAll.length + ' 个，已处理 ' + mixedDone + ' 个（整块翻或本来就没动态值），'
   + '还差 ' + (mixedAll.length - mixedDone) + ' 个要逐个拆开标');
 

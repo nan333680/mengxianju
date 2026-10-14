@@ -61,17 +61,425 @@ const EN = {
 
 const MAP = { en: EN };
 
-/** 展示用的短词（v0.4.2 补全翻译时加的）：时段 / 季节 / 天气 / 计数 / 空态 */
+/**
+ * 界面短文案 → 英文（v0.4.2 补全翻译时生成）。
+ * 两个用途：① 展示用的短词（时段/季节/天气/空态）；
+ *           ② 【文字夹着动态值】的块里那些文本节点（见 applyI18n 里 data-i18n-nodes 那一段）——
+ *              那些块不能整块换 innerHTML（会摧毁里面的动态元素），只能逐个数节点翻，
+ *              而节点上的文字就是这里的 key。
+ * ⚠️ 只在英文下生效；中文路径一个字节都不动。
+ */
 const EXTRA_ZH = {
-  '凌晨': 'Small hours', '早上': 'Morning', '上午': 'Late morning', '中午': 'Noon',
-  '下午': 'Afternoon', '傍晚': 'Dusk', '晚上': 'Evening', '深夜': 'Late night',
-  '春': 'Spring', '夏': 'Summer', '秋': 'Autumn', '冬': 'Winter',
-  '晴': 'Clear', '多云': 'Cloudy', '阴': 'Overcast', '雨': 'Rain',
-  '雷雨': 'Thunderstorm', '雪': 'Snow', '风': 'Windy', '雾': 'Fog',
-  '（空的）': '(empty)', '还没有': 'None yet', '未填': 'Not set', '未选择角色': 'No character selected',
-  '离线': 'Offline', '跟随手机时间': 'Following the phone clock', '无': 'none',
+  "未选择角色": "No character selected",
+  "离线": "Offline",
+  "第 1 天 · 早上": "Day 1 · Morning",
+  "场景": "Scene",
+  "还没填 API Key，填完才能开始聊天": "No API key yet — fill it in to start chatting",
+  "去填写 ›": "Fill it in ›",
+  "聊天记录表是空的，但收发记账还在 —— 像是被系统回收过。去看看备份 ›": "The message store is empty while the send counters are still there - it looks like the system reclaimed it. Check your backup.",
+  "去检查 ›": "Check now",
+  "发送": "Send",
+  "停止": "Stop",
+  "角色": "characters",
+  "＋ 创建新角色": "+ New character",
+  "👥 新建群聊（两个以上的人一起聊）": "New group chat (2+ people in one room)",
+  "群设置": "Group settings",
+  "换群头像": "Change group avatar",
+  "群成员": "Members",
+  "群设定": "Group setup",
+  "这个群是怎么回事": "What this group is about",
+  "在她们眼里，他是谁（这个群共用一份）": "Who he is in their eyes (shared by the group)",
+  "这个群在哪儿（城市 / 季节 / 这间屋子）": "Where this group is (city / season / the room)",
+  "常驻": "Always on",
+  "临时": "Temporary",
+  "他在这个群里的住处（一般不填）": "His place in this group (usually leave blank)",
+  "这个群在哪": "Where the group is",
+  "他家什么样": "What his place is like",
+  "发言方式": "Who speaks",
+  "谁先开口": "Who speaks first",
+  "轮流（按上面的成员顺序，一轮一个）": "Take turns (one per round, in member order)",
+  "概率（按各人的活跃度抽，可连发）": "Weighted (drawn by how often each one speaks; may send several)",
+  "点名（你 @谁 或写「谁：」才由她开口）": "Only when called (she speaks if you @ her or write \"name:\")",
+  "试一次（看这一轮会轮到谁）": "Try once (see who would speak this round)",
+  "允许冷场（小概率这一轮没人接话）": "Allow silence (small chance nobody replies this round)",
+  "每一幕都是一次完整请求，token 成倍": "Each scene is a full request — tokens multiply",
+  "这一幕怎么写": "How this scene is written",
+  "小说式一幕（一轮里可以几个人说话）": "Novel-style scene (several people may speak in one round)",
+  "带旁白（场面描写单独成一条，标成旁白）": "With narration (scene description becomes its own line, marked as narration)",
+  "上一个说话的人": "The one who spoke last",
+  "这一幕写多长（直接决定花多少 token）": "How long this scene is (directly decides token cost)",
+  "短 · 120~220 字，最多两个人开口": "Short · 120–220 chars, at most two speak",
+  "中 · 200~350 字（默认）": "Medium · 200–350 chars (default)",
+  "长 · 350~600 字": "Long · 350–600 chars",
+  "抽": "Draw",
+  "表达方式": "Expression",
+  "跟随全局": "Follow global",
+  "这个群用自己的表达方式（不勾 = 跟随 ⚙ 全局那份）": "This group uses its own expression (unchecked = follow the global one in ⚙)",
+  "回复长度（只管说出口的话）": "Reply length (what she actually says)",
+  "很短": "Very short",
+  "短": "Short",
+  "中等": "Medium",
+  "长": "Long",
+  "非对话描写（只管括号里的）": "Narration (what goes in parentheses)",
+  "描写详细程度（括号里必须写成什么形状）": "Description detail (what shape the parentheses must take)",
+  "叙事视角（群聊里最容易飘的就是这个）": "Narrative point of view (the thing that drifts most in groups)",
+  "颜文字频率": "Kaomoji frequency",
+  "颜文字风格": "Kaomoji style",
+  "日式 · 温和": "Japanese / soft",
+  "日式 · 可爱": "Japanese / cute",
+  "中式": "Chinese",
+  "混合": "Mixed",
+  "emoji 频率": "Emoji frequency",
+  "群自己的参数": "Group-specific parameters",
+  "这个群用自己的参数（不勾 = 跟随 ⚙ 全局那份）": "This group uses its own parameters (unchecked = follow the global ones in ⚙)",
+  "这个群的资料": "Group details",
+  "群世界书": "Group world book",
+  "群记忆": "Group memory",
+  "进群后自动生效": "Applies automatically inside the group",
+  "删除这个群": "Delete this group",
+  "她在群里": "Her in this group",
+  "群内人设": "Persona inside the group",
+  "跟随她本人": "Follow her own",
+  "群内补充": "Extra notes for this group",
+  "她怎么看群里这些人": "How she sees the others here",
+  "她在群里的参数": "Her parameters in this group",
+  "正常": "Normal",
+  "在不在场": "Whether she is in the scene",
+  "给她多少台词": "How many lines she gets",
+  "常在场但基本不说话": "Often present but barely speaks",
+  "不常出现但一开口就一大段": "Rarely appears but talks at length when she does",
+  "每一轮都会写进她的人设": "Written into her persona every round",
+  "她整个不参与（连出场都不抽她，你点名时仍会答）": "She sits out entirely (not even drawn for the scene; still answers when you call her)",
+  "只影响这个群": "Affects this group only",
+  "查看她的完整设定 ›": "See her full character ›",
+  "恢复成跟随她本人": "Reset to follow her own",
+  "选择角色模板": "Pick a template",
+  "选一个模板快速创建——人设、开场白和推荐参数都会自动带出来，建好后随便改。": "Pick a template to create one fast — persona, greeting and suggested parameters come along; change anything afterwards.",
+  "新建角色": "New character",
+  "名字": "Name",
+  "头像": "Avatar",
+  "选择图片": "Choose an image",
+  "开场白（新建对话时她说的第一句）": "Greeting (her first line in a new chat)",
+  "人设（性格 / 背景 / 说话方式）": "Persona (personality / background / how she talks)",
+  "下面这些设置只对「她」生效。切到别的角色，她们各有各的脾气。": "These settings apply to her only. Switch to another character and she has her own temper.",
+  "他的设定": "About you",
+  "只有她": "Her only",
+  "挑你在意的写": "Write what you care about",
+  "建议换成你自己的": "Worth replacing with your own",
+  "填回默认": "Reset to default",
+  "应用到其他角色…": "Apply to other characters…",
+  "他的居处": "Where you live",
+  "会照这个来": "She will follow this",
+  "越具体越好": "The more specific the better",
+  "对话参数": "Chat parameters",
+  "温度": "Temperature",
+  "（低=沉稳，高=活泼）": "(low = calm, high = lively)",
+  "最大回复长度": "Max reply length",
+  "推理强度（聊天用 low 足够）": "Reasoning effort (low is plenty for chat)",
+  "上下文轮数": "Context rounds",
+  "这两项是分开的：话可以说得很短，但括号里的动作神态照样写得很足。": "These two are independent: she can speak in very few words while still describing a lot in the parentheses.",
+  "描写详细程度": "Description detail",
+  "必须写成什么形状": "What shape it must take",
+  "跟随全局设置": "Follow global settings",
+  "表达预设（点一下，把下面这些一次填好）": "Presets (fill everything below in one tap)",
+  "叙事视角": "Narrative point of view",
+  "强制聊天模式": "Force chat mode",
+  "没被说出口的": "What was not said aloud",
+  "只听你说出口的话": "Only what you actually said",
+  "读心能力": "Mind reading",
+  "联网搜索": "Web search",
+  "/搜 something": "/search something",
+  "/搜 要查的东西": "/search what you want to look up",
+  "强制开": "Forced on",
+  "时间跟现实走": "Follow the real clock",
+  "关": "Off",
+  "开": "On",
+  "外貌": "Appearance",
+  "未填": "Not set",
+  "是否启用": "Enabled",
+  "此刻": "Right now",
+  "0 字": "0 chars",
+  "清除": "Clear",
+  "立即生效": "Apply now",
+  "不受右上角 ✓ 影响": "Not affected by the ✓ at top right",
+  "也可以用图片生成——只认衣服和发饰，不猜是谁。": "You can also generate from an image — it reads clothes and accessories only, never guesses who it is.",
+  "节奏与细节": "Pacing & detail",
+  "打字 / 分段 / 提示": "Typing / splitting / hints",
+  "显示「正在输入」": "Show",
+  "分段发送（一条拆成几条发）": "Split messages",
+  "打字延迟": "Typing delay",
+  "使用「……」表现迟疑": "Use",
+  "长期记忆": "Long-term memory",
+  "自动记住重要的事": "Remember important things automatically",
+  "允许她整理时修改我加的": "Let her edit the ones I added",
+  "她记住的事": "What she remembers",
+  "加": "Add",
+  "每个角色各记各的": "Each character keeps her own",
+  "覆盖全局设定": "Override global settings",
+  "把这一页的参数同步给所有角色": "Apply this page's settings to every character",
+  "覆盖其他所有角色": "Override every other character",
+  "删除此角色": "Delete this character",
+  "全局设置": "Global settings",
+  "接口": "API",
+  "服务商": "Provider",
+  "对话模型": "Chat model",
+  "识图模型（发图片时用，同款即可）": "Vision model (for images; the same one is fine)",
+  "账户余额": "Balance",
+  "查询": "Check",
+  "上下文预算（估算 token）": "Context budget (estimated tokens)",
+  "所有角色共用": "Shared by all characters",
+  "描写与表达": "Description & expression",
+  "两个独立开关": "Two separate switches",
+  "非对话描写（上限 —— 括号里最多写多长）": "Non-dialogue description (the cap — how long the parentheses may get)",
+  "上限": "Cap",
+  "结构": "Structure",
+  "描写详细程度（结构 —— 必须写成什么样）": "Narration detail (structure)",
+  "不额外约束": "No extra constraint",
+  "角色编辑页": "Character edit page",
+  "写字台": "Composer",
+  "输入": "Input",
+  "输入框高度（最高长到几行）": "Input box height",
+  "回车键做什么": "What Enter does",
+  "已写多少字": "Length so far",
+  "记忆管理": "Memory",
+  "按角色分开": "Separate per character",
+  "角色编辑页 → 长期记忆": "Character edit page → Long-term memory",
+  "记忆节奏（全局统一）": "Memory cadence (global)",
+  "全局统一": "One global setting",
+  "攒够多少条消息总结一次": "Summarize after how many messages",
+  "每隔多少轮查重合并一次": "Merge duplicates every how many rounds",
+  "记忆条数上限": "Max memories",
+  "立即整理记忆": "Tidy memories now",
+  "撤销上次整理": "Undo last tidy",
+  "上次的样子": "Previous state",
+  "重新提炼长期记忆": "Re-distill long-term memory",
+  "原文还在": "Originals are still there",
+  "重新提炼当前角色": "Re-extract for this character",
+  "重新提炼全部角色": "Re-extract for all characters",
+  "归档旧对话": "Archive old chats",
+  "每轮都会重复发出去": "Sent again every round",
+  "原文还在，能展开回看": "Originals are kept and can be expanded",
+  "自动归档": "Auto archive",
+  "自动收走最早的": "Automatically takes the oldest",
+  "保留最近多少条不归档": "Keep the latest N unarchived",
+  "归档并整理进长期记忆": "Archive and fold into memory",
+  "全部取消归档": "Unarchive everything",
+  "联网搜索（只在 /搜 时联网）": "Web search (only when you type /搜)",
+  "默认是纯本地的。": "Local by default.",
+  "省额度、也不变慢": "Saves quota, no slowdown",
+  "启用联网搜索": "Enable web search",
+  "搜索用哪家": "Search backend",
+  "智谱 GLM（可用同一个 key）": "Zhipu GLM (can reuse the same key)",
+  "搜索 API Key": "Search API key",
+  "每次取几条结果": "Results per search",
+  "当前状态": "Status",
+  "未启用": "Not enabled",
+  "测试一下能不能搜": "Test the search",
+  "酒馆预设": "SillyTavern preset",
+  "它自己不会生效": "It does not take effect by itself",
+  "导入酒馆预设 JSON": "Import a SillyTavern preset",
+  "已记住的事": "Remembered",
+  "时段划分": "Time of day",
+  "显示具体时间（时:分）": "Show exact time (hh:mm)",
+  "打开后，聊天栏的时间会精确到几点几分；记忆也能设到「第几天几点」。": "When on, the time bar shows the exact hour and minute, and memories can be dated to the hour.",
+  "按手机真实时钟走": "Follows the phone clock",
+  "打开的那一刻": "The moment you open it",
+  "再打开会接着上次关闭时的时间继续": "Reopening continues from when you last closed it",
+  "开着的时候聊天栏的时间条会缩成一行只读小字": "While on, the time bar in chat shrinks to one read-only line",
+  "每个时段对应几点": "What hours each time of day covers",
+  "我的设置": "My settings",
+  "我的头像": "My avatar",
+  "聊天里你自己那一侧显示的头像": "The avatar shown on your side",
+  "恢复默认": "Restore default",
+  "外观": "Appearance",
+  "语言": "Language",
+  "界面语言。不影响她说什么 —— 你用哪种语言写，她就用哪种回。": "Interface language. It does not change what she says - she replies in whatever language you write to her.",
+  "主题": "Theme",
+  "深色": "Dark",
+  "浅色": "Light",
+  "跟随系统": "Follow system",
+  "字体大小": "Font size",
+  "显示 token 使用量": "Show token usage",
+  "关掉后气泡右下角不再显示 ↑输入 ↓输出的角标，聊天记录照常保存。": "When off, the ↑in ↓out badge disappears from the bubbles. Chats are still saved either way.",
+  "朗读她的回复": "Read her replies aloud",
+  "数据": "Data",
+  "导出当前角色的对话（Markdown）": "Export this chat (Markdown)",
+  "导出全部数据（角色+记录）": "Export everything (characters + chats)",
+  "导入数据": "Import",
+  "清空当前角色的聊天记录": "Clear this chat",
+  "清空全部数据": "Clear everything",
+  "自动备份": "Auto backup",
+  "活过卸载和「清除数据」": "Survives uninstall and \"clear data\"",
+  "是明文、别的 App 也可能看到": "Plain text — other apps may see it",
+  "检查我最近那份备份能不能用": "Check whether my latest backup is usable",
+  "只读，什么都不改": "Read-only, changes nothing",
+  "角色卡": "Character cards",
+  "实验": "experimental",
+  "新建": "New",
+  "导入角色卡（.json / .png / .charx）": "Import character card (.json / .png / .charx)",
+  "把当前角色导出为 PNG 卡": "Export as PNG card",
+  "把当前角色导出为 JSON 卡": "Export as JSON card",
+  "酒馆正则": "Regex scripts",
+  "副本": "Copy",
+  "存档原文一个字都不动": "The saved original is never touched",
+  "酒馆聊天记录": "SillyTavern chat logs",
+  "聊天记录没了就是没了": "Chat logs, once gone, are gone",
+  "不猜": "No guessing",
+  "导入酒馆聊天记录（.jsonl）": "Import SillyTavern chat log (.jsonl)",
+  "关于": "About",
+  "梦弦居": "Mengxianju",
+  "版权": "License",
+  "GNU Affero 通用公共许可证第 3 版": "GNU Affero General Public License v3",
+  "不提供任何担保": "No warranty of any kind",
+  "源代码": "Source code",
+  "完整源代码在这里，许可证全文（LICENSE）也在同一个仓库里：": "Full source code is here. The license text (LICENSE) lives in the same repository:",
+  "复制地址": "Copy address",
+  "联系": "Contact",
+  "名称与图标": "Name & icon",
+  "代码": "Source code",
+  "尚未注册商标": "No trademark registered",
+  "第三方": "Third party",
+  "Capacitor —— WebView 外壳（MIT License）。": "Capacitor - the WebView shell (MIT License).",
+  "设置": "Settings",
+  "世界书": "World book",
+  "总开关": "Master switch",
+  "是否启用世界书": "World book enabled",
+  "开着才会把设定按关键词注入。关着的时候，下面所有内容都不生效（也不会花 token）。": "Lore is injected by keyword only while this is on. When off, nothing below applies (and costs no tokens).",
+  "从哪来": "Where it came from",
+  "还没建角色组": "No character groups yet",
+  "单独角色": "Per-character",
+  "给某一个角色单独写设定": "Write lore for one specific character",
+  "导入 / 导出": "Import / Export",
+  "追加": "Append",
+  "导入世界书文件": "Import a world book file",
+  "导出世界书": "Export world book",
+  "不受这里影响": "Not affected by this",
+  "长按组可以拖动排序": "Long-press a group to reorder",
+  "＋ 新建角色组": "+ New character group",
+  "条目": "Entries",
+  "＋ 新建条目": "+ New entry",
+  "调整头像": "Adjust avatar",
+  "缩放": "Zoom",
+  "按住图片拖动位置 · 拖动滑块缩放": "Drag the image to move it, drag the slider to zoom",
+  "点「确定」才会存下来。": "Nothing is saved until you press OK.",
+  "取消": "Cancel",
+  "确定": "OK",
+  "编辑": "Edit",
+  "剧情时间": "Story time",
+  "这是你们对话里的时间。她会按这个判断\"今天是哪天、现在是什么时候\"。": "This is the time inside your story. She uses it to tell which day it is and what time it is.",
+  "时段": "Time of day",
+  "具体时间": "Exact time",
+  "用当前时段": "Use the time of day",
+  "季节": "Season",
+  "天气": "Weather",
+  "以我设定的时间为准（她自己不擅自改）": "Use the time I set (she will not change it on her own)",
+  "确认": "Confirm",
+  "必须写成什么样": "Must be written as",
+  "这份备份里有": "This backup contains",
+  "选择导入方式": "Choose how to import",
+  "导入": "Import",
+  "临时场景": "Temporary scene",
+  "不写进人设": "Not written into the persona",
+  "下一条回复立刻生效": "Takes effect on the next reply",
+  "当前场景：无": "Current scene: none",
+  "保存并应用": "Save and apply",
+  "应用到其他角色": "Apply to other characters",
+  "全选": "Select all",
+  "全不选": "Select none",
+  "应用": "Apply",
+  "你不说话时自动再写": "Keep writing when you go quiet",
+  "幕（0 = 关）": "scenes (0 = off)",
+  "出场频率": "Appearance rate",
+  "她这一场戏": "she is in this scene",
+  "。概率发言时就是抽签的权重。": ". In weighted mode this is the draw weight.",
+  "说话分量": "Speaking weight",
+  "她出场时": "when she appears,",
+  "。拉到 0 = 只做动作不说话 —— 人还在场，眼神和举动照样写出来，只是不出声。": ". Pull it to 0 = actions only, no lines — she is still there, her looks and gestures are still written, she just does not speak.",
+  "聊天里说「早上」「傍晚」的时候，她按这里理解具体是几点。": "When the chat says “morning” or “dusk”, this is what she understands the hours to be.",
+  "24 小时制：左边是开始、右边是结束，结束填 24 表示到午夜。": "24-hour clock: left is the start, right is the end; put 24 for midnight.",
+  "年": "year",
+  "第": "Day",
+  "控制她括号里的动作描写": "Controls the action description inside her parentheses —",
+  "和「非对话描写」是两个独立开关：那个管": "Two separate switches from “Non-dialogue description”: that one caps",
+  "（最多写多长），这个管": " (how long at most); this one sets",
+  "（必须写成什么形状）。": " (what shape it must take).",
+  "凌晨": "Small hours",
+  "早上": "Morning",
+  "上午": "Late morning",
+  "中午": "Noon",
+  "下午": "Afternoon",
+  "傍晚": "Dusk",
+  "晚上": "Evening",
+  "深夜": "Late night",
+  "春": "Spring",
+  "夏": "Summer",
+  "秋": "Autumn",
+  "冬": "Winter",
+  "晴": "Clear",
+  "多云": "Cloudy",
+  "阴": "Overcast",
+  "雨": "Rain",
+  "雷雨": "Thunderstorm",
+  "雪": "Snow",
+  "风": "Windy",
+  "雾": "Fog",
+  "（空的）": "(empty)",
+  "还没有": "None yet",
+  "跟随手机时间": "Following the phone clock",
+  "无": "none",
+  "不写": "None",
+  "简": "Brief",
+  "中": "Medium",
+  "丰富": "Rich",
+  "中文": "中文",
+  "上次自动备份": "Last auto backup",
+  "这台机器上还没跑过": "Never run on this device",
+  "存放位置": "Location",
+  "（还不知道）": "(unknown yet)",
+  "最近一次自检": "Last self-check",
+  "从没跑过": "Never run",
+  "主数据对账": "Main data check",
+  "对得上": "OK",
+  "记录": "records",
+  "Kimi（月之暗面）": "Kimi (Moonshot)",
+  "智谱 GLM": "Zhipu GLM",
+  "硅基流动": "SiliconFlow",
+  "本地（Ollama）": "Local (Ollama)",
+  "自定义（OpenAI 兼容）": "Custom (OpenAI-compatible)",
+  "默认。自带看图能力，能查余额。": "Default. Built-in vision and balance check.",
+  "还没发过消息，发一条就能看到占用。": "No messages yet — send one to see usage.",
+  "这一页是": "This page holds",
+  "的：接口、描写、记忆、联网、时段。": " — API, description, memory, web search, time of day.",
+  "打字时框会自己长高，最多到 3 行，再长就在框里滚动。": "The box grows as you type, up to 3 lines, then it scrolls.",
+  "回车就发": "Enter sends",
+  "回车换行": "Enter makes a new line",
+  "待总结": "To summarize",
+  "待清理队列": "Cleanup queue",
+  "条": "items",
+  "上次归档": "Last archived",
+  "还没跑过": "Not run yet",
+  "缺 key": "No key",
+  "缺 Key": "No key",
+  "她本来就知道的东西（常识、原理、怎么写、某个东西是什么）直接回答，不联网。": "Things she already knows (common knowledge, principles, how to write something, what an object is) are answered without going online.",
+  "只有你在输入框里": "Only when you type",
+  "明确打": "explicitly",
+  "时，才会真的上网查一次。": "does she actually search the web once.",
+  "比如：": "For example:",
+  "/搜 今天北京天气": "/search weather in Beijing today",
+  "/搜 最近有什么新番": "/search any new anime this season",
+  "这样设计是为了": "The point of this is",
+  "—— 普通聊天完全不受影响。": " — normal chat is completely unaffected.",
+  "搜索用的是": "Search uses",
+  "tavily.com → 注册免费、每月 1000 次，不用绑卡。key 是": "tavily.com → free signup, 1000 searches a month, no card needed. The key starts with",
+  "开头。": ".",
+  "key 只存在你这台手机里，不会上传到任何地方。": "The key stays on this phone and is never uploaded anywhere.",
+  "跟现实走": "Follow real time",
+  "默认划分": "Default ranges",
+  "点一下会真的把最近那份自动备份读出来，告诉你里面有多少角色 / 记录。": "This really reads your latest auto backup and tells you how many characters / records it holds.",
+  "还没有。从酒馆的角色卡或预设文件导入时会自动带过来。": "None yet. Importing a character card or a preset file brings them over automatically.",
+  "模型默认": "Model defaults to",
+  "✅ 对得上": "✅ OK"
 };
-
 /**
  * 动态文本的翻译表：**直接用中文原文当 key**。
  *
@@ -164,6 +572,9 @@ const BY_PATTERN = [
   [/^已选 (\d+) \/ (\d+)$/, (m) => 'Selected ' + m[1] + ' / ' + m[2]],
   [/^(.+?)（(\d+):00-(\d+):00）$/, (m) => m[1] + ' (' + m[2] + ':00–' + m[3] + ':00)'],
   [/^(\d+):00-(\d+):00$/, (m) => m[1] + ':00–' + m[2] + ':00'],
+  [/^(\d+) 行$/, (m) => m[1] + (m[1] === '1' ? ' line' : ' lines')],
+  [/^\/ (\d+) 条$/, (m) => '/ ' + m[1] + ' items'],
+  [/^· 模型默认 (.+)$/, (m) => '· Default model ' + m[1]],
 ];
 
 export function tt(zh) {
@@ -182,7 +593,39 @@ export function tt(zh) {
  * 原文存在元素的 dataset 里（第一次遇到时记下），所以切回中文永远能还原 ——
  * 不依赖 ZH 字典里有没有那条，也就不可能"翻回中文反而变了字"。
  */
+let _observer = null;
+let _applying = false;
+let _obsTimer = null;
+
+/**
+ * 英文模式下挂一个 DOM 观察者（v0.4.2）。
+ *
+ * 为什么需要：设置页里那些小字、状态行、下拉项是【异步渲染】出来的 ——
+ * 切视图时扫一遍会扫在它们出现之前，于是英文界面里夹着中文。
+ * 观察者只在英文下挂，回调里防抖 200ms 再扫；扫的时候置 _applying，
+ * 并且【只在内容真的会变时才写 DOM】，所以不会自己触发自己。
+ */
+export function watchI18n() {
+  if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return;
+  if (_observer) {
+    if (_lang !== 'en') { _observer.disconnect(); _observer = null; }
+    return;
+  }
+  if (_lang !== 'en') return;
+  _observer = new MutationObserver(() => {
+    if (_applying || _lang !== 'en') return;
+    clearTimeout(_obsTimer);
+    _obsTimer = setTimeout(() => applyI18n(), 200);
+  });
+  _observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+
 export function applyI18n(root) {
+  _applying = true;
+  try { _applyI18n(root); } finally { _applying = false; }
+}
+
+function _applyI18n(root) {
   const box = root || document;
   for (const el of box.querySelectorAll('[data-i18n-en]')) {
     // ⚠️ 只处理"纯文本"元素。textContent 赋值会【销毁子元素】——
@@ -194,6 +637,75 @@ export function applyI18n(root) {
     if (el.dataset.i18nZh === undefined) el.dataset.i18nZh = el.textContent;
     el.textContent = _lang === 'en' ? el.dataset.i18nEn : el.dataset.i18nZh;
   }
+  // 【兜底扫一遍所有文本节点】（v0.4.2）：JS 拼出来的界面文案（toast/状态行/下拉项……）
+  // 没法逐个标属性，但它们的文字恰好都在 BY_ZH / EXTRA_ZH 里 —— 所以整篇扫一遍，
+  // 命中就换。查不到的（她的台词、人设、用户输入）原样留着。
+  // ⚠️ 必须跳过【内容区】：聊天记录、输入框、以及明确标了 .no-i18n 的地方 ——
+  //    否则一条内容恰好等于「取消」两个字的消息会被翻成 "Cancel"。
+  {
+    const inContent = (el) => {
+      let p = el;
+      while (p && p !== box) {
+        if (p.nodeType === 1) {
+          const tag = p.tagName;
+          if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SCRIPT' || tag === 'STYLE') return true;
+          if (p.id === 'messages' || (p.classList && (p.classList.contains('no-i18n') || p.classList.contains('bub')))) return true;
+        }
+        p = p.parentNode;
+      }
+      return false;
+    };
+    const all = box.querySelectorAll ? box.querySelectorAll('*') : [];
+    for (const el of all) {
+      if (inContent(el)) continue;
+      for (const n of el.childNodes) {
+        if (n.nodeType !== 3) continue;
+        const raw = n.textContent;
+        const t = raw.replace(/\s+/g, ' ').trim();
+        if (!t || !/[\u4e00-\u9fa5]/.test(t)) continue;
+        if (n.__zh === undefined) n.__zh = raw;
+        let want = raw;
+        if (_lang === 'en') {
+          const en = tt(t);
+          if (en) {
+            const lead = (/^\s*/.exec(raw) || [''])[0];
+            const tail = (/\s*$/.exec(raw) || [''])[0];
+            want = lead + en + tail;
+          }
+        } else {
+          want = n.__zh;
+        }
+        // ⚠️ 只有真的不一样才写 —— 否则 MutationObserver 会被自己的改动反复唤醒（自激）
+        if (n.textContent !== want) n.textContent = want;
+      }
+    }
+  }
+
+  // 【文字夹着动态值】的块（v0.4.2）：<span>共 <b id=x>12</b> 字</span> 这种。
+  // ⚠️ 不能整块换 innerHTML —— 那会把带 id、带监听的子元素重建掉（上面的注释就是为这个写的）。
+  //    这里只按顺序翻【文本节点】，子元素原封不动；查不到译文的那段原样留着。
+  for (const el of box.querySelectorAll('[data-i18n-nodes]')) {
+    const nodes = [...el.childNodes].filter(n => n.nodeType === 3);
+    if (!nodes.length) continue;
+    if (!el.dataset.i18nNodesZh) {
+      el.dataset.i18nNodesZh = JSON.stringify(nodes.map(n => n.textContent));
+      el.dataset.i18nNodesEn = JSON.stringify(nodes.map(n => {
+        const raw = n.textContent;
+        const t = raw.replace(/\s+/g, ' ').trim();
+        if (!t) return raw;
+        const en = tt(t);
+        if (!en) return raw;
+        // 保住原样的前后空白，免得两个片段粘在一起
+        const lead = (/^\s*/.exec(raw) || [''])[0];
+        const tail = (/\s*$/.exec(raw) || [''])[0];
+        return lead + en + tail;
+      }));
+    }
+    const zhArr = JSON.parse(el.dataset.i18nNodesZh);
+    const enArr = JSON.parse(el.dataset.i18nNodesEn);
+    nodes.forEach((n, k) => { n.textContent = _lang === 'en' ? enArr[k] : zhArr[k]; });
+  }
+
   // placeholder 单独一套属性：它是要改 attribute，不是 textContent
   for (const el of box.querySelectorAll('[data-i18n-en-ph]')) {
     if (el.dataset.i18nZhPh === undefined) el.dataset.i18nZhPh = el.getAttribute('placeholder') || '';

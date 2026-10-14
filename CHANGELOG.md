@@ -18,6 +18,18 @@
 > 现在桌面上只留这一个包（`梦弦居-v0.4.1.apk`，构建脚本的 `-CleanOld`），旧的那 11 个只在
 > `releases/` 里各留一份归档。
 > 
+> **2026-10-14 再补**：发布后复核发现 **tag 还钉在旧 commit 上**（`v0.4.1` → `d379b16`，而资产是
+> `7a25615` 那份）—— 也就是说 `git checkout v0.4.1` 拿到的源码和下载到的包不是同一个东西。
+> 已把 tag 挪到构建那个 commit，并且**从产物本身验了**：把包解开，`assets/public` 里的 15 个文件
+> 与 tag 上的 `www/` **逐字节相同**（包里多出来的两个 `cordova*.js` 是 Capacitor 自带的）。
+>
+> 顺手加了两件工具，防的就是这一天踩到的两类事：
+> · `tools/release-check.mjs` —— 发布自检：四处版本号一致 / tag 是否正好指向 HEAD / 工作区是否干净 /
+>   桌面交付包在不在、包内 versionName 与 gradle 是否一致 / **包里的 www 与源码是否逐字节相同**；
+> · `tools/ci-precheck.mjs` —— 在本地复刻 CI 的环境跑那 20 套（en-US + `prefers-reduced-motion: reduce`），
+>   另加一项静态检查：CI 套件不许**读**被 gitignore 的路径（写出来自用不算）。
+>   这一天连踩三次"本地绿、CI 红"全是这两类环境差异，本地再怎么手工模拟都会漏。
+>
 > ⚠️ 如实说明：那轮 **2696 / 0 失败** 的全量回归跑的是 `versionName=0.4.1.8` 的那份包（`versionCode 129`）；
 > 现在发布的这份 `versionCode 130` 只差版本字符串，`tools/ci-check.mjs` 的"版本号三方一致"和
 > CI 的 20 套都过了，但**没有再跑一遍全量回归**。

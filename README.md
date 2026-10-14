@@ -238,8 +238,30 @@ powershell -ExecutionPolicy Bypass -File tools\build-apk.ps1
 
 构建脚本会自动：同步 Web 资源 → 打签名 Release 包 → 校验版本号一致性 → 输出 APK。
 
-跑全部回归（100+ 套 e2e 串行，约半小时）：
+跑全部回归（128 套 e2e 串行，约 40 分钟）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\run-regression.ps1
+```
+
+改版本号（**只走这一条路**，别再拿字符串替换去动 `package-lock.json` —— v0.4.1 那次
+把第三方依赖的版本号也改了，`npm ci` 直接报 `Invalid Version`，CI 一路红到发布版）：
+
+```powershell
+node tools\bump-version.mjs 0.4.2 131   # 版本名 + versionCode
+node tools\bump-version.mjs --check     # 只检查四处一致
+```
+
+发布前/发布后自检（tag 指没指到发布源码、包里的 `www` 和源码是否逐字节相同）：
+
+```powershell
+node tools\release-check.mjs
+```
+
+在本地复刻 CI 的环境跑那 20 套（GitHub runner 是 en-US、而且报 `prefers-reduced-motion: reduce`，
+本机这两样都不一样 —— **本地绿、CI 红基本都是这两个原因**）：
+
+```powershell
+node tools\ci-precheck.mjs             # 全套 20 套
+node tools\ci-precheck.mjs --lint-only # 只做"套件有没有引用被 gitignore 的文件"这项静态检查
 ```

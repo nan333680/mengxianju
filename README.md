@@ -220,10 +220,10 @@ App 顶部会有引导条提示。
 
 以下均在真实浏览器 + 真实模型 API 下实测通过（`tools\run-regression.ps1` 可复跑）：
 
-> 现在是 **133 套**（v0.4.3 新增 `e2e-scene-clock`）。最近一次**全量**回归是 v0.4.3 的
-> **133 套 / 2886 通过 / 0 失败 / 44.7 分钟** —— 建库以来第一次全量零失败。
-> 上一轮 v0.4.2.1 是 132 套 / 2846 通过 / 2 失败，那 2 条是 `e2e-group3` 里钉旧行为的断言
-> （那版故意改了那个行为），按新语义改完重跑该套为 **84 / 0**。
+> 现在是 **136 套**。最近一次**全量**回归跑在 2026-10-16 13:31：**136 套 / 3063 通过 / 8 失败（4 套）**
+> —— 那 4 套逐条查清后单独重跑全绿（其中 3 套是断言钉的旧值，1 套是真 bug、改了产品代码；
+> 见 `CHANGELOG.md` 0.4.3 节的「10. 测试」）。
+> 上一次**整轮零失败**的全量是 v0.4.2.2（versionCode 135，未上传）的 **136 套 / 3032 通过 / 0 失败 / 47.3 分钟**。
 
 | 验证项 | 结果 |
 |---|---|
@@ -253,7 +253,7 @@ powershell -ExecutionPolicy Bypass -File tools\build-apk.ps1
 
 构建脚本会自动：同步 Web 资源 → 打签名 Release 包 → 校验版本号一致性 → 输出 APK。
 
-跑全部回归（133 套 e2e 串行，约 40 分钟）：
+跑全部回归（136 套 e2e 串行，约 47 分钟）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\run-regression.ps1
@@ -273,10 +273,10 @@ node tools\bump-version.mjs --check     # 只检查四处一致
 node tools\release-check.mjs
 ```
 
-在本地复刻 CI 的环境跑那 20 套（GitHub runner 是 en-US、而且报 `prefers-reduced-motion: reduce`，
+在本地复刻 CI 的环境跑那 21 套（GitHub runner 是 en-US、而且报 `prefers-reduced-motion: reduce`，
 本机这两样都不一样 —— **本地绿、CI 红基本都是这两个原因**）：
 
 ```powershell
-node tools\ci-precheck.mjs             # 全套 20 套
+node tools\ci-precheck.mjs             # 全套 21 套
 node tools\ci-precheck.mjs --lint-only # 只做"套件有没有引用被 gitignore 的文件"这项静态检查
 ```

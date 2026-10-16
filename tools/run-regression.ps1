@@ -1,4 +1,4 @@
-﻿<#
+<#
   跑全部 e2e 套件，串行。
 
   ⚠️ 必须串行：每套自己起一个 http server 并驱动一个 Chrome 实例，
@@ -94,12 +94,15 @@ foreach ($f in $files) {
       if ($fl2 -eq 0) {
         $verdict = 'PASS'; $note = '（崩过一次，重试通过）'
         $pass += $p2
+        # 重试通过 = 那次崩溃不该再算进失败数、也不该留在失败清单里（v0.4.3 修：否则汇总虚报一项）
+        $fail--; $fails = @($fails | Where-Object { $_ -notlike "$($f.Name)*" })
       } else {
         $note = '通过 ' + $p2 + ' 项，失败 ' + $fl2 + ' 项（含重试）'
         $pass += $p2; $fail += $fl2; $fails += ($f.Name + '  pass=' + $p2 + ' fail=' + $fl2)
       }
     } elseif ($code2 -eq 0) {
       $verdict = 'PASS'; $note = '（崩过一次，重试通过）(无汇总)'
+      $fail--; $fails = @($fails | Where-Object { $_ -notlike "$($f.Name)*" })
     } else {
       $note = '（崩 + 重试仍崩，退出码 ' + $code2 + '）'
     }

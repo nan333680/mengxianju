@@ -150,8 +150,8 @@ if (Test-Path $signer) {
   Write-Host ("   ⚠️ 找不到 apksigner（" + $signer + "），本次【没有做签名校验】") -ForegroundColor Yellow
 }
 
-# 复制到【桌面的 mxj 文件夹】并改名成带版本号的（默认保留其它版本，-CleanOld 才清理）。
-# ⚠️ v0.4.1.6：交付位置从"桌面根目录"改成"桌面\mxj\" —— 用户要的是
+# 复制到本地交付目录（当前用户的桌面下的 mxj 文件夹，随机器走、不写死用户名）并改名成带版本号的（默认保留其它版本，-CleanOld 才清理）。
+# ⚠️ v0.4.1.6：交付位置从桌面根目录改成桌面下的 mxj 子目录 —— 要的是
 #    桌面根目录保持干净、安装包统一收在那个文件夹里（他明说的）。
 $desk = [Environment]::GetFolderPath("Desktop")
 $outDir = Join-Path $desk "mxj"
@@ -174,7 +174,7 @@ if ($CleanOld) {
     Remove-Item $_.FullName -Force
   }
 } else {
-  Write-Host "   （mxj 文件夹里保留其它版本的包；要只留最新一个就加 -CleanOld）"
+  Write-Host "   （交付目录里保留其它版本的包；要只留最新一个就加 -CleanOld）"
 }
 Move-Item -LiteralPath $tmpDest -Destination $dest -Force
 Write-Host ""

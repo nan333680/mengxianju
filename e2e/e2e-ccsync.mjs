@@ -66,7 +66,7 @@ await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
 // 每个字段给一个【有辨识度的值】—— 默认值会让"没同步"看起来像"同步成功"
 const SPEC = {
   temperature: 1.23, maxTokens: 3456, contextRounds: 17, reasoningEffort: 'high',
-  kaomojiFreq: 0.42, kaomojiStyle: 'jp-soft', emojiFreq: 0.33, verbosity: 'short',
+  kaomojiFreq: 0.42, emojiFreq: 0.33, verbosity: 'short',   // kaomojiStyle：审计 F3 已从产品里删掉，卡里自然也不该有
   descLevel: 'low', detailDrive: 'rich', splitMessages: true,
   povStyle: 'L3', povLock: false, thinkMode: true,
   searchPolicy: 'off', clockPolicy: 'global',
@@ -122,7 +122,7 @@ if (card) {
   t('卡里带开场白（first_mes）', card.data.first_mes === '你来了。');
   const p = (card.data.extensions && card.data.extensions.mengxianju && card.data.extensions.mengxianju.params) || {};
   const notInCard = Object.keys(SPEC).filter(k => p[k] === undefined);
-  t('★ 26 项角色参数一项不少地进了卡', notInCard.length === 0, '缺: ' + notInCard.join(', '));
+  t('★ 25 项角色参数一项不少地进了卡', notInCard.length === 0, '缺: ' + notInCard.join(', '));
   t('参数的值原样保留', p.temperature === 1.23 && p.scene === '深夜的便利店门口' && p.povStyle === 'L3');
   const entries = (card.data.character_book && card.data.character_book.entries) || [];
   t('世界书两条都进卡了', entries.length === 2, entries.length + ' 条');
@@ -158,7 +158,7 @@ if (after.found) {
   const c = after.char;
   const diff = [];
   for (const k of Object.keys(SPEC)) if (c[k] !== SPEC[k]) diff.push(k + '=' + JSON.stringify(c[k]) + '(want ' + JSON.stringify(SPEC[k]) + ')');
-  t('★ 26 项参数逐项对得上', diff.length === 0, diff.join('; '));
+  t('★ 25 项参数逐项对得上', diff.length === 0, diff.join('; '));
   t('人物设定 / 开场白也回来了', c.persona === '她是旧书店的店主。' && c.greeting === '你来了。');
   t('★ myProfile 回落本机全局（卡里那份不进来）', c.myProfile === '全局的他', JSON.stringify(c.myProfile));
   t('★ myEnv 同样回落本机全局', c.myEnv === '全局的居处', JSON.stringify(c.myEnv));

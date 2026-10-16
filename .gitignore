@@ -57,6 +57,9 @@ probe-*.mjs
 _regress.log
 _recheck.log
 
+# ---- ci-precheck 生成的临时副本（跑完自己删；两个实例并发跑时会互相留下残渣）----
+e2e/cipre-*.mjs
+
 # ---- 测试截图（每跑一次回归就重截一遍，进版本库只是噪音）----
 #  图还在硬盘上，只是不再被 git 跟踪。历史版本仍在 git 里。
 e2e/*.png

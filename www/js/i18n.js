@@ -247,7 +247,6 @@ const EXTRA_ZH = {
   "记忆节奏（全局统一）": "Memory cadence (global)",
   "全局统一": "One global setting",
   "攒够多少条消息总结一次": "Summarize after how many messages",
-  "每隔多少轮查重合并一次": "Merge duplicates every how many rounds",
   "记忆条数上限": "Max memories",
   "立即整理记忆": "Tidy memories now",
   "撤销上次整理": "Undo last tidy",
@@ -490,6 +489,10 @@ const EXTRA_ZH = {
 const BY_ZH = {
   // 长按消息的菜单
   '编辑重发': 'Edit & resend',
+  // ⚠️ v0.4.3：长按菜单新增的一项。它是 app.js 里动态拼出来的中文原文，
+  //    不在这里登记，英文界面下就显示中文 —— 而 i18n-report 扫不到这类动态串，
+  //    报告仍会显示 100%，只能靠人眼查（本次自查就是这么发现它的）。
+  '当时的场景': 'Scene at the time',
   '复制文字': 'Copy text',
   '朗读这条': 'Read aloud',
   '删除这条': 'Delete',
@@ -498,12 +501,35 @@ const BY_ZH = {
   '取消': 'Cancel',
   '确定': 'OK',
   '关闭': 'Close',
+  // ⚠️ v0.4.4：「＋」抽屉与「附加内容」都是 app.js 里拼出来的中文原文，
+  //    不在这里登记，英文界面下就是中文 —— i18n-report 扫不到这类动态串。
+  '联网搜索': 'Web search',
+  '本轮更改': 'This turn',
+  '发送图片': 'Send image',
+  '附加内容': 'Attached',
+  '附': 'Attach',
+  '这一轮的附加内容': 'What was attached this turn',
+  '（没填内容）': '(nothing filled in)',
+  '（没搜成）': '(search did not run)',
+  // ⚠️ v0.4.2.2：「上一轮的要求」余温条也是 app.js 里拼出来的（同上一批的性质）。
+  '上一轮的要求还在延续：': 'Still in effect from last turn: ',
+  '不再延续': "Don't carry it over",
   // 空状态
   '还没有角色。': 'No characters yet.',
   // ⚠️ 补上（v0.3.1）：这句原来是硬拼在 app.js 的 innerHTML 里、没走 tt()，
   //    所以英文界面下它一直是中文；接进 tt() 之后字典里必须有对应条目。
   '点左上角 ☰ → 角色列表 → 右上角 ＋ 建一个。':
     'Tap ☰ top-left → Characters → ＋ top-right to create one.',
+  // ⚠️ v0.4.2.3（审计 F20）：「＋」参数槽与只读弹层里那几条【属性类】文案。
+  //    title / placeholder 不在 applyI18n 的兜底范围内 —— 它只扫文本节点，
+  //    带 data-i18n-en-ph 标注的只有 index.html 里那 6 个静态输入框。
+  //    JS 拼出来的元素没有那个标注，所以必须自己走 tt() + 在这里登记。
+  '知道了': 'Got it',
+  '去掉这个功能': 'Remove this',
+  '要搜什么？例如：今天北京天气': 'What to search? e.g. weather in Beijing today',
+  '这一轮想怎么演？例如：用可爱向的写法': 'How should this turn read? e.g. write it cuter',
+  '说明这张图…': 'Describe this image…',
+  '上一批图片还在处理，稍等一下': 'Still processing the last batch, one moment',
 };
 
 let _lang = 'zh';       // 实际生效的（'zh' / 'en'）

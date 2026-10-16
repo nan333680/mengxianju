@@ -24,12 +24,17 @@ const t = (n, ok, ex) => { if (ok) { pass++; console.log('  OK   ' + n); } else 
 
 console.log('=== 1. 源码：标记不再被逐字段重建丢掉 ===');
 const SRC = readCode(WWW + '/js/app.js');
-t('app.js 把 needsReview / reviewWhy 一起带过来',
-  SRC.includes('needsReview: true, reviewWhy: en.reviewWhy'));
+// ⚠️ v0.4.2.1：这条断言原来钉的是"把 needsReview/reviewWhy 逐字段抄一遍"。
+//    逐字段重建本身就是病根 —— 每加一个字段就得记得回来补一次，漏了没有守卫
+//    （needsReview 漏过一次、useRegex 漏过一次、概率/二次筛选/深度又漏一次）。
+//    现在改成整条带过来，断言也跟着改成钉【这个形状】：
+//    只要有人再把这行写回逐字段重建，这里就会红。
+t('app.js 把卡片条目整条带过来（不再逐字段重建）',
+  SRC.includes('entries: card.entries.map(en => ({ ...en, id: uid(),'));
 t('pos 的白名单清洗还在（别一起丢了）',
   SRC.includes('pos: WBP_ORDER.indexOf(en.pos) >= 0'));
 
-console.log('=== 2. 造一张带四种「读不懂的触发条件」的 V2 卡 ===');
+console.log('=== 2. 造一张带四种特殊触发条件的 V2 卡 ===');
 const CARD = { spec: 'chara_card_v2', spec_version: '2.0', data: {
   name: '卡片待确认测试', description: '测试用角色。', first_mes: '（开场）',
   character_book: { name: '书', entries: [
@@ -108,23 +113,29 @@ const got = await page.evaluate(async () => {
   const mine = all.find(s => (s.entries || []).some(e => e.content === '普通条目的内容。'));
   return mine ? mine.entries.map(e => ({ title: e.title, keys: e.keys.length, pos: e.pos,
     on: e.on, rev: e.needsReview === true, why: e.reviewWhy || '',
-    useRegex: e.useRegex === true, content: e.content })) : null;
+    useRegex: e.useRegex === true, content: e.content,
+    prob: e.prob, sec: e.secondary || null })) : null;
 });
 console.log('   ' + JSON.stringify(got));
 t('世界书六条都进来了', !!got && got.length === 6, got ? String(got.length) : 'null');
 const by = (c) => (got || []).find(e => e.content === c) || {};
-t('概率条目 → 待确认', by('三成概率才出现的内容。').rev === true);
+// ⚠️ v0.4.2.1：概率 / 二次筛选 / 深度插入三样【从"待确认"升级成"真的照做"】——
+//    有能力兑现还标着待确认，等于把能用的条目锁在门外（导进来却一条都不生效）。
+t('概率条目 → 不再待确认，而且 30% 存下来了', by('三成概率才出现的内容。').rev === false && by('三成概率才出现的内容。').prob === 30,
+  JSON.stringify(by('三成概率才出现的内容。')));
 // ⚠️ v0.4.0 起 use_regex 【真的照做】了（hitKeys 按正则匹配），
 //    所以它不再被标成"读不懂" —— 有能力兑现还标着，等于把能用的条目锁在门外。
 t('正则条目 → 不再是待确认（v0.4.0 起真的按正则匹配）', by('正则触发的内容。').rev === false);
 t('而且 useRegex 标记带过来了（否则又变成拿正则当字面量）', by('正则触发的内容。').useRegex === true);
-t('二次筛选条目 → 待确认', by('要满足二次条件的内容。').rev === true);
+t('二次筛选条目 → 不再待确认，二次键存下来了', by('要满足二次条件的内容。').rev === false
+  && (by('要满足二次条件的内容。').sec || []).join() === '冬',
+  JSON.stringify(by('要满足二次条件的内容。')));
 t('没触发词条目 → 待确认', by('没有触发词的内容。').rev === true);
 t('普通条目【不】该被标（别误伤）', by('普通条目的内容。').rev === false);
 t('常驻条目【不】该被标', by('常驻条目的内容。').rev === false);
-t('原因文字带过来了（不是空串）', !!by('三成概率才出现的内容。').why);
-t('原因认得出是「按概率随机触发」', (by('三成概率才出现的内容。').why || '').includes('按概率随机触发'),
-  by('三成概率才出现的内容。').why);
+t('真正读不懂的那条仍然带原因', !!by('没有触发词的内容。').why, by('没有触发词的内容。').why);
+t('只有「没有触发词」这一条还需要人确认',
+  got.filter(e => e.rev).length === 1, JSON.stringify(got.filter(e => e.rev).map(e => e.content)));
 t('普通条目没被误标', by('普通条目的内容。').rev === false);
 
 console.log('=== 4. 世界书页上真的显示「待确认」 ===');
@@ -161,8 +172,8 @@ const dom = await page.evaluate(() => {
 console.log('   ' + JSON.stringify(dom));
 t('进了单独角色世界书页', dom.active);
 t('页面上六条都在', dom.total === 6, String(dom.total));
-t('三条带「待确认」标（正则那条现在能用了，不标）', dom.review === 3, String(dom.review));
-t('顶部报数条说 3 条不生效', dom.bar.includes('3'), dom.bar);
+t('只有 1 条带「待确认」标（正则/概率/二次筛选现在都能用了）', dom.review === 1, String(dom.review));
+t('顶部报数条说 1 条不生效', dom.bar.includes('1'), dom.bar);
 
 console.log('');
 console.log('JS 错误: ' + (errs.length ? errs.join(' | ') : '无'));

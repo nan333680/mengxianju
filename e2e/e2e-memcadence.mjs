@@ -60,13 +60,15 @@ await page.evaluate(() => { const f=document.querySelector('#mem-set-fold'); if(
 await sleep(700);
 const vals = await page.evaluate(() => ({
   sum: document.querySelector('#s-mem-sum').value,
-  dedupe: document.querySelector('#s-mem-dedupe').value,
   limit: document.querySelector('#s-mem-limit').value,
+  dedupeGone: !document.querySelector('#s-mem-dedupe'),
 }));
 console.log('   实际: ' + JSON.stringify(vals));
 t('总结间隔默认 50', vals.sum === '50', vals.sum);
-t('查重间隔默认 20', vals.dedupe === '20', vals.dedupe);
 t('记忆上限默认 20', vals.limit === '20', vals.limit);
+// 2026-10-15：删掉「每隔多少轮查重合并一次」—— 查重门槛从 v1.21.28 起算的是
+// 【新增记忆条数】，那个旋钮只被界面自己读写，改了不生效，留着等于骗人。
+t('「查重间隔」旋钮已删除', vals.dedupeGone === true);
 
 console.log('=== 2. 提示词含「宁缺毋滥」约束 ===');
 const promptSrc = await page.evaluate(async () => {
@@ -94,6 +96,7 @@ const c = await page.evaluate(async (id) => {
 }, cid);
 console.log('   角色级: ' + JSON.stringify(c));
 t('角色节奏参数为 50/20/20（或未设=用全局）', c.sum === undefined || c.sum === 50 || c.sum === 20, JSON.stringify(c));
+t('角色身上没有 memDedupeEvery（该键已删）', c.dedupe === undefined || c.dedupe === null, JSON.stringify(c.dedupe));
 
 console.log('=== 4. 节奏护栏：未攒够不触发 ===');
 // 塞 30 条消息（< 50），不该总结

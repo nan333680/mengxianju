@@ -11,7 +11,8 @@ export const PARAM_DEFAULTS = {
   reasoningEffort: 'low',
   contextRounds: 20,
   kaomojiFreq: 0.15,
-  kaomojiStyle: 'jp-soft',
+  // kaomojiStyle 于 v0.4.2.3 删除（审计 F3）：四档旋钮改了看不出区别，
+  // 唯一作用是提示词里那句「你的口味偏X」，删掉省得留个假开关。
   emojiFreq: 0.1,
   verbosity: 'medium',
   splitMessages: false,
@@ -19,11 +20,13 @@ export const PARAM_DEFAULTS = {
   hesitation: true,
   longMemory: false,
   allowEditMine: false,   // 允许她整理记忆时改动"我手动加的那几条"
-  // 长期记忆的三个节奏参数（新建角色时的初值）。
-  // v1.14.0 起放宽：30/10 → 50/20，和 app.js 的 DEFAULTS 保持一致。
-  // 两处必须同步改，否则新建角色和全局默认会打架。
+  // ⚠️ 这三个是【历史遗留】（2026-10-15 注）：长期记忆的节奏参数是【全局】的
+  //    （app.js 的 DEFAULTS 说了算），角色记录里根本不保存它们 —— saveCharEdit
+  //    收集的字段里没有 mem*，所以写在这里只影响编辑页表单的预填值，而表单上没有
+  //    对应的控件，等于没人读。真值以 app.js DEFAULTS 为准（总结 50 / 上限 20）。
+  //    memDedupeEvery 已整个删掉：查重门槛从 v1.21.28 起看的是新增记忆条数，
+  //    不由轮次控制（见 app.js dedupeIfNeeded 的 grownEnough）。
   memSummarizeEvery: 50,
-  memDedupeEvery: 20,
   memLimit: 20
 };
 

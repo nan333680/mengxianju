@@ -78,7 +78,7 @@ t('设置页有「记忆节奏」折叠头', !!(await page.$('#mem-set-fold')));
 await page.evaluate(()=>document.getElementById('mem-set-fold').click());
 await sleep(700);
 t('设置页有「总结间隔」', !!(await page.$('#s-mem-sum')));
-t('设置页有「查重间隔」', !!(await page.$('#s-mem-dedupe')));
+t('设置页已经没有「查重间隔」这个死旋钮', !(await page.$('#s-mem-dedupe')));
 t('设置页有「条数上限」', !!(await page.$('#s-mem-limit')));
 await page.click('#btn-set-back'); await sleep(400);
   // v1.15.2 起栈多了 drawer 一层，退到设置页的上一层是抽屉，还要再关一次
@@ -93,12 +93,12 @@ await page.click('#btn-edit-back'); await sleep(500);
 await openSettings(page, sleep);
 await page.evaluate(()=>document.getElementById('mem-set-fold').click());
 await sleep(600);
-const defs = await page.evaluate(()=>({a:document.querySelector('#s-mem-sum').value,b:document.querySelector('#s-mem-dedupe').value,c:document.querySelector('#s-mem-limit').value}));
-console.log('   默认值: 总结=' + defs.a + ' 查重=' + defs.b + ' 上限=' + defs.c);
-await page.evaluate(()=>{const i=document.querySelector('#s-mem-dedupe');i.value='6';i.dispatchEvent(new Event('change',{bubbles:true}));});
+const defs = await page.evaluate(()=>({a:document.querySelector('#s-mem-sum').value,c:document.querySelector('#s-mem-limit').value}));
+console.log('   默认值: 总结=' + defs.a + ' 上限=' + defs.c);
+await page.evaluate(()=>{const i=document.querySelector('#s-mem-limit');i.value='6';i.dispatchEvent(new Event('change',{bubbles:true}));});
 await sleep(600);
-const saved = await page.evaluate(async()=>{const o=indexedDB.open('ai-companion');const db=await new Promise(r=>{o.onsuccess=()=>r(o.result);});const kv=await new Promise(r=>{const q=db.transaction('kv').objectStore('kv').get('settings');q.onsuccess=()=>r(q.result);});db.close();return kv.v.memDedupeEvery;});
-t('改完存进全局设置（查重间隔 6）', saved===6, String(saved));
+const saved = await page.evaluate(async()=>{const o=indexedDB.open('ai-companion');const db=await new Promise(r=>{o.onsuccess=()=>r(o.result);});const kv=await new Promise(r=>{const q=db.transaction('kv').objectStore('kv').get('settings');q.onsuccess=()=>r(q.result);});db.close();return kv.v.memLimit;});
+t('改完存进全局设置（上限 6）', saved===6, String(saved));
 
 console.log('');
 console.log('=== 2. 时效清理（纯代码，不花 token）===');

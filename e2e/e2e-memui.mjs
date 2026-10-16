@@ -103,29 +103,30 @@ await page.evaluate(async (a, b) => {
 await page.reload({ waitUntil: 'networkidle0' });
 await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
 
-console.log('=== 1. 三个轮次参数回到设置页（全局）===');
+console.log('=== 1. 记忆节奏参数在设置页（全局，2026-10-15 起只剩两个）===');
 await openSettings(page, sleep);
 t('设置页有「记忆节奏」折叠头', !!(await page.$('#mem-set-fold')));
 t('默认收起', !(await page.$eval('#mem-set-wrap', el => el.classList.contains('open'))));
 await jsClick('#mem-set-fold'); await sleep(700);
-t('展开后有三个参数', (await page.$$('#mem-set-wrap input[type=number]')).length === 3);
+t('展开后有两个参数', (await page.$$('#mem-set-wrap input[type=number]')).length === 2);
 const vals = await page.evaluate(() => ({
   sum: document.querySelector('#s-mem-sum').value,
-  dedupe: document.querySelector('#s-mem-dedupe').value,
-  limit: document.querySelector('#s-mem-limit').value
+  limit: document.querySelector('#s-mem-limit').value,
+  dedupeGone: !document.querySelector('#s-mem-dedupe')
 }));
 console.log('   默认值: ' + JSON.stringify(vals));
 // v1.14.0 起默认放宽（30/10 → 50/20）：反馈记忆太频繁、太杂
-t('默认值读得到（50/20/20）', vals.sum === '50' && vals.dedupe === '20' && vals.limit === '20', JSON.stringify(vals));
+t('默认值读得到（50/20）', vals.sum === '50' && vals.limit === '20', JSON.stringify(vals));
+t('「查重间隔」旋钮已删除', vals.dedupeGone === true);
 // 改一个
-await page.evaluate(() => { const i = document.querySelector('#s-mem-dedupe'); i.value = '8'; i.dispatchEvent(new Event('change', { bubbles: true })); });
+await page.evaluate(() => { const i = document.querySelector('#s-mem-limit'); i.value = '8'; i.dispatchEvent(new Event('change', { bubbles: true })); });
 await sleep(600);
 const savedGlobal = await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const kv = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('settings'); q.onsuccess = () => r(q.result); });
   const cs = await new Promise(r => { const q = db.transaction('characters').objectStore('characters').getAll(); q.onsuccess = () => r(q.result); });
-  db.close(); return { global: kv.v.memDedupeEvery, perChar: cs.map(c => c.memDedupeEvery) };
+  db.close(); return { global: kv.v.memLimit, perChar: cs.map(c => c.memLimit) };
 });
 console.log('   改后: ' + JSON.stringify(savedGlobal));
 t('全局值改成了 8', savedGlobal.global === 8, String(savedGlobal.global));

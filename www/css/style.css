@@ -178,9 +178,13 @@ body{
 #input:focus{ border-color:var(--pri); }
 /* 字数（v1.21.48）：只在「回车换行」且真有内容时出现。
    日常聊天一个字都不显示 —— 它会挤掉输入框的宽度，滑一下就换行。 */
-.input-meta{ display:flex; justify-content:flex-end; margin:2px 4px 0 0; }
+/* v0.4.2.3 修（截图实证）：这行以前没给子项留收缩余地 ——
+   一条长参数 chip 把 #input-tags 撑到 487px（左端跑到屏幕外 108px），
+   同时把「已写 N 字」压成 19px 宽、71px 高的竖排。
+   现在 tags 可收缩、内部自己出省略号，字数固定不收缩。 */
+.input-meta{ display:flex; justify-content:flex-end; align-items:flex-start; gap:8px; margin:2px 4px 0 0; }
 .input-meta.hidden{ display:none; }
-#input-count{ font-size:11.5px; color:var(--fg3); font-variant-numeric:tabular-nums; }
+#input-count{ flex:0 0 auto; white-space:nowrap; font-size:11.5px; color:var(--fg3); font-variant-numeric:tabular-nums; }
 #input-count:empty{ display:none; }
 .send-btn{
   height:42px; padding:0 18px; border:none; border-radius:21px;
@@ -189,6 +193,64 @@ body{
 }
 .send-btn:active{ background:var(--pri2); }
 .send-btn.stop{ background:var(--danger); }
+
+/* ===== 附加功能（v0.4.4）=====
+   「＋」抽屉 + 功能参数槽 + 输入行下面挂着的功能 chip。
+   功能表在 app.js 的 TURN_CMDS，这里只管长什么样。 */
+.cmd-drawer{ display:flex; gap:14px; padding:12px 4px 2px; flex-wrap:wrap; }
+.cmd-drawer.hidden{ display:none; }
+.cmd-item{
+  display:flex; flex-direction:column; align-items:center; gap:5px;
+  width:64px; padding:0; border:none; background:transparent;
+  color:var(--fg2); font-size:11.5px; font-family:inherit; cursor:pointer;
+}
+.cmd-item .ci-box{
+  width:46px; height:46px; border-radius:13px; background:var(--bg3);
+  border:1px solid var(--line); display:flex; align-items:center;
+  justify-content:center; font-size:20px; line-height:1;
+}
+.cmd-item:active .ci-box{ border-color:var(--pri); }
+.cmd-item.on{ color:var(--pri); }
+.cmd-item.on .ci-box{ border-color:var(--pri); }
+/* 功能参数槽（输入行【上方】）：一行 = 图标 + 名称 + 它自己的输入框 + ✕ */
+.cmd-slots{ display:flex; flex-direction:column; gap:7px; padding:2px 2px 8px; }
+.cmd-slots.hidden{ display:none; }
+.cmd-slot{ display:flex; align-items:center; gap:7px; }
+.cmd-slot .cs-ico{ flex-shrink:0; font-size:14px; }
+.cmd-slot .cs-name{ flex-shrink:0; font-size:12px; color:var(--fg2); }
+.cmd-slot input, .cmd-slot textarea{
+  flex:1; min-width:0; background:var(--bg3); border:1px solid var(--line);
+  border-radius:15px; color:var(--fg); padding:8px 13px; font-size:13px;
+  font-family:inherit; outline:none;
+  /* 用户反馈（2026-10-16）：长参数原来在单行 input 里一路往右延伸，屏幕上只看得到
+     开头，后半截看不见也改不了。改成 textarea 让浏览器自己换行 —— 全文始终可见
+     可改；高度由 app.js 的 growSlot() 按内容撑开，最多 120px（约 5 行），更长的
+     在框内滚动。resize:none 是关掉右下角那个拖拽小把手。 */
+  resize:none; line-height:1.45; overflow-y:hidden;
+  max-height:var(--input-max, 120px);   /* 跟设置里的「输入框行数」走，见 growSlot() */
+  white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;
+}
+.cmd-slot input:focus, .cmd-slot textarea:focus{ border-color:var(--pri); }
+.cmd-slot .cs-x{
+  flex-shrink:0; width:26px; height:26px; border:none; border-radius:50%;
+  background:var(--bg3); color:var(--fg3); font-size:12px; font-family:inherit;
+  cursor:pointer;
+}
+/* 「附加内容」弹层里的一行（v0.4.4） */
+.tt-row{ padding:8px 0; border-top:1px solid var(--line); }
+.tt-row:first-child{ border-top:none; }
+.tt-row > b{ display:block; margin-bottom:3px; font-size:13px; color:var(--pri2); }
+.tt-row > div{ font-size:13.5px; line-height:1.6; word-break:break-word; }
+.tt-row > div > i{ color:var(--fg3); }
+
+/* 输入行下面那一行：左边是挂着的功能，右边是字数 */
+#input-tags{ display:flex; gap:6px; flex-wrap:wrap; margin-right:auto; min-width:0; flex:0 1 auto; overflow:hidden; }
+.tag-chip{
+  font-size:11px; line-height:1.6; padding:1px 8px; border-radius:999px;
+  color:var(--pri2); white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis;
+  background:color-mix(in srgb, var(--pri2) 12%, transparent);
+  border:1px solid color-mix(in srgb, var(--pri2) 28%, transparent);
+}
 
 .attach-preview{ display:flex; gap:8px; padding:6px 4px 8px; flex-wrap:wrap; }
 /* 一张图 = 缩略图 + 它自己的说明框 */
@@ -493,14 +555,48 @@ input + .hint-text{ margin-top:8px; }
 .t .tk{ margin-left:0; color:var(--fg3); opacity:.75; font-size:10.5px; white-space:nowrap; }
 .t .tk i{ font-style:normal; color:var(--pri2); }
 
-/* ===== 联网搜索标记（打了 /搜 的那条消息）===== */
-.search-tag{
-  margin-top:6px; padding:3px 8px; display:inline-block;
-  font-size:11px; line-height:1.5; color:var(--pri2);
+/* ===== 附加功能标记（打过标签发出去的那条消息）=====
+   v0.4.4：以前只有「/搜」一个，现在是通用的 —— 时间行里显示成小 chip，
+   左边再加一个「附加内容」按钮点开看全文（没打标签的消息整块不出现）。 */
+.bub .tag-chip{
+  font-size:10.5px; line-height:1.6; padding:1px 7px; border-radius:999px;
+  color:var(--pri2); white-space:nowrap;
   background:color-mix(in srgb, var(--pri2) 12%, transparent);
   border:1px solid color-mix(in srgb, var(--pri2) 28%, transparent);
-  border-radius:999px; word-break:break-all;
 }
+.bub .more-btn{
+  border:none; background:transparent; padding:0; font-family:inherit;
+  font-size:10.5px; color:var(--pri2); cursor:pointer; white-space:nowrap;
+  text-decoration:underline; text-underline-offset:2px;
+}
+/* 自己那条是紫底，用白色半透明才看得清 */
+.msg.me .bub .tag-chip{
+  color:#fff; border-color:rgba(255,255,255,.30); background:rgba(255,255,255,.18);
+}
+.msg.me .bub .more-btn{ color:rgba(255,255,255,.88); }
+/* ===== 「上一轮的要求」余温条（v0.4.2.2）=====
+   上一轮用「本轮更改」提的要求，这一轮继续作数一次，显示成虚线 chip。
+   虚线 = 不是本轮挂的功能（实线那种是），而是「还没散掉的上一轮」。 */
+.carry-tag{ padding:0 2px 6px; }
+.carry-chip{
+  display:inline-flex; align-items:center; gap:5px; max-width:100%;
+  font-size:11px; line-height:1.7; padding:2px 8px; border-radius:999px;
+  color:var(--fg3); background:var(--bg2);
+  border:1px dashed color-mix(in srgb, var(--fg3) 45%, transparent);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+/* v0.4.2.3 修：前缀 .cl 与正文 b 都可收缩 + 省略号；✕ 固定 flex:0 0 auto。
+   见 app.js renderCarryTag 的注释（截图实证 ✕ 被切到可视区外）。 */
+/* 前缀是「这条是什么」的标识，优先保住；压缩的账全让正文 b 来扛
+   （实测 320px 屏下正文还剩 196px，够看出是哪条要求）。 */
+.carry-chip .cl{ flex:0 0 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.carry-chip b{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--fg2); font-weight:600; }
+.carry-chip .x{
+  flex:0 0 auto;
+  border:none; background:transparent; padding:0 0 0 2px; cursor:pointer;
+  font-family:inherit; font-size:12px; color:var(--fg3); line-height:1;
+}
+.carry-chip .x:active{ color:var(--pri2); }
 
 /* ===== 联网搜索设置区 ===== */
 .search-box{ display:flex; flex-direction:column; gap:10px; }

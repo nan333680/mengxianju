@@ -174,6 +174,23 @@ t('没登记的文案原样返回（不会变空或变 key）', dyn.en.unknown =
 t('★ 中文下原样返回', dyn.zh.copy === '复制文字', dyn.zh.copy);
 
 console.log('');
+console.log('=== 属性类文案（placeholder / title，审计 F20）===');
+// applyI18n 只扫【文本节点】，title / placeholder 这类属性全靠 tt() 自己走 ——
+// 而 JS 运行时光拼出来的元素（参数槽、「说明这张图…」、只读弹层的按钮）拿不到
+// index.html 上那 6 个 data-i18n-en-ph 标注，所以这里直接钉死它们的译文。
+const attr = await page.evaluate(async () => {
+  const m = await import('/js/i18n.js');
+  const keys = ['知道了', '去掉这个功能', '要搜什么？例如：今天北京天气', '这一轮想怎么演？例如：用可爱向的写法', '说明这张图…', '上一批图片还在处理，稍等一下'];
+  m.setLang('en'); const en = keys.map(k => m.tt(k));
+  m.setLang('zh'); const zh = keys.map(k => m.tt(k));
+  return { keys, en, zh };
+});
+const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]/;
+console.log('   ' + JSON.stringify(attr.en));
+t('★ 属性类文案英文下不含中文', attr.en.every(s => !CJK.test(s)), JSON.stringify(attr.en));
+t('★ 属性类文案中文下逐字还原', JSON.stringify(attr.zh) === JSON.stringify(attr.keys), JSON.stringify(attr.zh));
+
+console.log('');
 t('全程无 JS 错误', errs.length===0, errs.slice(0,3).join(' | '));
 console.log('');
 console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

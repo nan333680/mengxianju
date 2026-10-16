@@ -196,7 +196,7 @@ async function msgsOf(cid) {
     const all = await new Promise(r => { const q = db.transaction('messages').objectStore('messages').getAll(); q.onsuccess = () => r(q.result); });
     db.close();
     return all.filter(m => m.charId === id).sort((a,b)=>a.ts-b.ts)
-              .map(m => ({ role: m.role, content: m.content, searched: m.searched || '' }));
+              .map(m => ({ role: m.role, content: m.content, searched: m.searched || '', tags: m.tags || null }));
   }, cid);
 }
 
@@ -235,7 +235,7 @@ t('普通消息正常发出', chatHits.length >= 1);
   const ms = await msgsOf(CID);
   const u = ms.find(m => m.role === 'user');
   t('用户消息原样落库', u && u.content === '今天北京天气怎么样', JSON.stringify(u));
-  t('没有搜索标记', u && !u.searched);
+  t('没有搜索标记', u && !u.tags && !u.searched);
 }
 
 console.log('\n=== 2. /搜 触发联网 ===');
@@ -259,14 +259,22 @@ console.log('\n=== 3. 聊天记录存关键词，不存命令 ===');
   const u = ms.filter(m => m.role === 'user').pop();
   t('存的是关键词', u && u.content === '今天北京天气', JSON.stringify(u && u.content));
   t('不带 /搜 前缀', u && !u.content.startsWith('/搜'));
-  t('记了 searched 字段', u && u.searched === '今天北京天气', JSON.stringify(u && u.searched));
+  // v0.4.4：命令标记统一存进 tags 数组（searched 只读兼容老数据，不再写新的）
+  t('记了 tags 字段', u && Array.isArray(u.tags) && u.tags[0].k === 'search' && u.tags[0].arg === '今天北京天气',
+    JSON.stringify(u && u.tags));
+  t('不再写 searched 字段', u && !u.searched, JSON.stringify(u && u.searched));
 
-  // 气泡里应该渲染出搜索标记
+  // 气泡里应该渲染出搜索标记（v0.4.4 起 class 是 .tag-chip）
   const tag = await page.evaluate(() => {
-    const el = document.querySelector('#messages .msg.me .search-tag');
+    const el = document.querySelector('#messages .msg.me .tag-chip');
     return el ? el.textContent.trim() : null;
   });
-  t('气泡里有搜索标记', tag && tag.includes('今天北京天气'), JSON.stringify(tag));
+  t('气泡里有搜索标记', tag && tag.includes('联网搜索'), JSON.stringify(tag));
+  const title = await page.evaluate(() => {
+    const el = document.querySelector('#messages .msg.me .tag-chip');
+    return el ? (el.getAttribute('title') || '') : '';
+  });
+  t('气泡标记上挂着关键词', title.includes('今天北京天气'), JSON.stringify(title));
 }
 
 console.log('\n=== 4. 结果只注入这一轮 ===');

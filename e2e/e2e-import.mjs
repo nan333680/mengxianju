@@ -75,8 +75,10 @@ t('芙兰的人设没被截断（4000+字）', fan && fan.persona.length > 4000,
 t('天子的人设没被截断（4000+字）', fj && fj.persona.length > 4000, fj ? fj.persona.length+'字' : '');
 t('芙兰开场白在', fan && fan.greeting.length > 50, fan ? fan.greeting.length+'字' : '');
 t('天子开场白在', fj && fj.greeting.length > 50, fj ? fj.greeting.length+'字' : '');
-t('芙兰参数对（温度1.25 / 风格可爱 / 分段开）', fan && fan.temperature===1.25 && fan.kaomojiStyle==='jp-cute' && fan.splitMessages===true, fan?JSON.stringify({t:fan.temperature,s:fan.kaomojiStyle,sp:fan.splitMessages}):'');
-t('天子参数对（温度1.2 / 风格温和）', fj && fj.temperature===1.2 && fj.kaomojiStyle==='jp-soft', fj?JSON.stringify({t:fj.temperature,s:fj.kaomojiStyle}):'');
+// v0.4.2.2 审计 F3：kaomojiStyle 这个字段整个删了（四档旋钮改了看不出区别），
+// 角色卡导入不再保留它，所以断言里也不再比它 —— 其余参数照旧比对。
+t('芙兰参数对（温度1.25 / 分段开）', fan && fan.temperature===1.25 && fan.splitMessages===true, fan?JSON.stringify({t:fan.temperature,sp:fan.splitMessages}):'');
+t('天子参数对（温度1.2）', fj && fj.temperature===1.2, fj?JSON.stringify({t:fj.temperature}):'');
 t('两人长期记忆都开着', fan && fan.longMemory===true && fj && fj.longMemory===true);
 t('presetKey 是 blank（不进模板）', fan && fan.presetKey==='blank' && fj && fj.presetKey==='blank');
 

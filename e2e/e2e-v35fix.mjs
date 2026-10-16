@@ -76,7 +76,7 @@ console.log('=== P0-1 模型返回 0 条时，那批消息不得进 memSummed（
     await put('characters', { id:cid, name:'P0测试', avatar:null, greeting:'g', persona:'p',
       createdAt:Date.now(), longMemory:true, verbosity:'medium', descLevel:'mid', splitMessages:false });
     await put('kv', { k:'settings', v:{ apiKey:'sk-x', model:'deepseek-flash', archiveKeep:15,
-      memSummarizeEvery:10, memDedupeEvery:5, memLimit:20, autoArchive:true } });
+      memSummarizeEvery:10, memLimit:20, autoArchive:true } });
     const now = Date.now();
     const tx = db.transaction('messages','readwrite');
     for (let i=0;i<100;i++) tx.objectStore('messages').put({ id:'p'+i, charId:cid, role: i%2?'assistant':'user',

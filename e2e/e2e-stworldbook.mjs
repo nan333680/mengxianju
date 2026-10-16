@@ -32,12 +32,14 @@ let pass=0, fail=0;
 const t=(n,ok,ex='')=>{ if(ok){pass++;console.log('  OK   '+n);}else{fail++;console.log('  FAIL '+n+(ex?'  -> '+ex:''));} };
 
 let lastSys = '';
+let lastBody = null;
 await page.setRequestInterception(true);
 page.on('request', req => {
   const u = req.url();
   if (u.includes('deepseek') || u.includes('/chat/completions')) {
     if (req.method()==='OPTIONS') { req.respond({status:204,headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'*'}}); return; }
     const b = JSON.parse(req.postData()||'{}');
+    lastBody = b;
     lastSys = (b.messages||[]).map(m=>m.content||'').join(String.fromCharCode(10));
     if (b.stream) {
       const pl='data: '+JSON.stringify({choices:[{delta:{content:'好。'}}]})+String.fromCharCode(10,10)+'data: [DONE]'+String.fromCharCode(10,10);
@@ -104,6 +106,7 @@ console.log('=== 1. 导入酒馆格式：认它，并把能确定的字段映射
     const g = gs && gs[0];
     if (!g) return null;
     return g.entries.map(e => ({ title:e.title, keys:e.keys, pos:e.pos, on:e.on,
+      sec: e.secondary || null, logic: e.logic, prob: e.prob, depth: e.depth,
       review: e.needsReview === true, why: e.reviewWhy || '' }));
   });
   console.log('   条目: ' + JSON.stringify(res && res.map(x => x.title + (x.review ? '(待确认)' : ''))));
@@ -118,12 +121,20 @@ console.log('=== 1. 导入酒馆格式：认它，并把能确定的字段映射
   // ⚠️ v0.4.0：use_regex 【真的照做】了（hitKeys 按正则匹配），所以它不再被标成"读不懂"。
 //    有能力兑现还标着，等于把能用的条目锁在门外。
 t('useRegex → 不再待确认（v0.4.0 起真的按正则匹配）', by('正则触发').review === false);
-  t('二次筛选 → 待确认', by('二次筛选').review === true);
-  t('概率触发 → 待确认', by('概率触发').review === true);
-  t('position 4 → 待确认', by('深度插入').review === true);
-  t('没有触发词 → 待确认', by('没有触发词').review === true);
+  // ⚠️ v0.4.2.1：这三样【从"待确认"升级成"真的照做"】——
+  //    原来一份酒馆世界书里凡是用过二次筛选/概率/深度插入的条目全部静默躺尸，
+  //    用户看到的是"导进来了，但她不知道"。有能力兑现还标待确认 = 把能用的锁在门外。
+  t('二次筛选 → 不再待确认（真的按二次键筛）', by('二次筛选').review === false);
+  t('二次筛选：二次键和逻辑都存下来了', (by('二次筛选').sec || []).join() === '战斗' && by('二次筛选').logic === 0,
+    JSON.stringify(by('二次筛选')));
+  t('概率触发 → 不再待确认（真的按概率抽）', by('概率触发').review === false);
+  t('概率：50% 存下来了', by('概率触发').prob === 50, by('概率触发').prob);
+  t('position 4 → 不再待确认（真的按深度插）', by('深度插入').review === false);
+  t('深度：pos=atdepth 且 depth=4 存下来了', by('深度插入').pos === 'atdepth' && by('深度插入').depth === 4,
+    JSON.stringify(by('深度插入')));
+  t('没有触发词 → 仍然待确认', by('没有触发词').review === true);
   t('待确认的条目都带原因', (res || []).filter(e => e.review).every(e => e.why.length > 0));
-  t('恰好 4 条待确认（use_regex 那条现在能用了，不标）', (res || []).filter(e => e.review).length === 4,
+  t('只剩 1 条待确认（没有触发词那条）', (res || []).filter(e => e.review).length === 1,
     String((res || []).filter(e => e.review).length));
   t('列表上出现了「待确认」标记', await page.evaluate(async () => {
     const btn = document.getElementById('btn-wb-global');
@@ -138,20 +149,45 @@ t('useRegex → 不再待确认（v0.4.0 起真的按正则匹配）', by('正�
 }
 
 console.log('');
-console.log('=== 2. 待确认的条目一条都不注入 ===');
+console.log('=== 2. 生效时机：读得懂的按酒馆的语义真的执行，待确认的一条都不注入 ===');
 {
   await page.reload({ waitUntil:'networkidle0' }); await sleep(1000);
+  // Math.random 钉死，概率条目才有确定的期望值（0 → 必中；0.99 → 必不中）
+  const rand = async (v) => { await page.evaluate((x) => { window.__r0 = Math.random; Math.random = () => x; }, v); };
+  const unrand = async () => { await page.evaluate(() => { if (window.__r0) { Math.random = window.__r0; delete window.__r0; } }); };
+
+  await rand(0);
   await sendOne('红魔馆在哪？符卡怎么用？顺便说说概率、深度和魔法');
+  await unrand();
   const sys = lastSys;
   console.log('   提示词长度 ' + sys.length);
   t('提示词非空（确实发出去了）', sys.length > 0);
   t('能读懂的条目正常注入', sys.includes('蕾米莉亚的宅邸'));
   t('常驻条目进了提示词', sys.includes('这个世界的魔法一律要付出代价'));
-  t('正则条目没注入', !sys.includes('正则条目不该被注入'));
-  t('二次筛选条目没注入', !sys.includes('二次筛选条目不该被注入'));
-  t('概率条目没注入', !sys.includes('概率触发条目不该被注入'));
-  t('深度条目没注入', !sys.includes('按深度插入的条目不该被注入'));
+  t('正则条目没注入（key 写成 /魔法.*/ 带斜杠，编译出来匹配不到）', !sys.includes('正则条目不该被注入'));
   t('没有触发词的条目没注入', !sys.includes('没有触发词的条目不该被注入'));
+  // —— 二次筛选：主键命中、二次键没命中 → 不注入（这就是 selective 的语义）——
+  t('二次筛选：只命中主键时不注入', !sys.includes('二次筛选条目不该被注入'));
+  // —— 概率：Math.random()=0 → 必中 ——
+  t('概率 50%：抽中时注入', sys.includes('概率触发条目不该被注入'),
+    '（内容里那句"不该被注入"是这个 fixture 的旧文案，抽中就该出现）');
+  // —— 深度插入：现在【真的注入】，而且位置不是 prompt 末尾 ——
+  t('深度插入：现在真的注入了', sys.includes('按深度插入的条目不该被注入'));
+  {
+    const ms = (lastBody && lastBody.messages) || [];
+    const idx = ms.findIndex(m => String(m.content || '').includes('按深度插入的条目'));
+    t('深度插入：它自己是一条 system 消息', idx >= 0 && ms[idx].role === 'system', 'idx=' + idx);
+    t('深度插入：不在最后一条（不是糊在末尾）', idx >= 0 && idx < ms.length - 1, 'idx=' + idx + '/' + ms.length);
+    t('深度插入：排在本轮段之前', idx >= 0 && !String(ms[idx].content).includes('# 现在的时间'));
+  }
+
+  console.log('   --- 换一轮：二次键也出现、概率没抽中 ---');
+  await rand(0.99);
+  await sendOne('这次是符卡和战斗，还有概率');
+  await unrand();
+  const sys2 = lastSys;
+  t('二次筛选：主键+二次键都命中才注入', sys2.includes('二次筛选条目不该被注入'));
+  t('概率 50%：没抽中时不注入', !sys2.includes('概率触发条目不该被注入'));
 }
 
 console.log('');

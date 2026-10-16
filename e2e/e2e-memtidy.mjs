@@ -31,10 +31,17 @@ page.on('request', req => {
     const sys = (body.messages||[]).map(m=>m.content).join('\n');
     let out = '[]';
     if (sys.includes('JSON 数组') && sys.includes('整理')) {
-      out = mode === 'merge'
-        ? JSON.stringify([{text:'你有喝咖啡的习惯，最近改喝拿铁',kind:'fact',untilDay:null,freq:'often'},
-                          {text:'你怕冷，过冬靠暖气',kind:'fact',untilDay:null,freq:'normal'}])
-        : '';  // 空字符串 = 解析失败路径
+      if (mode === 'merge') {
+        // ⚠️ 审计 F25 之后，整理的下限是「至少留住一半」——6 条记忆回 2 条（33%）
+        //    会被判成抽风拦下，所以这条路径改成回 3 条（正好一半）。
+        out = JSON.stringify([{text:'你有喝咖啡的习惯，最近改喝拿铁，每天两杯不加糖',kind:'fact',untilDay:null,freq:'often'},
+                              {text:'你怕冷，过冬靠暖气',kind:'fact',untilDay:null,freq:'normal'},
+                              {text:'你冬天常待在有暖气的地方',kind:'fact',untilDay:null,freq:'normal'}]);
+      } else if (mode === 'few') {
+        // 刻意只合出一半以下（6 → 2）：专门喂给下面的抽风保护断言
+        out = JSON.stringify([{text:'你有喝咖啡的习惯，最近改喝拿铁',kind:'fact',untilDay:null,freq:'often'},
+                              {text:'你怕冷，过冬靠暖气',kind:'fact',untilDay:null,freq:'normal'}]);
+      } else { out = ''; }  // 空字符串 = 解析失败路径
     }
     req.respond({status:200,headers:{'Access-Control-Allow-Origin':'*'},contentType:'application/json',body:JSON.stringify({choices:[{message:{content:out}}]})});
     return;
@@ -59,7 +66,7 @@ await page.evaluate(async (id) => {
   ];
   for (const s of items) await mem.add({ id: uid(), charId: id, text: s, kind:'fact', untilDay:null, freq:'normal', ts: Date.now() });
   await kv.set('settings', Object.assign({}, await kv.get('settings', {}), {
-    apiKey:'sk-test', baseUrl:'http://127.0.0.1:'+location.port+'/v1', memLimit: 30, memDedupeEvery: 1, memSummarizeEvery: 999
+    apiKey:'sk-test', baseUrl:'http://127.0.0.1:'+location.port+'/v1', memLimit: 30, memSummarizeEvery: 999
   }));
 }, cid);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
@@ -106,9 +113,9 @@ const st = await page.evaluate(async (id) => {
 }, cid);
 console.log('   整理后: ' + JSON.stringify({n: st.n, bk: st.bk}));
 console.log('   toast: ' + st.toast);
-t('整理生效（6 → 2 条）', st.n === 2, 'n='+st.n);
+t('整理生效（6 → 3 条）', st.n === 3, 'n='+st.n);
 t('形成了备份（6 条）', st.bk === 6, 'bk='+st.bk);
-t('报告里有条数变化', /6 → 2/.test(st.toast), st.toast);
+t('报告里有条数变化', /6 → 3/.test(st.toast), st.toast);
 t('报告里有字数变化', /字数/.test(st.toast), st.toast);
 
 console.log('=== 4. 撤销 → 回到整理前 ===');
@@ -127,6 +134,24 @@ console.log('   ' + JSON.stringify({n: undone.n, hasOld: undone.hasOld, bkCleare
 t('回到 6 条', undone.n === 6, 'n='+undone.n);
 t('原来的记忆内容回来了', undone.hasOld);
 t('备份用掉后清掉', undone.bk === null);
+
+console.log('=== 4b. 抽风保护：只合出一半以下 → 拦下、记忆原样不动（审计 F25）===');
+mode = 'few';   // 6 条只合出 2 条 = 33%，低于新的「至少留住一半」下限
+await page.evaluate(() => document.getElementById('btn-mem-tidy').click());
+for (let i=0;i<40;i++){ await sleep(400); const d=await page.$eval('#btn-mem-tidy',e=>e.disabled).catch(()=>false); if(!d) break; }
+await sleep(1500);
+const few = await page.evaluate(async (id) => {
+  const { mem } = await import('./js/db.js');
+  const list = await mem.list(id);
+  const el = document.getElementById('toast');
+  return { n: list.length, hasOld: list.some(m=>m.text.includes('美式')),
+           toast: el && !el.classList.contains('hidden') ? el.textContent : '' };
+}, cid);
+console.log('   ' + JSON.stringify({ n: few.n }));
+console.log('   toast: ' + few.toast);
+t('只合出一半以下 → 记忆原样保留（6 条）', few.n === 6, 'n='+few.n);
+t('原有记忆没有被换掉', few.hasOld);
+t('toast 如实说「判定为抽风」', /抽风/.test(few.toast), few.toast);
 
 console.log('=== 5. 模型返回空 → 条数字数都没变时如实说 ===');
 await page.evaluate(async (id) => {

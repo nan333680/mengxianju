@@ -57,8 +57,8 @@ await page.$eval('#s-apikey',(el,k)=>{el.value=k;el.dispatchEvent(new Event('cha
 await tap(page, '#btn-set-back');
 await new Promise(r => setTimeout(r, 500));
 // ⚠️ 从这里返回会停在【抽屉】页（view-drawer），不是聊天页。
-// #btn-image 的尺寸位置都对，但被抽屉盖住 —— page.click 点不到（fileChooser 永不触发），
-// 而 el.click() 能穿透却弹不出原生文件框。两条路都堵死，必须先把抽屉关掉。
+// 而且 v0.4.4 起选图按钮搬进了输入框的「＋」抽屉里（原来的 #btn-image 已从输入行移除），
+// 所以下面要先回到聊天页、再点 ＋ 拉出抽屉、然后点「发送图片」那一格。
 // 实测现场：view=view-drawer，按钮 40x40@10,803（在视口内但被遮）。
 for (let i = 0; i < 4; i++) {
   const v = await page.evaluate(() => document.querySelector('.view.active')?.id);
@@ -78,13 +78,20 @@ console.log('=== 发图片 ===');
 // 另一个坑：从设置页返回后立刻点会落空（界面还在切）。
 // 所以先等图片按钮真的可见，再点；失败重试一次。
 await page.waitForFunction(() => {
-  const e = document.getElementById('btn-image');
+  const e = document.getElementById('btn-plus');
   return e && e.offsetParent !== null && !e.classList.contains('hidden');
 }, { timeout: 8000 });
 await new Promise(r => setTimeout(r, 600));
+// 点 ＋ 拉出抽屉，等「发送图片」那一格真的画出来、可见
+await page.click('#btn-plus');
+await page.waitForFunction(() => {
+  const e = document.querySelector('#cmd-drawer .cmd-item[data-cmd="image"]');
+  return e && e.offsetParent !== null;
+}, { timeout: 8000 });
+await new Promise(r => setTimeout(r, 400));
 // 打印现场，超时时能一眼看出是"没回到聊天页"还是"按钮真的点不动"
 console.log('  现场: view=' + await page.evaluate(() => document.querySelector('.view.active')?.id)
-  + ' 按钮可见=' + await page.evaluate(() => { const e = document.getElementById('btn-image');
+  + ' 抽屉项可见=' + await page.evaluate(() => { const e = document.querySelector('#cmd-drawer .cmd-item[data-cmd="image"]');
       const r = e.getBoundingClientRect(); return r.width + 'x' + r.height + '@' + Math.round(r.x) + ',' + Math.round(r.y); }));
 
 let chooser = null;
@@ -92,11 +99,13 @@ for (let attempt = 0; attempt < 2 && !chooser; attempt++) {
   try {
     [chooser] = await Promise.all([
       page.waitForFileChooser({ timeout: 10000 }),
-      page.click('#btn-image')
+      page.click('#cmd-drawer .cmd-item[data-cmd="image"]')
     ]);
   } catch (e) {
     if (attempt === 1) throw e;
     await new Promise(r => setTimeout(r, 800));
+    const open = await page.evaluate(() => !document.getElementById('cmd-drawer').classList.contains('hidden'));
+    if (!open) { await page.click('#btn-plus'); await new Promise(r2 => setTimeout(r2, 400)); }
   }
 }
 await chooser.accept([IMG]);

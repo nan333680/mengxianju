@@ -236,7 +236,7 @@ t('请求里没有 B 的记忆（不会串台）', !dumpA.includes('BBB'));
 
 console.log('');
 console.log('=== 3. 记忆节奏参数是全局的（不按角色分）===');
-// 内容按角色分，但「攒多少条总结一次 / 每隔多少轮查重 / 条数上限」是全局统一的。
+// 内容按角色分，但「攒多少条总结一次 / 条数上限」是全局统一的（查重门槛由上限决定，没有单独旋钮）。
 await openSettings(page, sleep);
 await page.evaluate(() => document.getElementById('mem-set-fold').click());
 await sleep(700);

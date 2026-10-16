@@ -10,7 +10,22 @@ const CHROME='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 //    这些套件需要 Key，只是因为产品的默认值（v1.21.40 起）变成了空串。
 const KEY = process.env.DSH_API_KEY || 'sk-test';
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
-const server=http.createServer((req,res)=>{let p=decodeURIComponent(req.url.split('?')[0]);if(p==='/')p='/index.html';const f=path.join(WWW,p);if(!fs.existsSync(f)){res.writeHead(404);res.end('404');return;}res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});res.end(fs.readFileSync(f));});
+const server=http.createServer((req,res)=>{
+  // v0.4.3：第 3 节要验「气泡上的 token 用量角标」，就得有个会回 usage 帧的模型。
+  // 照 e2e/e2e-archive.mjs 的做法，把 /api/chat/completions 挂在本机这台 server 上
+  // （不出网），再把产品的 baseUrl 指过来 —— 见下面设 #s-baseurl 那两行。
+  // 在此之前这一节是打真网的：没有真 Key 时必然拿不到 usage，3 条断言长期红着。
+  if(req.url.startsWith('/api/chat/completions')){
+    let raw='';req.on('data',c=>raw+=c);
+    req.on('end',()=>{
+      res.writeHead(200,{'Content-Type':'text/event-stream'});
+      res.write('data: '+JSON.stringify({choices:[{delta:{content:'用量测试。'}}]})+'\n\n');
+      res.write('data: '+JSON.stringify({choices:[{delta:{}}],usage:{prompt_tokens:12,completion_tokens:7,total_tokens:19}})+'\n\n');
+      res.write('data: [DONE]\n\n');res.end();
+    });
+    return;
+  }
+  let p=decodeURIComponent(req.url.split('?')[0]);if(p==='/')p='/index.html';const f=path.join(WWW,p);if(!fs.existsSync(f)){res.writeHead(404);res.end('404');return;}res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});res.end(fs.readFileSync(f));});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const port=server.address().port;
 const browser=await puppeteer.launch({executablePath:CHROME,headless:true,args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']});
@@ -58,6 +73,9 @@ await seedChar(page, '测试角色', { greeting: '' });   // 空开场白：不�
 await page.reload({waitUntil:'networkidle0'}); await sleep(500);
 await openSettings(page, sleep);
 await page.$eval('#s-apikey',(el,k)=>{el.value=k;el.dispatchEvent(new Event('change',{bubbles:true}));},KEY);
+await sleep(300);
+// v0.4.3：把 baseUrl 指到本机 server（它挂着会回 usage 帧的 /api/chat/completions），别再打真网。
+await page.$eval('#s-baseurl',(el,p)=>{el.value=p;el.dispatchEvent(new Event('change',{bubbles:true}));},'http://127.0.0.1:'+port+'/api');
 await sleep(300);
 
 console.log('=== 1. 时段划分收成折叠 + 8 行时段搬进弹窗 ===');

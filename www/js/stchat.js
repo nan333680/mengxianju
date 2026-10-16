@@ -11,7 +11,11 @@
  *   第一行可能是元信息 {"user_name":"我","character_name":"她","create_date":"..."}
  *   之后每行一条 {"name":"她","is_user":false,"mes":"……","send_date":"..."}
  * 也见过整体是一个 JSON 数组 / { messages: [...] } 的导出，一并认。
+ *
+ * ⚠️ v0.4.2.1：所有 JSON.parse 换成 charcard 的 parseJsonSafe ——
+ *    聊天记录是【外面来的文件】，里面的键名不该有机会改写我们合并出来的对象原型。
  */
+import { parseJsonSafe } from './charcard.js';
 
 /** 一行一条地解析；单行坏掉只跳过那一行，不整份判死 */
 export function parseStChatJsonl(text) {
@@ -24,7 +28,7 @@ export function parseStChatJsonl(text) {
   let sawArray = false;
   for (const line of lines) {
     let o;
-    try { o = JSON.parse(line); } catch { bad++; continue; }
+    try { o = parseJsonSafe(line); } catch { bad++; continue; }
     if (Array.isArray(o)) { sawArray = true; for (const x of o) if (x && typeof x === 'object') out.push(x); continue; }
     if (!o || typeof o !== 'object') { bad++; continue; }
     // 元信息行：有 user_name / character_name 但【没有 mes】的，当头部处理
@@ -45,7 +49,7 @@ export function parseStChatJsonl(text) {
 /** 整体是一个 JSON（数组，或 { messages: [...] }）的导出 */
 export function parseStChatJson(text) {
   let o;
-  try { o = JSON.parse(String(text == null ? '' : text)); }
+  try { o = parseJsonSafe(String(text == null ? '' : text)); }
   catch (e) { return { ok: false, reason: '不是合法的 JSON：' + ((e && e.message) || e) }; }
   let arr = null;
   let meta = null;

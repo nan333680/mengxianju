@@ -83,9 +83,11 @@ await page.evaluate(() => { const f=document.querySelector('#mem-set-fold'); if(
 await sleep(700);
 const vals = await page.evaluate(() => ({
   sum: document.querySelector('#s-mem-sum').value,
-  dedupe: document.querySelector('#s-mem-dedupe').value,
+  dedupeGone: !document.querySelector('#s-mem-dedupe'),
 }));
-t('节奏参数仍是 50/20', vals.sum === '50' && vals.dedupe === '20', JSON.stringify(vals));
+t('总结间隔仍是 50', vals.sum === '50', JSON.stringify(vals));
+// 2026-10-15：这个旋钮删了 —— 查重门槛看的是「新增记忆条数」，不是轮次。
+t('「查重间隔」旋钮已删除', vals.dedupeGone === true);
 
 console.log('\nJS 错误: ' + (errs.length ? errs.join(' | ') : '无'));
 t('无 JS 报错', errs.length === 0, errs.join(' | '));

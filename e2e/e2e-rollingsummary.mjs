@@ -64,7 +64,7 @@ await page.evaluate(async (id) => {
   const cur = await new Promise(r => { const q = kv.get('settings'); q.onsuccess = () => r(q.result ? q.result.v : {}); });
   kv.put({ k:'settings', v: Object.assign({}, cur, {
     apiKey:'sk-test-fake', baseUrl:'https://api.deepseek.com', model:'deepseek-flash',
-    archiveKeep: 40, autoArchive: true, memSummarizeEvery: 60, memDedupeEvery: 15, memLimit: 25,
+    archiveKeep: 40, autoArchive: true, memSummarizeEvery: 60, memLimit: 25,
   })});
   kv.put({ k:'lastCharId', v: id });
   await new Promise(r => ktx.oncomplete = r);

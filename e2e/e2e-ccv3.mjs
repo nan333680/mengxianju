@@ -70,7 +70,9 @@ console.log('=== 3. 世界书条目：V3 字段 ===');
 let es = entriesFromList([{
   keys: ['雾'], secondary_keys: ['夜'], content: '正文', enabled: true,
 }], { char: '紫', user: '你' });
-t('V3 的 secondary_keys 认（不再当成"没有二次条件"）', es.length === 1 && es[0].needsReview === true && es[0].reviewWhy.includes('二次筛选'), es[0]);
+// ⚠️ v0.4.2.1：二次筛选不再是"读不懂"—— 它现在真的按 selectiveLogic 筛（hitKeys）。
+t('V3 的 secondary_keys 认，而且不再标待确认', es.length === 1 && es[0].needsReview === undefined
+  && es[0].selective === true && (es[0].secondary || []).join() === '夜' && es[0].logic === 0, es[0]);
 
 es = entriesFromList([{ keys: ['^魔.*法$'], use_regex: true, content: '正则条目', enabled: true }], {});
 t('use_regex 从 v0.4.0 起【不再】标待确认（有能力兑现了）', es[0].needsReview === undefined, es[0]);

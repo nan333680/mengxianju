@@ -147,7 +147,12 @@ console.log('=== 其余静态确认 ===');
   const per = readCode(WWW + '/js/persona.js');
   t('#1a 备份存全量', src.includes('items: listAll.map(m => ({ id: m.id'));
   t('#1b 撤销保护 mine', src.includes('const removable = _guardMine ? nowList.filter(m => !m.mine) : nowList;'));
-  t('新6 tooFew 比例下限', src.includes('|| (destructive && items.length < Math.max(2, Math.floor(list.length * 0.25)))'));
+  // ⚠️ 断言更新（v0.4.2.2 审计 F25）：原来的比例下限是 25% —— 8 条回 2 条、20 条回 6 条都算
+  //    「正常」，审计实测「记忆越整理越少」就是这个判据放行的（146 条消息的西瓜最后剩 1 条）。
+  //    现在改成【至少留住一半】，空库是例外（没有旧记忆可销毁，模型回 [] 是正确回答，
+  //    拦它只会白花 API 并卡住删除队列 —— e2e-balance 抓到过）。
+  t('新6 tooFew 比例下限', src.includes('const keepFloor = list.length ? Math.max(1, Math.ceil(list.length * 0.5)) : 0;'));
+  t('新6 判据改用 keepFloor', src.includes(': (items.length < keepFloor);'));
   t('新4 护栏用目标角色', src.includes('const P0 = effSettings((await chars.get(myCharId)) || curChar, S);'));
   t('新7 tidyNow 传 cid0', src.includes('await tidyNow(cid0);'));
   t('新8 补跑带 reason', src.includes('dedupeIfNeeded(true, cidFor, noTick, reason)'));

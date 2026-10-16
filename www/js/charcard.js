@@ -94,6 +94,25 @@ export function crc32(bytes) {
  */
 export function normalizeCard(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('卡片不是一个对象');
+  // ⚠️ 老 TavernAI / Pygmalion 的 JSON（v0.4.2.1 补）。
+  //    那一代卡不叫 name/description，叫 char_name / char_persona / world_scenario /
+  //    example_dialogue / char_greeting —— 字段名全不一样，于是这里会直接报
+  //    「卡片里没有 name 字段」，用户看到的是"这个文件不是角色卡"。
+  //    而这些卡在网上还大量存在（Pygmalion 时代的遗产），且信息量一点不少。
+  //    判据：没有 name、没有 data、但有 char_name —— 三个条件同时成立才走这条映射，
+  //    免得把别的形状误认成老卡。
+  if (!raw.name && !(raw.data && typeof raw.data === 'object') && (raw.char_name || raw.char_persona)) {
+    raw = {
+      name: String(raw.char_name || '').trim(),
+      description: String(raw.char_persona || raw.persona || ''),
+      personality: String(raw.personality || ''),
+      scenario: String(raw.world_scenario || raw.scenario || ''),
+      first_mes: String(raw.char_greeting || raw.first_mes || ''),
+      mes_example: String(raw.example_dialogue || raw.mes_example || ''),
+      creator_notes: String(raw.creatorcomment || raw.creator_notes || ''),
+      tags: Array.isArray(raw.tags) ? raw.tags : [],
+    };
+  }
   // V2 把真正的字段放在 data 里；V1 平铺。
   // 判据用 data 是否存在且是对象 —— 不能靠 spec 字段，实测有卡只写了 data 没写 spec。
   const d = (raw.data && typeof raw.data === 'object') ? raw.data : raw;
@@ -146,10 +165,27 @@ export function normalizeCard(raw) {
   };
 }
 
+/**
+ * 解析【外来】JSON 文本（v0.4.2.1）。
+ *
+ * ⚠️ 为什么不直接用 JSON.parse：卡片 / 世界书 / 备份都是【外面来的文件】。
+ *    JSON.parse 会把 "__proto__" 当成一个普通键【原样建出来】，而下游到处都是
+ *    Object.assign({}, x) / obj[key] 这种写法 —— 一旦源对象带着 __proto__，
+ *    合并出来的对象原型就被换掉了，之后 obj['随便什么'] 可能命中原型链上的值。
+ *    这不是理论问题：ST 的 entries 是 {"0":…,"1":…} 这种**以键为数据**的形态，
+ *    世界书的条目映射也是，都属于"外来键名"直接进对象的高风险面。
+ *    这条路径上没有任何合法数据需要 __proto__ / constructor / prototype 当键名，
+ *    所以一律在 reviver 里丢掉它们，而不是等到出事再补。
+ */
+export function parseJsonSafe(text) {
+  return JSON.parse(String(text), (k, v) =>
+    (k === '__proto__' || k === 'constructor' || k === 'prototype') ? undefined : v);
+}
+
 /** 从 JSON 文本解析卡片 */
 export function parseCardJson(text) {
   let raw;
-  try { raw = JSON.parse(String(text)); }
+  try { raw = parseJsonSafe(text); }
   catch (e) { throw new Error('不是合法的 JSON：' + ((e && e.message) || e)); }
   return normalizeCard(raw);
 }
@@ -167,9 +203,18 @@ export function parseCardJson(text) {
  *   · 正文里的宏（{{char}} / {{user}} / {{random}} …）
  */
 function extractEntries(book, mctx) {
-  if (!book || !Array.isArray(book.entries)) return [];
+  if (!book) return [];
+  // ⚠️ v0.4.2.1：entries 除了数组，还可能是【映射】（{"0":{…},"1":{…}}）。
+  //    酒馆世界书的默认导出形态就是这个，而在角色卡的 character_book 里也大量存在
+  //    （规范写的是数组，但现实里两种都有）。原来这里只认数组 ——
+  //    于是这类卡的世界书【整块静默消失】：卡导进来了，设定一条没有，也不报错。
+  const list = Array.isArray(book.entries) ? book.entries
+    : (book.entries && typeof book.entries === 'object'
+        // Object.keys 而不是 for..in：后者会把原型链上的键也带进来
+        ? Object.keys(book.entries).map(k => book.entries[k]) : null);
+  if (!list) return [];
   const out = [];
-  for (const e of book.entries) {
+  for (const e of list) {
     if (!e || typeof e !== 'object') continue;
     // 装饰器写在 content 最前面。先剥下来，剩下的才是正文。
     const dc = parseDecorators(e.content);
@@ -180,15 +225,25 @@ function extractEntries(book, mctx) {
     if (content.length > 20000) content = content.slice(0, 20000);
     // V2 用 keys，V1 的旧字段叫 key（单数）或 keywords，都认
     let keys = [];
+    // KoboldAI 的 key / keysecondary 是【逗号分隔的字符串】，不是数组
+    //（见 docs/research-外部导入格式.md §7）。整串当一个触发词的话永远也匹配不上，
+    // 而这类文件导进来只会静默变成一条条永不触发的条目。
+    const splitK = (v) => {
+      const raw = String(v == null ? '' : v).trim();
+      if (!raw) return [];
+      return raw.includes(',') ? raw.split(',').map(x => x.trim()).filter(Boolean) : [raw];
+    };
     if (Array.isArray(e.keys)) keys = e.keys;
+    else if (typeof e.keys === 'string') keys = splitK(e.keys);
     else if (Array.isArray(e.keywords)) keys = e.keywords;
+    else if (typeof e.keywords === 'string') keys = splitK(e.keywords);
     // ⚠️ key 也要认数组（v0.3.1 复查）：酒馆世界书的 key 本来就是 string[]，
     //    旧卡里写成 ["甲","乙"] 很常见。原来只认字符串，于是这类条目 keys=[]
     //    → 被标成「没有触发词」的待确认。不会静默生效（闸门挡住了），
     //    但同一个文件从【世界书导入】进来能解析出触发词、从【角色卡】进来却不能，
     //    而上面那段注释刚承诺"两个入口同一套判据"。
     else if (Array.isArray(e.key)) keys = e.key;
-    else if (typeof e.key === 'string') keys = [e.key];
+    else if (typeof e.key === 'string') keys = splitK(e.key);
     keys = keys.map(k => String(k || '').trim().slice(0, 64)).filter(Boolean).slice(0, 64);
     // 装饰器里的 @@additional_keys：规范说它【追加】到 keys 上
     if (dc.act.addKeys && dc.act.addKeys.length) {
@@ -209,12 +264,14 @@ function extractEntries(book, mctx) {
     const decoPos = (dc.act.position === 'before_char' || dc.act.position === 'before') ? 'front'
       : (dc.act.position === 'after_char' || dc.act.position === 'after') ? 'tail' : '';
     // position：0/1 = 角色卡前/后；2/3 = Author's Note 前/后（本软件没有 AN，一并当 front）；
-    //           4 = 按对话深度插入 —— 我们做不了深度插入，落到 tail 并在下面报出来
+    //           4 = 按对话深度插入（v0.4.2.1 起【真的照做】，见下面 pos='atdepth'）
     const deep = Number(e.position) === 4;
+    // 深度：酒馆的 @D 深度就是它，默认 4（官方表单默认值）。0 = 紧贴最后一条。
+    const depthN = deep ? Math.max(0, Math.min(1000, Math.round(Number(e.depth)) || 4)) : -1;
     // @@position 的值我们只认 before/after；别的（比如 at_depth）照样算"做不到"
     const decoPosBad = dc.act.position !== undefined && !decoPos;
     const pos = always ? 'always'
-      : (decoPos || ((mkPos === 'tail' || deep) ? 'tail' : 'front'));
+      : (deep ? 'atdepth' : (decoPos || (mkPos === 'tail' ? 'tail' : 'front')));
     // 读不懂触发条件的，标 needsReview —— 和世界书文件那条导入路径（fromSillyTavern）
     // 用同一套判据，别让同一个文件从两个入口进来得到两种结果。
     const why = [];
@@ -225,11 +282,34 @@ function extractEntries(book, mctx) {
     // ⚠️ V3 把 keysecondary 改名成 secondary_keys（v0.4.0 补）——
     //    只认老名字的话，V3 卡的二次筛选条件会被【当成没有】，
     //    于是"主键一命中就出现"，而不是"两个条件都满足才出现"。
-    const sec = Array.isArray(e.secondary_keys) ? e.secondary_keys
-      : (Array.isArray(e.keysecondary) ? e.keysecondary : []);
-    if (sec.length || e.selective === true) why.push('带二次筛选条件');
-    if (Number(e.probability) > 0 && Number(e.probability) < 100) why.push('按概率随机触发');
-    if (Number(e.position) === 4) why.push('按对话深度插入');
+    //
+    // ⚠️ v0.4.2.1：二次筛选 / 概率 / 深度插入这三样【从"待确认"升级成"真的照做"】
+    //    （见 app.js 的 hitKeys / worldbookHits / composeApiMsgs）。
+    //    原来它们一律标 needsReview、于是【不注入】—— 一份从酒馆搬来的世界书，
+    //    凡是用了这三种设置的条目全部静默躺尸，用户看到的是"导进来了，但她不知道"。
+    //    有能力兑现还标着待确认，就是把能用的东西锁在门外（这条规矩 v0.4.0 已经写过一次）。
+    const secRaw = Array.isArray(e.secondary_keys) ? e.secondary_keys
+      : (Array.isArray(e.keysecondary) ? e.keysecondary
+        : (typeof e.keysecondary === 'string' ? splitK(e.keysecondary)
+          : (typeof e.secondary_keys === 'string' ? splitK(e.secondary_keys) : [])));
+    const sec = secRaw.map(k => String(k == null ? '' : k).trim().slice(0, 64)).filter(Boolean).slice(0, 64);
+    // selectiveLogic：0=AND_ANY（默认，任一二次键命中）1=NOT_ALL 2=NOT_ANY 3=AND_ALL
+    const logicRaw = Number(e.selectiveLogic != null ? e.selectiveLogic : e.selective_logic);
+    const logic = Number.isFinite(logicRaw) ? Math.max(0, Math.min(3, Math.round(logicRaw))) : 0;
+    // 概率：ST 是 0~100，100 = 必触发。useProbability===false 时不看这个数。
+    const probRaw = Number(e.probability);
+    const prob = (e.useProbability === false || !Number.isFinite(probRaw))
+      ? 100 : Math.max(0, Math.min(100, Math.round(probRaw)));
+    // ⚠️ 概率 0 = 永远不会触发。这几乎不可能是用户想要的，所以【不静默吞掉】，
+    //    标成待确认让他自己看见（真要关掉一条应该用「已关闭」）。
+    if (prob === 0) why.push('概率是 0%（永远不会触发）');
+    // 大小写 / 整词匹配：两条都是酒馆的字段。整词匹配对中日文有害（官方文档明确警告），
+    // 所以它只对"纯英文数字"的触发词生效，中文一律还是子串匹配 —— 见 app.js hitKeys。
+    const caseSensitive = e.caseSensitive === true || e.case_sensitive === true;
+    const wholeWords = e.matchWholeWords === true || e.match_whole_words === true;
+    // 插入顺序：酒馆用它决定同一轮里多条设定的先后。读得到就照做（原来是按库里的顺序）。
+    const orderRaw = Number(e.order != null ? e.order : e.insertion_order);
+    const order = Number.isFinite(orderRaw) ? Math.max(-100000, Math.min(100000, Math.round(orderRaw))) : 100;
     // 装饰器里我们【做不到】的那些：把它们明说出来，别装作这张卡是干净的。
     // 只报"会影响生效时机"的 —— 那才是 needsReview 要防的事。
     if (dc.act.onlyAfter != null) why.push('@@activate_only_after ' + dc.act.onlyAfter + '（按对话条数才生效）');
@@ -239,6 +319,15 @@ function extractEntries(book, mctx) {
     if (dc.unsupported.length) why.push('用了本软件做不到的装饰器：' + dc.unsupported.map(x => '@@' + x).join(' '));
     if (decoPosBad) why.push('用了本软件做不到的装饰器：@@position ' + dc.act.position);
     if (dc.unknown.length) why.push('有认不出来的装饰器：' + dc.unknown.map(x => '@@' + x).join(' '));
+    // ⚠️ v0.4.2.1：酒馆还有几种"拿别的文本当触发源"的开关（匹配角色卡描述 / 人设 /
+    //    场景 / 作者注 …）。这些【本软件做不到】，而它们不会让字段变得认不出来 ——
+    //    不说的话，条目在我们这边只按 key 命中，也就是【触发时机是错的】，
+    //    而用户看不到任何提示。按既有规矩：做不到就标出来，别装作这是一张干净的卡。
+    const matchKeys = ['matchPersonaDescription', 'matchCharacterDescription', 'matchCharacterPersonality',
+      'matchCharacterDepthPrompt', 'matchScenario', 'matchCreatorNotes'];
+    const usedMatch = matchKeys.filter(k => e[k] === true);
+    if (usedMatch.length) why.push('用了本软件做不到的触发方式：' + usedMatch.join(' '));
+    if (e.triggers && (!Array.isArray(e.triggers) || e.triggers.length)) why.push('用了本软件做不到的触发器（triggers）');
     // ⚠️ 没有触发词又不是常驻 = 永远不会生效。
     //    v0.3.1 起【不再静默丢掉】（原来这里直接 continue）：标 needsReview 落库，
     //    世界书页会显示「待确认」，用户能点「一直生效」或补触发词。
@@ -252,6 +341,13 @@ function extractEntries(book, mctx) {
                ...(useRegex ? { useRegex: true } : {}),
                // 排除词能兑现（匹配时看到它就跳过），所以单独带出来
                ...(dc.act.excludeKeys && dc.act.excludeKeys.length ? { excludeKeys: dc.act.excludeKeys } : {}),
+               // ---- v0.4.2.1：酒馆那几档"生效时机"字段，落库并真的执行 ----
+               ...(sec.length || e.selective === true ? { secondary: sec, logic, selective: true } : {}),
+               ...(prob < 100 ? { prob } : {}),
+               ...(caseSensitive ? { caseSensitive: true } : {}),
+               ...(wholeWords ? { wholeWords: true } : {}),
+               ...(order !== 100 ? { order } : {}),
+               ...(deep ? { depth: depthN } : {}),
                ...(why.length ? { needsReview: true, reviewWhy: why.join('、') } : {}) });
   }
   return out;
@@ -468,7 +564,7 @@ export function insertTextChunk(pngBytes, keyword, text) {
  */
 const MK_CARD_KEYS = [
   'temperature', 'maxTokens', 'contextRounds', 'reasoningEffort',
-  'kaomojiFreq', 'kaomojiStyle', 'emojiFreq', 'verbosity', 'descLevel', 'detailDrive',
+  'kaomojiFreq', 'emojiFreq', 'verbosity', 'descLevel', 'detailDrive',
   'splitMessages', 'povLock', 'thinkMode', 'searchPolicy', 'clockPolicy',
   // ⚠️ povStyle 是现行字段（v1.21.49 起），povLock 已经废弃只是还留着兼容。
   //    这张表原来只有废弃的那个 —— 于是 L2/L3/L4 视角的角色导出卡片再导回来，
@@ -510,7 +606,7 @@ const NUM_LIMITS = {
 };
 const BOOL_KEYS = ['splitMessages', 'thinkMode', 'appearanceOn', 'longMemory', 'allowEditMine', 'hesitation', 'showTyping', 'povLock'];
 const STR_KEYS = {
-  reasoningEffort: 32, kaomojiStyle: 32, verbosity: 32, descLevel: 32,
+  reasoningEffort: 32, verbosity: 32, descLevel: 32,
   detailDrive: 32, povStyle: 8, searchPolicy: 8, clockPolicy: 8,
 };
 const TEXT_KEYS = { appearance: 8000, appearanceLive: 8000, scene: 8000 };
@@ -560,6 +656,9 @@ export function buildCardV2(char, entries, opts) {
   // 所以只有真带了 V3 字段时才写 V3，否则老老实实 V2（别的软件对 V2 最友好）。
   const nick = String(char.nickname || '').trim();
   const grp = Array.isArray(char.groupGreetings) ? char.groupGreetings.map(String).filter(Boolean) : [];
+  const alt = Array.isArray(char.alternateGreetings)
+    ? char.alternateGreetings.map(String).filter(Boolean).slice(0, 20) : [];
+  // alternate_greetings 其实是 V2 就有的字段，所以它【不】参与 V3 判定
   const isV3 = !!(nick || grp.length);
   // 卡里"另外那几项"（v0.4.2 起存进 char.cardFields）
   const cf = (char.cardFields && typeof char.cardFields === 'object') ? char.cardFields : {};
@@ -578,8 +677,9 @@ export function buildCardV2(char, entries, opts) {
     creator_notes: '由 梦弦居 导出',
     system_prompt: cf.systemPrompt || '',
     post_history_instructions: cf.postHistory || '',
-    alternate_greetings: [],
-    tags: [],
+    // v0.4.2.1：这两样现在存下来了，导出必须写回去 —— 不然换台机器导回去又没了
+    alternate_greetings: alt,
+    tags: Array.isArray(char.tags) ? char.tags.map(String).slice(0, 20) : [],
     creator: '',
     character_version: '',
     // 只有 V3 才写的字段：规范要求它们存在，写空数组也比不写强

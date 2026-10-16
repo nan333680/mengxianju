@@ -12,6 +12,17 @@
  * 「什么时候该跑」「写不进去怎么办」「删哪几份」测干净。
  */
 
+/**
+ * 解析备份 JSON（v0.4.2.1）。
+ * ⚠️ 本文件刻意【不 import 任何东西】（见开头），所以这里就地写一份 ——
+ *    和 charcard.js 的 parseJsonSafe 是同一条规矩：备份文件是要发给别人、
+ *    传网盘的，里面的 "__proto__" / "constructor" 键不能有机会进到我们的对象里。
+ */
+function parseJsonSafe(text) {
+  return JSON.parse(String(text), (k, v) =>
+    (k === '__proto__' || k === 'constructor' || k === 'prototype') ? undefined : v);
+}
+
 /** 两次自动备份的最小间隔：一天 */
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -192,7 +203,7 @@ export async function readLatestBackup(o) {
       continue;
     }
     let obj;
-    try { obj = JSON.parse(raw); }
+    try { obj = parseJsonSafe(raw); }
     catch (e) {
       keepBad({ ok: false, reason: 'corrupt', dir, name: latest, bytes: raw.length,
                 error: String((e && e.message) || e) });

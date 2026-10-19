@@ -42,6 +42,24 @@ await page.evaluateOnNewDocument(() => {
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// 菜单是异步构建的（首条还要 await isGreetingMsg），CI 上「contextmenu 后 sleep(400)」不一定够。
+// 原来是直接 b.click()，没等到就报 "Cannot read properties of undefined (reading 'click')" ——
+// 整个套件崩在那行，看不出是哪一项没等到（v0.5.1 上 CI 时踩到，本地 36/0 全绿，纯时序）。
+// 改成轮询：超时抛一条能读懂的话，断言数不变，也不会因为慢一点就崩。
+async function clickMenu(label, ms = 8000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const hit = await page.evaluate((lb) => {
+      const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.trim() === lb);
+      if (!b) return false;
+      b.click();
+      return true;
+    }, label);
+    if (hit) return true;
+    await sleep(120);
+  }
+  throw new Error('菜单里一直没出现「' + label + '」（等了 ' + ms + 'ms）');
+}
 let lastReq = null;
 await page.setRequestInterception(true);
 page.on('request', req => {
@@ -134,10 +152,7 @@ await page.evaluate(() => {
   el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
 });
 await sleep(400);
-await page.evaluate(() => {
-  const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.trim() === '重新生成');
-  b.click();
-});
+await clickMenu('重新生成');
 await waitDone();
 await sleep(1200);
 msgs = await aiMessages();
@@ -152,10 +167,7 @@ await page.evaluate(() => {
   el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
 });
 await sleep(400);
-await page.evaluate(() => {
-  const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.trim() === '换一个版本');
-  b.click();
-});
+await clickMenu('换一个版本');
 await waitDone();
 await sleep(1500);
 msgs = await aiMessages();

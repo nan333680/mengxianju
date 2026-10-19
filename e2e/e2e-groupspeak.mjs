@@ -99,9 +99,20 @@ await page.evaluate(async () => {
     speakMode: 'round', turnIndex: 0, avatar: null, greeting: '（三个人都在。）', presetKey: 'blank', createdAt: Date.now() });
   db.close();
 });
-await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
+await page.reload({ waitUntil: 'networkidle0' });
+// ⚠️ CI 的 runner 比本地慢好几倍：reload 之后 app 要先从 IndexedDB 把 settings 读进来，
+//   读进来之前用的是内存默认值（apiKey 是空的）。原来固定 sleep(1200) 在本地够，CI 上不够 ——
+//   于是整个套件从第一条起就「没读到请求」，toast 全是「请先到设置里填写 API Key」，
+//   看着像 10 个功能 bug，其实是等得太短。改成轮询那条「还没填 API Key」的引导条自己 hidden
+//   （app 的 updateStatus() 有 key 就 hidden，那就是设置已经读完了），最多等 25 秒。
+await page.waitForFunction(() => {
+  const b = document.getElementById('setup-banner');
+  return !!b && b.classList.contains('hidden');
+}, { timeout: 25000 });
 await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === 'ggrp1').click(); });
-await sleep(1400);
+// 点开角色卡之后同理：等这一幕的问候语气泡真渲染出来，再往下断言。
+await page.waitForFunction(() => document.querySelectorAll('#messages .msg').length >= 1, { timeout: 25000 });
+await sleep(300);
 
 // ⚠️ v0.4.1.6：这一幕几个人是【抽】的（1/2/3）。抽到 1 个人会换成"只写她一个人"
 //    那套提示词，而这一套断言是冲着"小说式一幕"的措辞来的 —— 先把随机数压在

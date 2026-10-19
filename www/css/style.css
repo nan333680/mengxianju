@@ -716,7 +716,13 @@ input + .hint-text{ margin-top:8px; }
 .clock-bar:active{ background:var(--bg3); color:var(--fg2); }
 /* v1.21.47：时间 + 场景两个入口共用这一条，不额外占一行高度 */
 .bar-row{ display:flex; align-items:stretch; flex-shrink:0; }
-.bar-row .clock-bar{ flex:1 1 auto; width:auto; min-width:0; }
+/* v0.5.0：这条 bar 上现在有三个按钮（时间 / 场景 / 剧情）。
+   原来只写了 flex:1 平分，开了「跟随手机时间」之后时间条会被挤到换行 ——
+   所以这里补上 nowrap + 省略号，让挤不下的时候是打点而不是折成两行。
+   权重 2:1：时间条上的字最长（第 3 天 · 傍晚 · 晴　· 跟随手机时间），最该多占。 */
+.bar-row .clock-bar{ flex:1 1 auto; width:auto; min-width:0; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+.bar-row #chat-clock{ flex:2 1 auto; }
 .scene-bar{
   flex:0 0 auto; max-width:46%;
   border-left:1px solid var(--line);
@@ -1412,3 +1418,80 @@ input[type="range"] { touch-action: pan-y; }
 
 /* 群成员二级页：滑块旁边的档位名（v0.4.1.8） */
 .gm-band{ font-style:normal; color:var(--fg3); font-size:12px; margin-left:6px; }
+
+/* ===== 剧情卡（v0.5.0）===== */
+/* 顶部第三条 bar 上的「剧情」入口。和场景条并排：
+   场景 max-width:46% 是给它自己留的，剧情条只放「剧情 · 2/3」这种短字，
+   所以让它按内容宽（flex:0 0 auto），剩下的都给时间条。 */
+/* ⚠️ 选择器要带 .bar-row：光写 .arc-bar 会被 `.bar-row .clock-bar{flex:1 1 auto}` 盖掉，
+   挤的时候它照样被压 —— 这一条是百分数计数，压一点就变成「剧情 · …」。 */
+.bar-row .arc-bar{
+  flex:0 0 auto; max-width:34%;
+  border-left:1px solid var(--line);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* 有卡在跑时亮起来 —— 和 scene-bar.on 同一套视觉语言 */
+.arc-bar.on{ color:var(--pri2); }
+
+/* padding-bottom 归 0：底部按钮条是 sticky 的，让它自己带内边距贴到弹窗下沿，
+   否则 16px 的容器内边距会让第二拍的内容从按钮条下面露出来。 */
+.arc-box{ max-height:82vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-bottom:0; }
+.arc-box > h4{ margin-bottom:6px; }
+.arc-sub{ margin:0 0 14px; font-size:12px; line-height:1.7; color:var(--fg3); }
+.arc-sub b{ color:var(--fg2); }
+
+.arc-field{ display:block; margin:0 0 12px; }
+.arc-field > span{ display:block; margin-bottom:5px; font-size:12.5px; color:var(--fg2); }
+.arc-field > span em{ font-style:normal; color:var(--fg3); font-size:11.5px; }
+.arc-field input, .arc-field textarea{
+  width:100%; box-sizing:border-box;
+  padding:9px 11px; border:1px solid var(--line); border-radius:10px;
+  background:var(--bg3); color:var(--fg);
+  font-family:inherit; font-size:13.5px; line-height:1.6;
+  resize:vertical;
+}
+.arc-field input:focus, .arc-field textarea:focus{ border-color:var(--pri); outline:none; }
+
+.arc-beats-head{ display:flex; align-items:center; gap:8px; margin:14px 0 8px; font-size:12.5px; color:var(--fg2); }
+.arc-beats-cnt{ margin-left:auto; font-size:11.5px; color:var(--fg3); }
+.arc-beats{ display:flex; flex-direction:column; gap:10px; }
+
+.arc-beat{
+  border:1px solid var(--line); border-radius:12px;
+  padding:10px 11px; background:var(--bg3);
+}
+/* 当前这一拍高亮 —— 提示词里注入的就是它，界面上得对得上 */
+.arc-beat.cur{ border-color:var(--pri); box-shadow:0 0 0 1px var(--pri) inset; }
+.arc-beat-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.arc-beat-no{ flex:0 0 auto; font-size:11.5px; color:var(--fg3); }
+.arc-beat-head input{
+  flex:1 1 auto; min-width:0;
+  padding:6px 9px; border:1px solid var(--line); border-radius:8px;
+  background:var(--bg2); color:var(--fg); font-family:inherit; font-size:13px;
+}
+.arc-beat-head input:focus{ border-color:var(--pri); outline:none; }
+.arc-beat-set{ flex:0 0 auto; padding:3px 8px; font-size:11.5px; border-radius:8px;
+  border:1px solid var(--line); background:transparent; color:var(--fg3); cursor:pointer; }
+.arc-beat.cur .arc-beat-set{ color:var(--pri2); border-color:var(--pri2); }
+.arc-beat-del{ flex:0 0 auto; padding:3px 7px; font-size:12px; border:none; background:transparent;
+  color:var(--fg3); cursor:pointer; }
+.arc-beat-del:active{ color:var(--danger, #e0574f); }
+.arc-beat-row{ display:flex; align-items:center; gap:6px; margin-top:6px; }
+.arc-beat-row > label{ flex:0 0 auto; width:3.6em; font-size:11.5px; color:var(--fg3); }
+.arc-beat-row > input{
+  flex:1 1 auto; min-width:0;
+  padding:6px 9px; border:1px solid var(--line); border-radius:8px;
+  background:var(--bg2); color:var(--fg); font-family:inherit; font-size:12.5px;
+}
+.arc-beat-row > input:focus{ border-color:var(--pri); outline:none; }
+
+.arc-empty{ margin:2px 0 0; padding:18px 12px; text-align:center; font-size:12.5px; line-height:1.7;
+  color:var(--fg3); border:1px dashed var(--line); border-radius:10px; }
+.arc-add{ width:100%; margin-top:10px; }
+/* 82vh 的滚动区里，填到第二拍时这三颗按钮就被推到视口外了 ——
+   用户填完内容反而找不到「保存」。粘在底部：滚到哪都在。
+   bottom:-16px 抵掉 .modal-box 的 padding-bottom，滚到底时贴着弹窗下沿。 */
+.arc-foot{ display:flex; gap:8px; margin-top:16px; position:sticky; bottom:0; z-index:2;
+  background:var(--bg2); padding:12px 0 16px; border-top:1px solid var(--line); }
+.arc-foot > button{ flex:1; }
+.arc-foot #arc-save{ flex:1.4; }

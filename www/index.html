@@ -28,6 +28,9 @@
   <div class="bar-row" data-i18n-nodes>
     <button class="clock-bar" id="chat-clock" title="点这里调整剧情时间" data-i18n-en="Day 1 · Morning">第 1 天 · 早上</button>
     <button class="clock-bar scene-bar" id="chat-scene" title="这一段对话发生在哪" data-i18n-en="Scene">场景</button>
+    <!-- 「剧情」条（v0.5.0）：有卡时显示「剧情 · 2/3」，没卡就灰着。
+         和场景挤同一条 bar —— 顶部已经三行了，不再单开一行。 -->
+    <button class="clock-bar arc-bar" id="chat-arc" title="这段剧情往哪走" data-i18n-en="Plot">剧情</button>
   </div>
 
   <!-- 群聊的在场名单（v0.4.0）：只在群聊里出现。点一个名字 = 下一轮让她说。
@@ -1272,6 +1275,49 @@
 <!-- ============ 导入：先看内容，再选模式 ============ -->
 <!-- 刻意不复用 #modal：那个只有「确定/取消」两个按钮，这里要 5 选 1 + 一段文件预览。
      也刻意排在 #modal 之后 —— .view 之外的弹窗同样靠 DOM 顺序决定层级（血泪 8）。 -->
+<!-- ============ 剧情卡（v0.5.0）============ -->
+<!-- 一张卡 = 这段关系要往哪走。为什么是弹窗不是设置页里的一项：
+     它跟着【这个角色/这个群】走，是聊天时随时要看要改的东西，
+     放到设置页里就得「进设置 → 找角色 → 翻到最下面 → 改完返回」。
+     结构和 #drive-modal 一致（列表 + 底部按钮），层级靠 DOM 顺序。 -->
+<div id="arc-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box arc-box">
+    <h4 data-i18n-en="Where this story is going">这段剧情往哪走</h4>
+    <p class="arc-sub">写出方向，她自己往下演；不用写台词，也不用写完整大纲。<br>
+       <b>只注入当前这一拍</b> —— 后面几拍她看得到终点，但不会被要求一次演完。</p>
+
+    <label class="arc-field">
+      <span>这段叫什么<em>（可空）</em></span>
+      <input id="arc-title" type="text" maxlength="60" placeholder="红蓝的旧物" data-i18n-en-ph="e.g. The old thing">
+    </label>
+
+    <label class="arc-field">
+      <span>想往哪走</span>
+      <textarea id="arc-direction" rows="3" maxlength="1200"
+        placeholder="从互相试探到摊牌，但谁都不先承认在意。"></textarea>
+    </label>
+
+    <label class="arc-field">
+      <span>不能发生什么<em>（一行一条）</em></span>
+      <textarea id="arc-constraints" rows="2" maxlength="480"
+        placeholder="不无故和解&#10;不突然失忆"></textarea>
+    </label>
+
+    <div class="arc-beats-head">
+      <span>几拍</span>
+      <span class="arc-beats-cnt" id="arc-beats-cnt">0 / 5</span>
+    </div>
+    <div id="arc-beats" class="arc-beats"></div>
+    <button class="ghost-btn arc-add" id="arc-add-beat">＋ 加一拍</button>
+
+    <div class="arc-foot">
+      <button class="ghost-btn" id="arc-off" data-i18n-en="Turn off">关掉剧情</button>
+      <button class="ghost-btn" id="arc-cancel" data-i18n-en="Cancel">取消</button>
+      <button class="send-btn" id="arc-save" data-i18n-en="Save">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- 描写详细程度档位选择（v1.21.31）：点设置页/角色页那一项弹出来。
      做成弹窗而不是内嵌下拉，是因为每档都要带一段说明，内嵌会把设置页撑得更长。
      排在 #import-modal 之前 —— 层级靠 DOM 顺序（血泪 8）。 -->

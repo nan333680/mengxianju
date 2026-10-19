@@ -532,6 +532,12 @@ const BY_ZH = {
   '这一轮大概往哪走？例如：她开始起疑心，气氛往下沉': 'Where should the plot head this turn? e.g. she starts getting suspicious',
   '说明这张图…': 'Describe this image…',
   '上一批图片还在处理，稍等一下': 'Still processing the last batch, one moment',
+  // v0.5.0 剧情卡。弹窗里的静态标注走 data-i18n-en，这里登记的是 app.js 拼出来的那几条
+  // （空态提示是纯 JS 串，扫不到）。
+  '还没拍。写个方向直接保存也行 —— 不发拍就只按方向走。': 'No beats yet. A direction alone is fine — it will follow that without beats.',
+  '剧情卡已保存': 'Plot card saved',
+  '剧情卡已清空': 'Plot card cleared',
+  '这一段的剧情卡已关掉（内容还在）': 'Plot card turned off (its content is kept)',
 };
 
 let _lang = 'zh';       // 实际生效的（'zh' / 'en'）

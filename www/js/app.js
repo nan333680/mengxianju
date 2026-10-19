@@ -13,6 +13,7 @@ import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entr
 import { autoBackupIfDue, verifyLatestBackup, readLatestBackup, BACKUP_DIRS, KEEP as BACKUP_KEEP, DAY_MS as BACKUP_DAY_MS } from './autobackup.js';
 // 导出 Markdown（v1.21.48）：纯函数，接一组消息吐一个字符串
 import { buildChatMarkdown, markdownFileName } from './exportmd.js';
+import { normalizeArc, arcActive, emptyArc, ARC_BEATS_MAX } from './storyarc.js';
 // 酒馆正则（v0.4.0）：解析 + 应用都在 stregex.js 里，不碰 DOM 也不碰数据库。
 // ⚠️ 红线写在那文件头上：正则只作用于【副本】（提示词 / 屏幕），永不回写存档。
 import { parseStRegexList, applyStRegex, previewOne } from './stregex.js';
@@ -1396,6 +1397,7 @@ async function ensureChar() {
 async function showEmptyChat() {
   curCharId = null;
   curChar = null;
+  await refreshArcBar();           // v0.5.0：没角色就没有剧情卡
   const nm = $('chat-name'); if (nm) nm.textContent = '还没有角色';
   const av = $('chat-avatar'); if (av) av.textContent = '🎎';
   const bar = $('chat-clock'); if (bar) bar.textContent = '';
@@ -1424,6 +1426,7 @@ async function selectChar(id) {
   if (!curChar) { await ensureChar(); return; }
   await kv.set('lastCharId', id);   // 记下来，下次打开还回到她这儿
   await loadClock(id);             // 每个角色的剧情时间各走各的
+  await refreshArcBar();           // v0.5.0：剧情卡也是每个角色一张
   $('chat-name').textContent = curChar.name || '未命名';
   const av = $('chat-avatar');
   if (curChar.avatar) {
@@ -5654,6 +5657,10 @@ let namedInText = false;
     // 记忆召回的话题（v1.21.56）：用【本轮说的话 + 最近两条】。
     // 刻意不用上面那个 wbText —— 它带 6 条上下文，二元组命中会掺进太多噪声。
     const memTopic = [visibleText].concat(pastRaw.slice(-2).map(m => m.content || '')).join(' ');
+    // 剧情卡（v0.5.0）：跨轮的方向层。每轮都从库里读一次 ——
+    // 他在面板里改完下一轮就生效，不用重开聊天；读不到就当没卡。
+    let arc = null;
+    try { arc = normalizeArc(await kv.get('arc:' + myChar.id, null)); } catch { arc = null; }
     const turnNote = buildTurnNote(myChar, P, {
       memories, useKaomoji, useEmoji, worldbook, rolling, topic: memTopic,
       clock: clockFull(clockState), clockLocked: !!clockState.locked,
@@ -5664,6 +5671,8 @@ let namedInText = false;
       directives: _cmds.filter(c => c.k === 'direct' && c.arg).map(c => c.arg),
       // 「剧情方向」（v0.4.3.2）：他这一轮想让事态往哪走 —— 只这一轮，不进人设、不进历史。
       plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
+      // 「剧情卡」（v0.5.0）：跨轮的方向层（当前拍）。没在跑就是 off，提示词里不出现。
+      arc,
       // 「上一轮的要求」（v0.4.2.2）：这一轮没再提「本轮更改」时，把上一轮那条继续带一轮。
       // 这一轮又提了就以本轮为准（传空 —— 上一轮那条当场作废，不留长尾）。
       carry: _cmds.some(c => c.k === 'direct' && c.arg) ? [] : (_prevCarry ? [_prevCarry] : []),
@@ -10538,6 +10547,156 @@ function searchKeyFor() {
  *   同一个事实两个说法。顺带把 === false 也改成 !S.searchOn：
  *   老备份缺这个键时，严格等于会走成「缺 key」而设置页走成「未启用」。
  */
+/* ===== 剧情卡（v0.5.0）=====
+   一张卡 = 「这段关系要往哪走」。逻辑在 www/js/storyarc.js，这里只管界面和存储。
+   数据放 kv（'arc:' + charId），和 clock 一个套路 —— 不动 characters 的结构，
+   所以导出/导入、自动备份都不用改；kv 本来就在备份里。
+   ⚠️ 单聊和群聊共用一个 key 空间：群在数据里就是一条 character 记录。
+*/
+
+/** 正在编辑的草稿。打开弹窗时从库里拷一份，取消就不落盘。 */
+let _arcEdit = emptyArc();
+let _arcOwner = '';
+
+const arcKey = (id) => 'arc:' + id;
+
+async function loadArcFor(id) {
+  if (!id) return emptyArc();
+  try { return normalizeArc(await kv.get(arcKey(id), null)); } catch { return emptyArc(); }
+}
+
+/** 顶部那条「剧情 · 2/3」。切角色、保存、清空都要刷一次。 */
+async function refreshArcBar() {
+  const btn = $('chat-arc');
+  if (!btn) return;
+  const a = await loadArcFor(curCharId);
+  const on = arcActive(a);
+  const n = a.beats.length;
+  btn.classList.toggle('on', on);
+  const zh = getActiveLang() === 'zh';
+  // 英文界面下不进这里的动态文案（'Plot 2/3' 这种），只留 'Plot'：
+  // data-i18n-en 是静态的，混着写会让切语言时一半中文一半英文。
+  btn.textContent = !zh ? (on ? 'Plot ' + (n ? (a.currentBeat + 1) + '/' + n : '') : 'Plot').trim()
+    : (on && n ? '剧情 · ' + (a.currentBeat + 1) + '/' + n : '剧情');
+}
+
+function renderArcBeats() {
+  const box = $('arc-beats');
+  const beats = _arcEdit.beats;
+  if (!beats.length) {
+    box.innerHTML = '<p class="arc-empty">' + esc(tt('还没拍。写个方向直接保存也行 —— 不发拍就只按方向走。')) + '</p>';
+  } else {
+    box.innerHTML = beats.map((b, i) => `
+      <div class="arc-beat${i === _arcEdit.currentBeat ? ' cur' : ''}" data-i="${i}">
+        <div class="arc-beat-head">
+          <span class="arc-beat-no">第 ${i + 1} 拍</span>
+          <input data-f="t" maxlength="60" placeholder="这一拍叫什么（可空）" value="${esc(b.t)}">
+          <button class="arc-beat-set" data-act="set">${i === _arcEdit.currentBeat ? '当前' : '设为当前'}</button>
+          <button class="arc-beat-del" data-act="del" title="删掉这一拍">✕</button>
+        </div>
+        <div class="arc-beat-row"><label>要到</label><input data-f="goal" maxlength="200" placeholder="这一拍要达到的地方" value="${esc(b.goal)}"></div>
+        <div class="arc-beat-row"><label>卡在</label><input data-f="obs" maxlength="200" placeholder="卡在哪、谁不肯让" value="${esc(b.obs)}"></div>
+        <div class="arc-beat-row"><label>终点</label><input data-f="turn" maxlength="200" placeholder="到这一拍结束才该发生的事" value="${esc(b.turn)}"></div>
+      </div>`).join('');
+  }
+  $('arc-beats-cnt').textContent = beats.length + ' / ' + ARC_BEATS_MAX;
+  $('arc-add-beat').disabled = beats.length >= ARC_BEATS_MAX;
+}
+
+/** 从表单收一张卡。currentBeat 跟着界面上的高亮走。 */
+function collectArc() {
+  const beats = [...$('arc-beats').querySelectorAll('.arc-beat')].map(el => ({
+    t: el.querySelector('[data-f="t"]').value,
+    goal: el.querySelector('[data-f="goal"]').value,
+    obs: el.querySelector('[data-f="obs"]').value,
+    turn: el.querySelector('[data-f="turn"]').value,
+  }));
+  const curEl = $('arc-beats').querySelector('.arc-beat.cur');
+  const direction = $('arc-direction').value;
+  return normalizeArc({
+    title: $('arc-title').value,
+    direction,
+    constraints: $('arc-constraints').value.split('\n'),
+    beats,
+    currentBeat: curEl ? Number(curEl.dataset.i) : 0,
+    // 「有方向或有一拍」就算开着 —— 空卡不弹提示词（storyarc.js 里 arcActive 再判一次）
+    status: (direction.trim() || beats.length) ? 'on' : 'off',
+    updatedAt: Date.now(),
+  }, { keepEmpty: true });   // 编辑态：刚加、还没填的那一拍要留着
+}
+
+async function openArcModal() {
+  if (!curCharId) return;
+  _arcOwner = curCharId;
+  _arcEdit = await loadArcFor(curCharId);
+  $('arc-title').value = _arcEdit.title;
+  $('arc-direction').value = _arcEdit.direction;
+  $('arc-constraints').value = _arcEdit.constraints.join('\n');
+  renderArcBeats();
+  $('arc-modal').classList.remove('hidden');
+}
+
+function closeArcModal() { $('arc-modal').classList.add('hidden'); }
+
+async function saveArc() {
+  if (!_arcOwner) return;
+  const a = normalizeArc(collectArc());   // 存的时候把没填的拍丢掉
+  try {
+    await kv.set(arcKey(_arcOwner), a);
+  } catch (e) {
+    toast('保存失败：' + ((e && e.message) || e));
+    return;
+  }
+  await refreshArcBar();
+  closeArcModal();
+  toast(tt(a.status === 'on' ? '剧情卡已保存' : '剧情卡已清空'));
+}
+
+async function turnOffArc() {
+  if (!_arcOwner) return;
+  const a = normalizeArc(collectArc());
+  // 只关掉开关，内容留着 —— 下次想接着演不用重写一遍
+  a.status = 'off';
+  try { await kv.set(arcKey(_arcOwner), a); } catch { /* 关不掉也就是多一张卡，不阻断 */ }
+  await refreshArcBar();
+  closeArcModal();
+  toast(tt('这一段的剧情卡已关掉（内容还在）'));
+}
+
+// —— 事件 ——
+$('chat-arc').onclick = openArcModal;
+$('arc-cancel').onclick = closeArcModal;
+$('arc-save').onclick = saveArc;
+$('arc-off').onclick = turnOffArc;
+$('arc-modal').addEventListener('click', (e) => { if (e.target === $('arc-modal')) closeArcModal(); });
+$('arc-add-beat').onclick = () => {
+  if (_arcEdit.beats.length >= ARC_BEATS_MAX) return;
+  const a = collectArc();
+  const wasEmpty = a.beats.length === 0;
+  a.beats.push({ t: '', goal: '', obs: '', turn: '' });
+  if (wasEmpty) a.currentBeat = 0; // 第一拍加进来时它就是「当前拍」
+  _arcEdit = a;
+  renderArcBeats();
+};
+$('arc-beats').addEventListener('click', (e) => {
+  const t = e.target instanceof Element ? e.target.closest('[data-act]') : null;
+  if (!t) return;
+  const box = t.closest('.arc-beat');
+  if (!box) return;
+  const i = Number(box.dataset.i);
+  const a = collectArc();
+  if (t.dataset.act === 'del') {
+    if (!confirm('删掉第 ' + (i + 1) + ' 拍？')) return;
+    a.beats.splice(i, 1);
+    if (a.currentBeat >= a.beats.length) a.currentBeat = Math.max(0, a.beats.length - 1);
+    else if (a.currentBeat > i) a.currentBeat--;
+  } else {
+    a.currentBeat = i;
+  }
+  _arcEdit = a;
+  renderArcBeats();
+});
+
 function refreshSearchHint() {
   const el = $('search-hint');
   if (!el) return;
@@ -13816,7 +13975,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.4';
+const WEB_VERSION_FALLBACK = '0.5.0';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

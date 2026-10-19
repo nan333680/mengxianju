@@ -505,6 +505,7 @@ const BY_ZH = {
   //    不在这里登记，英文界面下就是中文 —— i18n-report 扫不到这类动态串。
   '联网搜索': 'Web search',
   '本轮更改': 'This turn',
+  '剧情方向': 'Plot direction',
   '发送图片': 'Send image',
   '附加内容': 'Attached',
   '附': 'Attach',
@@ -528,6 +529,7 @@ const BY_ZH = {
   '去掉这个功能': 'Remove this',
   '要搜什么？例如：今天北京天气': 'What to search? e.g. weather in Beijing today',
   '这一轮想怎么演？例如：用可爱向的写法': 'How should this turn read? e.g. write it cuter',
+  '这一轮大概往哪走？例如：她开始起疑心，气氛往下沉': 'Where should the plot head this turn? e.g. she starts getting suspicious',
   '说明这张图…': 'Describe this image…',
   '上一批图片还在处理，稍等一下': 'Still processing the last batch, one moment',
 };

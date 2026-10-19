@@ -10,7 +10,7 @@ import { t, tt, applyI18n, watchI18n, setLang, getLang, getActiveLang, refreshLa
 //    isPng / parseCardJson / extractCardFromPng 在 app.js 里已经没人调了。
 import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entriesFromList, parseJsonSafe } from './charcard.js';
 // 自动备份（v1.21.40）：纯逻辑，依赖全部注入，见该文件头部说明。
-import { autoBackupIfDue, verifyLatestBackup, readLatestBackup, BACKUP_DIRS } from './autobackup.js';
+import { autoBackupIfDue, verifyLatestBackup, readLatestBackup, BACKUP_DIRS, KEEP as BACKUP_KEEP, DAY_MS as BACKUP_DAY_MS } from './autobackup.js';
 // 导出 Markdown（v1.21.48）：纯函数，接一组消息吐一个字符串
 import { buildChatMarkdown, markdownFileName } from './exportmd.js';
 // 酒馆正则（v0.4.0）：解析 + 应用都在 stregex.js 里，不碰 DOM 也不碰数据库。
@@ -145,6 +145,9 @@ const DEFAULTS = {
   appearanceLive: '',   // 临时覆盖：「立即生效」写的，优先于上面那条
   appearanceOn: true,   // 开关：关掉后内容留着但不再注入 prompt
   clockDetail: false,
+  // 自动备份频率（v0.4.3.2，全局）：每几天写一份。0 = 关掉自动备份（仍然会自检旧备份）。
+  // 默认 1（一天一份），和 v1.21.40 引入它时的行为一致 —— 老设置没这个键，按 1 算。
+  backupEveryDays: 1,
   // 「写字台」（v1.21.48，全局）：输入框最多长到几行。默认 3 —— 比现在的 120px 长，
   // 又不会一打字就把聊天记录顶掉。想写长段的人自己在设置里往上调。
   inputMaxH: 3,
@@ -1542,7 +1545,7 @@ function msgHtml(m, depth = 0) {
   const moreBtn = tags.length
     ? '<button class="more-btn" data-more="1" title="' + esc(tt('附加内容')) + '" aria-label="' + esc(tt('附加内容')) + '">' + tt('附') + '</button>'
     : '';
-  return `<div class="msg ${isMe ? 'me' : 'ai'}${narr ? ' narr' : ''}" data-id="${esc(m.id)}">${av}<div class="bub">${inner}<div class="t">${moreBtn}${tagChips}${time}${tok}</div></div></div>`;
+  return `<div class="msg ${isMe ? 'me' : 'ai'}${narr ? ' narr' : ''}" data-id="${esc(m.id)}">${av}<div class="bub">${inner}<div class="t${moreBtn ? ' has-more' : ''}">${moreBtn}${tagChips}${time}${tok}</div></div></div>`;
 }
 
 let _archOpen = false;   // 归档区的展开状态（重绘后要保住）
@@ -4918,6 +4921,9 @@ const TURN_CMDS = [
   // cmd = 手打命令名（老习惯「/搜 关键词」照样能用）
   { k: 'search', ico: '🔍', label: '联网搜索', cmd: '搜', ph: '要搜什么？例如：今天北京天气' },
   { k: 'direct', ico: '✎', label: '本轮更改', cmd: '改', ph: '这一轮想怎么演？例如：用可爱向的写法' },
+  // 剧情方向（v0.4.3.2）：和「本轮更改」不同层 —— 那个管"怎么写/怎么演"，
+  // 这个管"事往哪发生"。她要照方向推进，但不必一步走完。
+  { k: 'plot', ico: '🧭', label: '剧情方向', cmd: '向', ph: '这一轮大概往哪走？例如：她开始起疑心，气氛往下沉' },
   { k: 'image', ico: '🖼', label: '发送图片' },
 ];
 
@@ -4932,8 +4938,8 @@ function cmdCfg(k) {
 function parseSlashCmds(text) {
   const cmds = [], rest = [];
   for (const ln of String(text || '').split('\n')) {
-    const m = ln.match(/^\s*[/／](搜|改)\s*[:：]?\s*(.*)$/);
-    if (m) cmds.push({ k: m[1] === '搜' ? 'search' : 'direct', arg: m[2].trim() });
+    const m = ln.match(/^\s*[/／](搜|改|向|剧情)\s*[:：]?\s*(.*)$/);
+    if (m) cmds.push({ k: m[1] === '搜' ? 'search' : (m[1] === '改' ? 'direct' : 'plot'), arg: m[2].trim() });
     else rest.push(ln);
   }
   return { cmds, text: rest.join('\n').trim() };
@@ -5655,7 +5661,10 @@ let namedInText = false;
       // 临时场景（v1.21.47）：只进本轮段，不进稳定前缀
       scene: sceneOf(myChar),
       // 「本轮更改」（v0.4.4）：这一轮他要怎么演 —— 只此一轮，不进人设、不进历史
-      directives: _cmds.filter(c => c.k === 'direct' && c.arg).map(c => c.arg),      // 「上一轮的要求」（v0.4.2.2）：这一轮没再提「本轮更改」时，把上一轮那条继续带一轮。
+      directives: _cmds.filter(c => c.k === 'direct' && c.arg).map(c => c.arg),
+      // 「剧情方向」（v0.4.3.2）：他这一轮想让事态往哪走 —— 只这一轮，不进人设、不进历史。
+      plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
+      // 「上一轮的要求」（v0.4.2.2）：这一轮没再提「本轮更改」时，把上一轮那条继续带一轮。
       // 这一轮又提了就以本轮为准（传空 —— 上一轮那条当场作废，不留长尾）。
       carry: _cmds.some(c => c.k === 'direct' && c.arg) ? [] : (_prevCarry ? [_prevCarry] : []),
       // 群聊：这一轮轮到谁（v0.4.0）。单聊时是空串，那段提示不会出现。
@@ -10045,7 +10054,7 @@ const DRIVE_PRESETS = [
   { v: 'high', t: '详',
     d: '动作链 + 每个动作落到具体感官（温度、黏、声音、重量）。' },
   { v: 'max',  t: '极详',
-    d: '每段按三段式写，且每段都要有感官锚点；宁可一件事写透，不要铺三件事。' },
+    d: '整条消息挑一件事，按三段式写透（他做了什么 → 你身体怎么应 → 哪里因此变了）；写到的每段都要有感官锚点；环境真没变就省掉那一段。' },
 ];
 
 let _drivePick = null;   // 弹窗打开时挂着的回调；关掉就置空
@@ -10574,6 +10583,52 @@ function backupDirLabel(d) {
   return map[d] || (d || '（不知道）');
 }
 
+/**
+ * 目录枚举值 → 手机上的真实路径（v0.4.3.2）。
+ *
+ * ⚠️ 这几个值是 Capacitor Filesystem 在 Android 上的固定映射，不是猜的：
+ *    · DOCUMENTS = Environment.getExternalStoragePublicDirectory(DIRECTORY_DOCUMENTS)
+ *    · EXTERNAL  = Context.getExternalFilesDir(null)
+ *    · DATA      = Context.getFilesDir()
+ *    换包名时这里要跟着改 —— 包名以 android/app/build.gradle 的 applicationId 为准
+ *    （现在是 com.aicompanion.app）。运行时拿不到包名，所以只能写死。
+ *
+ * 为什么把路径显示出来（用户 2026-10-17 提的）：他要知道"备份到底在手机的哪儿"，
+ * 好自己去文件管理器里找、复制走。只说"文档目录"等于没说。
+ */
+const BACKUP_PKG = 'com.aicompanion.app';
+function backupDirPath(d) {
+  const base = {
+    DOCUMENTS: '/storage/emulated/0/Documents',
+    EXTERNAL: '/storage/emulated/0/Android/data/' + BACKUP_PKG + '/files',
+    DATA: '/data/user/0/' + BACKUP_PKG + '/files',
+  }[d];
+  return base ? base + '/梦弦居备份/' : '';
+}
+
+/** 自动备份频率（天）。0 / 负数 = 关掉；非数字按默认 1 天算 */
+function backupEveryDays() {
+  // ⚠️ Number(null) === 0、Number('') === 0 —— 直接套会把这些「没这个值」读成「关闭」。
+  //    老备份或手改过的设置里出现 null 时，自动备份会静默停掉，而用户根本不知道自己关了它。
+  //    真正表示关闭的只有数字 0 本身。
+  // 标成 any：DEFAULTS 里它是 number，但老备份/手改过的设置里可能是 null 或字符串，
+  // 声明的类型会骗人 —— 这里要按运行时的实际值判（tsc 不收窄成 never 才干净）。
+  const raw = /** @type {any} */ (S.backupEveryDays);
+  if (raw === null || raw === undefined) return 1;
+  if (typeof raw === 'string' && raw.trim() === '') return 1;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 1;
+  return Math.floor(n);
+}
+
+/** 频率 → 人话（面板和 toast 共用） */
+function backupEveryLabel(n) {
+  if (!n) return '已关闭';
+  if (n === 1) return '每天';
+  if (n === 7) return '每周';
+  return '每 ' + n + ' 天';
+}
+
 /** 备份里那份文件坏了没 —— 三种说法要分清楚，别一律说"坏了" */
 function verifyReasonText(reason) {
   const map = {
@@ -10615,11 +10670,25 @@ async function renderBackupHealth() {
     rows.push(['上次自动备份', '这台机器上还没跑过']);
   }
 
-  // ② 位置
+  // ② 位置（v0.4.3.2：连手机上的真实路径一起给出来）
   rows.push(['存放位置', dir ? backupDirLabel(dir) : '（还不知道）']);
-  if (dir) rows.push(['保留份数', (Number(last && last.count) || 0) + ' / 7']);
+  if (dir) {
+    const p = backupDirPath(dir);
+    if (p) {
+      // 除了「文档」那两个目录用户都翻不到：DATA 是应用私有（要 root），
+      // EXTERNAL 是 Android/data/<包名>（Android 11+ 起文件管理器不让进）。
+      // 写得出路径却进不去，比不写更糟 —— 所以两个都要说一句。
+      rows.push(['手机上的路径', p + (dir === 'DOCUMENTS' ? '' : '（文件管理器看不到）')]);
+    }
+    rows.push(['保留份数', (Number(last && last.count) || 0) + ' / ' + BACKUP_KEEP]);
+  }
+  // ③ 频率（v0.4.3.2）：说清楚现在是什么节奏 —— 关掉的时候更要写明白，
+  //    否则用户只会看到"上次自动备份：3 天前"，以为它坏了。
+  const every = backupEveryDays();
+  rows.push(['备份频率', backupEveryLabel(every)
+    + (every ? '' : '（不再自动写新备份，但旧的那份仍会自检）')]);
 
-  // ③ 最近一次自检
+  // ④ 最近一次自检
   const chk = h.last || null;   // 只认"刚写完那次"的读回结果
   const chkPrev = h.prev || null;
   if (chk && chk.ok) {
@@ -11076,6 +11145,38 @@ function bindSettings() {
       });
   };
   renderWriterBar();
+
+  // 自动备份频率（v0.4.3.2）。
+  //
+  // 为什么放在「数据」区而不是「记忆管理」：它和下面那三个导出/导入按钮是同一件事
+  // （把数据弄到能活下来的地方），频率是这件事的一个参数，跟聊天无关。
+  const BACKUP_EVERY_PRESETS = [
+    { label: '每天', value: 1 }, { label: '每 3 天', value: 3 },
+    { label: '每周', value: 7 }, { label: '关闭', value: 0 },
+  ];
+  const renderBackupEvery = () => {
+    const n = backupEveryDays();
+    renderSeg('s-backup-every', BACKUP_EVERY_PRESETS, n, async v => {
+      const days = Math.max(0, Number(v) || 0);
+      await saveSettings({ backupEveryDays: days });
+      renderBackupEvery();
+      // 面板里那行「备份频率」当场跟着变 —— 不然用户改完还得退出去再进来
+      try { renderBackupHealth(); } catch { /* 面板没渲染过就算了 */ }
+      toast(days
+        ? ('自动备份改成' + backupEveryLabel(days) + '写一份，下次到期时生效')
+        : '自动备份关掉了 —— 旧的那份还会自检，但不会再写新的', 3400);
+    });
+    const note = $('s-backup-every-note');
+    if (note) {
+      // ⚠️ 别再手拼「每 N 天」：n===1 时拼出来是「每 天」（中间那个空格留在那儿了）。
+      // 统一走 backupEveryLabel —— 「每天 / 每周 / 每 3 天」三种说法本来就都在那儿。
+      note.textContent = n
+        ? (backupEveryLabel(n) + '最多写一份，写完会当场读回来验一遍；本地只留最近 ' + BACKUP_KEEP + ' 份。')
+        : '不再自动写新备份。「检查我最近那份备份能不能用」仍然可用 —— 它只读旧的那份。';
+    }
+  };
+  renderBackupEvery();
+
   // ⚠️ 打开设置页就同步一次输入框（v1.21.48）。
   // 起因：这两个值在【聊天页】才用得上，但聊天页是从头到尾不退出的 ——
   // 不主动推一次，用户切回聊天时框还是旧高度，得先打一个字才变。
@@ -12256,6 +12357,15 @@ function pickImportMode(survey, localCounts) {
         <span>本机现有</span><b>${localCounts.characters} 个角色 / ${localCounts.messages} 条记录 / ${localCounts.memories} 条记忆</b>
       </div>`;
     $('import-modes').innerHTML = rows;
+    // 选中态靠 .on class 挂（不用 :has(input:checked)）：:has 要 WebView ≥105，
+    // 而 radio 本身是 display:none —— 老机型上会完全没有「我选了哪个」的反馈。
+    // 用 onchange 覆盖式赋值，免得同一个弹层开两次叠出两套监听。
+    $('import-modes').onchange = (e) => {
+      const t = e.target;
+      if (!t || t.name !== 'imp-mode') return;
+      $('import-modes').querySelectorAll('.imp-mode')
+        .forEach(l => l.classList.toggle('on', !!t.checked && l.contains(t)));
+    };
     $('import-modal').classList.remove('hidden');
 
     const done = (v) => {
@@ -13404,6 +13514,12 @@ function bindEvents() {
   // "填完 key 没换服务商"这条路，展开时再兜一次最稳。
   fold('api-fold', 'api-wrap', refreshApiHint);
   fold('clock-fold', 'clock-wrap', refreshClockHint);
+  // v0.4.3.2：外观 + 酒馆都收成折叠（「我的设置」这页原来是一长条平铺，
+  // 酒馆那三块尤其只偶尔用一次，占掉大半个屏幕）。都没有角标要刷，onOpen 省略。
+  // 酒馆是**一个**折叠，展开后里面依次是预设 / 正则 / 聊天记录三段
+  // （一开始做成三个并排的折叠头，用户说不像「接口」那样的一层套一层）。
+  fold('appear-fold', 'appear-wrap');
+  fold('tavern-fold', 'tavern-wrap');
   $('s-ranges-open').onclick = openPhaseModal;
   $('phase-cancel').onclick = closePhaseModal;
   $('phase-ok').onclick = async () => {
@@ -13700,7 +13816,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.3';
+const WEB_VERSION_FALLBACK = '0.4.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
@@ -13848,9 +13964,23 @@ async function _runBackupRoutineInner(FS) {
     } catch { /* 自检失败绝不该挡住启动 */ }
   }
 
-  // ② 到期就写一份
+  // ② 到期就写一份（节奏由「数据 → 自动备份频率」决定，v0.4.3.2）
+  //
+  // 关掉自动备份时【跳过写】，但不跳过上面那步自检 ——
+  // "不再自动存新的"和"不再检查旧的能不能用"是两件事，
+  // 后者恰恰是出事时唯一能救他的那一环。
+  const everyDays = backupEveryDays();
+  if (!everyDays) {
+    h.at = Date.now();
+    try { await kv.set('backupHealth', h); } catch { /* 记不上只是面板显示旧数据，无害 */ }
+    try { renderBackupHealth(); } catch { /* 面板还没渲染过就算了 */ }
+    return;
+  }
   try {
-    const r = await autoBackupIfDue({ kv, FS, collect: collectBackupPayload });
+    const r = await autoBackupIfDue({
+      kv, FS, collect: collectBackupPayload,
+      intervalMs: everyDays * BACKUP_DAY_MS,
+    });
     if (r.ran) {
       console.log('[自动备份] 已写入', r.dir, r.name,
         r.deleted && r.deleted.length ? ('，清理旧备份 ' + r.deleted.length + ' 份') : '');

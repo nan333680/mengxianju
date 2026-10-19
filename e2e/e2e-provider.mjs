@@ -164,6 +164,15 @@ t('非 DeepSeek 直接给人话，不是 404', /没有余额查询接口/.test(b
 console.log('');
 console.log('=== 5. 设置页 UI ===');
 await openSettings();
+// v0.4.3.2：「接口」搬到了「我的设置」页，先切过去（返回 → 关抽屉 → ⚙ → 点「我的设置」）
+await page.evaluate(() => { const b = document.getElementById('btn-set-back') || document.getElementById('btn-mine-back'); if (b) b.click(); });
+await sleep(500);
+await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });
+await sleep(400);
+await page.evaluate(() => document.getElementById('btn-settings').click());
+await sleep(700);
+await page.evaluate(() => { const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'mine'); if (b) b.click(); });
+await sleep(900);
 // v1.21.57：「接口」收成折叠了，page.select 要求元素可见，得先展开
 await page.evaluate(() => { const f = document.getElementById('api-fold'); if (f && !f.classList.contains('open')) f.click(); });
 await sleep(600);

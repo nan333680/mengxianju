@@ -43,6 +43,24 @@ const openFold = async id => {
   await page.evaluate(i => { const f = document.getElementById(i); if (f && !f.classList.contains('open')) f.click(); }, id);
   await sleep(600);
 };
+// v0.4.3.2：「接口」从全局页搬到了「我的设置」页，这里在两页之间切。
+// 走法和用户一样：返回 → 关抽屉 → ⚙ → 抽屉里点那一项。
+const gotoDrawerPage = async which => {
+  await page.evaluate(() => {
+    const b = document.getElementById('btn-set-back') || document.getElementById('btn-mine-back');
+    if (b) b.click();
+  });
+  await sleep(500);
+  await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });
+  await sleep(400);
+  await page.evaluate(() => document.getElementById('btn-settings').click());
+  await sleep(700);
+  await page.evaluate(w => {
+    const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === w);
+    if (b) b.click();
+  }, which);
+  await sleep(900);
+};
 const setRangesInput = (k, i, v) => page.evaluate((k, i, v) => {
   const el = document.querySelector('#clock-ranges input[data-k="' + k + '"][data-i="' + i + '"]');
   el.value = v; el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -60,6 +78,7 @@ await sleep(1500);
 await page.evaluate(()=>indexedDB.deleteDatabase('ai-companion'));
 await page.reload({waitUntil:'networkidle0'}); await sleep(600);
 await openSettings(page, sleep);
+await gotoDrawerPage('mine');   // 接口搬到了「我的设置」
 
 console.log('=== 1. 接口：默认收起，角标说话 ===');
 t('有接口折叠头', !!(await page.$('#api-fold')));
@@ -86,6 +105,8 @@ const hint2 = await page.$eval('#api-hint', el => el.textContent.trim());
 t('换服务商后角标跟着换', hint2 !== hint1 && hint2.includes('·'), hint1 + ' → ' + hint2);
 
 console.log('');
+await gotoDrawerPage('settings');   // 时段划分还在全局页
+
 console.log('=== 3. 时段划分：折叠 + 入口 + 弹窗草稿 ===');
 t('有时段折叠头', !!(await page.$('#clock-fold')));
 t('默认收起', !(await isOpen('clock-wrap')));
@@ -137,15 +158,16 @@ await page.click('#s-clock-mode'); await sleep(1500);
 t('拨回来：角标也回来', (await hintOf()) === (mode0 ? '跟现实走' : '手动'), await hintOf());
 
 console.log('');
-console.log('=== 6. 这两块折叠到底省了多少 ===');
-await page.evaluate(() => { ['api-fold','clock-fold'].forEach(id => { const f = document.getElementById(id); if (f && f.classList.contains('open')) f.click(); }); });
+// v0.4.3.2 起接口搬到「我的设置」，这页只剩「时段划分」一块能比
+console.log('=== 6. 时段划分这块折叠到底省了多少 ===');
+await page.evaluate(() => { const f = document.getElementById('clock-fold'); if (f && f.classList.contains('open')) f.click(); });
 await sleep(700);
 const hClosed = await page.$eval('#view-settings main.scroll', el => el.scrollHeight);
-await page.evaluate(() => { ['api-fold','clock-fold'].forEach(id => { const f = document.getElementById(id); if (f && !f.classList.contains('open')) f.click(); }); });
+await page.evaluate(() => { const f = document.getElementById('clock-fold'); if (f && !f.classList.contains('open')) f.click(); });
 await sleep(700);
 const hOpen = await page.$eval('#view-settings main.scroll', el => el.scrollHeight);
-console.log('   设置页内容高度：两块收起 ' + hClosed + 'px / 两块展开 ' + hOpen + 'px');
-t('收起后设置页明显短了', hOpen - hClosed > 400, '短了 ' + (hOpen - hClosed) + 'px');
+console.log('   设置页内容高度：收起 ' + hClosed + 'px / 展开 ' + hOpen + 'px');
+t('收起后设置页明显短了', hOpen - hClosed > 300, '短了 ' + (hOpen - hClosed) + 'px');
 
 console.log('');
 t('全程无 JS 错误', errs.length===0, errs.slice(0,3).join(' | '));

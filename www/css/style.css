@@ -137,6 +137,11 @@ body{
 /* 剧情时间（不是真实时钟）：老消息没有就不显示 */
 .bub .t .story-time{ margin-right:0; white-space:nowrap; }
 .msg.me .bub .t{ color:rgba(255,255,255,.6); }
+/* ⚠️ 上面那条只管 .t 的【继承色】，管不到 .tk —— 第 555 行 `.t .tk` 自己写了 color:var(--fg3)，
+   在紫底上那行「↑1204 ↓298」几乎是隐形的，箭头还是 --pri2（更看不见）。
+   自己这条的气泡底色是紫的，时间和 token 必须显式换成白色系。 */
+.msg.me .bub .t .tk{ color:rgba(255,255,255,.75); opacity:1; }
+.msg.me .bub .t .tk i{ color:rgba(255,255,255,.95); }
 .sys-line{ text-align:center; font-size:12px; color:var(--fg3); padding:4px 0; }
 
 /* 归档区：老对话收起来，原文还在库里，点开能回看 */
@@ -568,7 +573,31 @@ input + .hint-text{ margin-top:8px; }
   border:none; background:transparent; padding:0; font-family:inherit;
   font-size:10.5px; color:var(--pri2); cursor:pointer; white-space:nowrap;
   text-decoration:underline; text-underline-offset:2px;
+  /* v0.4.3.2（用户要求）：「附」要贴左下角，chip 从它右边顺着排下去，
+     时间与 token 仍然贴右下。
+     第一版只给了 margin-right:auto —— 附是被按到左边了，但 auto 会吃掉
+     全部剩余空间，chip 被甩到最右，中间空出一大块，读起来像两组东西。
+     现在改成：这一行有附按钮时整体从【左】排，时间/token 单独 margin-left:auto 推右。
+     ⚠️ 用 has-more 这个 class，不用 :has()：:has 要 WebView ≥105（2022-08 起），
+        而 minSdk 24 只保证装得上、不保证系统 WebView 够新。class 由渲染时给
+        （app.js:1548 的 `${moreBtn ? ' has-more' : ''}`），老 WebView 一样认，
+        写错的代价从「样式静默失效」变成「class 名字对不上」，一眼能看出来。 */
+  margin-right:auto;
+  /* 热区：10.5px 的字 + padding:0，点了半天点不中（这个按钮是看附加内容的唯一入口）。
+     用 padding 扩出来、再用负 margin 抵消回去 —— 视觉位置和行高都不变，只把能点的范围放大。
+     ⚠️ 四条 margin 必须分开写：写成 margin:-3px 0 -3px -8px 会把上面的 margin-right:auto 冲掉，
+        附就不贴左了。 */
+  padding:3px 8px;
+  margin-top:-3px; margin-bottom:-3px; margin-left:-8px;
 }
+.bub .t.has-more{ justify-content:flex-start; }
+.bub .t.has-more .more-btn{ margin-right:0; }
+.bub .t.has-more .story-time,
+.bub .t.has-more .tk{ margin-left:auto; }
+/* ⚠️ 时间和 token 都在时，只让【前一个】吃 auto —— 两个都 auto 会平分剩余空间，
+   时间被推到中间、离 token 老远，读起来像两块不相干的东西。
+   DOM 顺序是 …${time}${tok}，所以用相邻兄弟选择器把后一个的 auto 收回。 */
+.bub .t.has-more .story-time + .tk{ margin-left:0; }
 /* 自己那条是紫底，用白色半透明才看得清 */
 .msg.me .bub .tag-chip{
   color:#fff; border-color:rgba(255,255,255,.30); background:rgba(255,255,255,.18);
@@ -642,6 +671,17 @@ input + .hint-text{ margin-top:8px; }
 }
 .fold-wrap.open{ grid-template-rows:1fr; opacity:1; }
 .fold-inner{ min-height:0; overflow:hidden; }
+
+/* 一个折叠里装好几段时的段标题（v0.4.3.2：酒馆折叠里的预设 / 正则 / 聊天记录）。
+   第一段不带边框，后面的段之间用一条细线分开 —— 不分子段就看不出这是三段事。 */
+.sec-head{
+  display:flex; align-items:center; gap:6px;
+  margin:4px 0 8px; font-size:13px; font-weight:600; color:var(--fg);
+}
+.sec-head + .hint-text{ margin-top:0; }
+.sec-head:not(:first-child){
+  margin-top:18px; padding-top:16px; border-top:1px solid var(--line);
+}
 
 /* 记忆按人物分组：第二层折叠，比外层轻一点、缩进一点，看得出是从属关系 */
 .mem-group{ margin-bottom:10px; }
@@ -812,11 +852,14 @@ input + .hint-text{ margin-top:8px; }
 .imp-mode-desc{ margin-top:5px; font-size:12px; line-height:1.6; color:var(--fg3); }
 .imp-mode-desc i{ opacity:.8; }
 
-/* 选中态：高亮边框 + 淡背景。用 :has 让整块跟着 radio 变（WebView 支持） */
-.imp-mode:has(input:checked){
+/* 选中态：高亮边框 + 淡背景。
+   ⚠️ 以前用 :has(input:checked)，要 WebView ≥105；radio 是 display:none，
+   老机型上这一块会【完全看不出选没选】，只有点「导入」被拦才知道。
+   改成由 app.js 的 change 监听挂 .on（跟气泡那三条 has-more 一个理由）。 */
+.imp-mode.on{
   border-color:#7b6cf6; background:rgba(123,108,246,.12);
 }
-.imp-mode:has(input:checked) .imp-mode-head b{ color:#a99bff; }
+.imp-mode.on .imp-mode-head b{ color:#a99bff; }
 
 /* 文件里没有这类内容 → 压暗，但仍然可选（选中后什么都不会变，自己承担） */
 .imp-empty{ opacity:.5; }

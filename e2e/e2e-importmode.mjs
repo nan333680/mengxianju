@@ -203,6 +203,18 @@ console.log('=== 1. 选完文件弹模式弹窗，预览内容 ===');
   t('模式名齐全', ['完全还原（危险）','设置与角色','仅角色','仅聊天记录','仅世界书'].every(x => labels.includes(x)), JSON.stringify(labels));
   const warn = await page.$$eval('#import-modes .imp-warn', els => els.map(e => e.textContent.trim()));
   t('只有完全还原带删除警告', warn.filter(x => x).length === 1 && warn.find(x=>x).includes('不可撤销'), JSON.stringify(warn.map(x=>x.slice(0,20))));
+
+  // v0.4.3.2 复查：选中态改成 .on class（原来用 :has(input:checked)，要 WebView ≥105；
+  // radio 是 display:none，老机型上整块看不出选没选）。这里用【真点 label】验证 change 链路。
+  await page.evaluate(() => document.querySelectorAll('#import-modes .imp-mode')[2].click());
+  await sleep(150);
+  const st1 = await page.$$eval('#import-modes .imp-mode', els => els.map(e => e.classList.contains('on')));
+  t('点第 3 个模式 → 只有它带 .on', st1[2] === true && st1.filter(Boolean).length === 1, JSON.stringify(st1));
+  await page.evaluate(() => document.querySelectorAll('#import-modes .imp-mode')[0].click());
+  await sleep(150);
+  const st2 = await page.$$eval('#import-modes .imp-mode', els => els.map(e => e.classList.contains('on')));
+  t('换个模式 → .on 转移过去，旧的摘掉', st2[0] === true && st2.filter(Boolean).length === 1, JSON.stringify(st2));
+
   await page.evaluate(() => document.getElementById('import-cancel').click());
   await sleep(300);
   const hidden = await page.$eval('#import-modal', el => el.classList.contains('hidden'));

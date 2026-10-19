@@ -596,56 +596,8 @@
   </header>
   <main class="scroll">
 
-    <section class="group">
-      <!-- v1.21.57：接口平时不用动，收成折叠；右侧角标一眼看出接的是谁。
-           只有填 key / 换模型 / 查余额才点开。 -->
-      <button class="fold-head" id="api-fold">
-        <span data-i18n-en="API">接口</span>
-        <em class="fold-num" id="api-hint">—</em>
-        <i class="fold-arrow">▾</i>
-      </button>
-      <div class="fold-wrap" id="api-wrap">
-        <div class="fold-inner">
-      <!-- v1.21.47：不再只接 DeepSeek。各家说的都是 OpenAI 兼容协议，
-           真正的差别（推理档位 / 用量字段 / 思考字段名 / 有没有余额接口）
-           收在 api.js 的 PROVIDERS 档案里，这里只负责选哪一家。 -->
-      <label class="field" data-i18n-nodes><span data-i18n-en="Provider">服务商</span>
-        <select id="s-provider"></select>
-      </label>
-      <p class="hint-text" id="s-provider-note" style="margin:-6px 0 12px"></p>
-      <label class="field"><span>API Key</span>
-        <input id="s-apikey" type="password" placeholder="sk-...">
-      </label>
-      <label class="field"><span>Base URL</span>
-        <input id="s-baseurl" type="text" placeholder="https://api.deepseek.com">
-      </label>
-      <label class="field" data-i18n-nodes><span data-i18n-en="Chat model">对话模型</span>
-        <input id="s-model" type="text" placeholder="deepseek-flash">
-      </label>
-      <label class="field" data-i18n-nodes><span data-i18n-en="Vision model (for images; the same one is fine)">识图模型（发图片时用，同款即可）</span>
-        <input id="s-vmodel" type="text" placeholder="deepseek-flash">
-      </label>
-      <!-- 余额接口只有 DeepSeek 有，别家这一行会被 renderProviderUI 藏掉 -->
-      <div class="field row" id="balance-row" data-i18n-nodes>
-        <span><span data-i18n-en="Balance">账户余额</span> <b id="s-balance">—</b></span>
-        <button class="ghost-btn sm" id="btn-balance" data-i18n-en="Check">查询</button>
-      </div>
-      <!-- v1.21.54：上下文预算。
-           以前只按「几条」截历史，撞爆模型窗口时把服务端的报错原样甩给用户；
-           现在先估一遍 token，超了就从最旧的一端丢历史（人设和世界书不动）。 -->
-      <label class="field" data-i18n-nodes><span data-i18n-en="Context budget (estimated tokens)">上下文预算（估算 token）</span>
-        <input id="s-ctx-budget" type="number" min="2000" max="200000" step="1000" placeholder="48000">
-      </label>
-      <p class="hint-text" id="s-ctx-note" style="margin:-6px 0 12px">—</p>
-        </div>
-      </div>
-    </section>
-
-    <p class="hint-text" style="margin:0 0 14px" data-i18n-en="Global things that apply to every character: API, expression, memory, web search, time of day. Each character has her own settings under Characters -> tap her -> Edit.">这一页是<b data-i18n-en="Shared by all characters">所有角色共用</b>的：接口、描写、记忆、联网、时段。<br>
-      你自己的头像 / 外观 / 数据 / 角色卡在「我的设置」里。每个角色自己的脾气和参数，在「角色列表 → 点角色 → 编辑」里调。</p>
-
-
-
+    <p class="hint-text" style="margin:0 0 14px" data-i18n-en="Global things that apply to every character: expression, memory, web search, time of day. Each character has her own settings under Characters -> tap her -> Edit.">这一页是<b data-i18n-en="Shared by all characters">所有角色共用</b>的：描写、记忆、联网、时段。<br>
+      接口、你自己的头像 / 外观 / 酒馆 / 数据 / 角色卡在「我的设置」里。每个角色自己的脾气和参数，在「角色列表 → 点角色 → 编辑」里调。</p>
 
     <section class="group">
       <h3 data-i18n-en="Description & expression">描写与表达</h3>
@@ -811,17 +763,6 @@
       </div>
     </section>
 
-    <!-- 酒馆预设：解析 + 展示；转换动作由用户点了才发生 —— 见 app.js 的 describeStPreset。 -->
-    <section class="group">
-      <h3 data-i18n-en="SillyTavern preset">酒馆预设</h3>
-      <p class="hint-text" data-i18n-en-html="Look inside a preset exported from SillyTavern. Nothing happens by itself - you pick what is worth keeping.<br> Regex rules can be imported (they only rewrite the prompt copy and the screen). A prompt segment can be turned into a world book entry or appended to her persona.">
-        导入酒馆导出的预设 JSON，看看里面有什么。<b data-i18n-en="It does not take effect by itself">它自己不会生效</b>，要什么由你点。<br>
-        里面的正则可以收进来（只改提示词和显示两处副本）；某一段提示词可以转成世界书条目或加进人设。
-      </p>
-      <button class="ghost-btn" id="btn-preset-import" data-i18n-en="Import a SillyTavern preset">导入酒馆预设 JSON</button>
-      <input id="preset-import-file" type="file" accept=".json,application/json" hidden>
-      <div id="preset-report"></div>
-    </section>
     <section class="group">
       <button class="fold-head" id="mem-fold">
         <span data-i18n-en="Remembered">已记住的事</span>
@@ -871,8 +812,6 @@
       </div>
     </section>
 
-
-
     <!-- ===== 角色卡（实验，v1.21.40）=====
          刻意跟上面的「数据」分开：那是整机备份恢复，这是单张角色卡，两条链路不共用输入框
          （共用了会让"导入数据"认到一张 PNG 角色卡）。 -->
@@ -905,33 +844,125 @@
       <input id="my-avatar-file" type="file" accept="image/*" hidden>
     </section>
     <section class="group">
-      <h3 data-i18n-en="Appearance">外观</h3>
-      <!-- 界面语言（v1.21.60）：只影响界面文字，不影响她说什么 -->
-      <div class="field" data-i18n-nodes><span data-i18n-en="Language">语言</span>
-        <select id="s-lang"></select>
+      <!-- v1.21.57：接口平时不用动，收成折叠；右侧角标一眼看出接的是谁。
+           只有填 key / 换模型 / 查余额才点开。 -->
+      <button class="fold-head" id="api-fold">
+        <span data-i18n-en="API">接口</span>
+        <em class="fold-num" id="api-hint">—</em>
+        <i class="fold-arrow">▾</i>
+      </button>
+      <div class="fold-wrap" id="api-wrap">
+        <div class="fold-inner">
+      <!-- v1.21.47：不再只接 DeepSeek。各家说的都是 OpenAI 兼容协议，
+           真正的差别（推理档位 / 用量字段 / 思考字段名 / 有没有余额接口）
+           收在 api.js 的 PROVIDERS 档案里，这里只负责选哪一家。 -->
+      <label class="field" data-i18n-nodes><span data-i18n-en="Provider">服务商</span>
+        <select id="s-provider"></select>
+      </label>
+      <p class="hint-text" id="s-provider-note" style="margin:-6px 0 12px"></p>
+      <label class="field"><span>API Key</span>
+        <input id="s-apikey" type="password" placeholder="sk-...">
+      </label>
+      <label class="field"><span>Base URL</span>
+        <input id="s-baseurl" type="text" placeholder="https://api.deepseek.com">
+      </label>
+      <label class="field" data-i18n-nodes><span data-i18n-en="Chat model">对话模型</span>
+        <input id="s-model" type="text" placeholder="deepseek-flash">
+      </label>
+      <label class="field" data-i18n-nodes><span data-i18n-en="Vision model (for images; the same one is fine)">识图模型（发图片时用，同款即可）</span>
+        <input id="s-vmodel" type="text" placeholder="deepseek-flash">
+      </label>
+      <!-- 余额接口只有 DeepSeek 有，别家这一行会被 renderProviderUI 藏掉 -->
+      <div class="field row" id="balance-row" data-i18n-nodes>
+        <span><span data-i18n-en="Balance">账户余额</span> <b id="s-balance">—</b></span>
+        <button class="ghost-btn sm" id="btn-balance" data-i18n-en="Check">查询</button>
       </div>
-      <p class="hint-text" data-i18n-en="Interface language. It does not change what she says - she replies in whatever language you write to her.">界面语言。不影响她说什么 —— 你用哪种语言写，她就用哪种回。</p>
-      <div class="field" data-i18n-nodes><span data-i18n-en="Theme">主题</span>
-        <select id="s-theme">
-          <option value="dark" data-i18n-en="Dark">深色</option>
-          <option value="light" data-i18n-en="Light">浅色</option>
-          <option value="system" data-i18n-en="Follow system">跟随系统</option>
-        </select>
+      <!-- v1.21.54：上下文预算。
+           以前只按「几条」截历史，撞爆模型窗口时把服务端的报错原样甩给用户；
+           现在先估一遍 token，超了就从最旧的一端丢历史（人设和世界书不动）。 -->
+      <label class="field" data-i18n-nodes><span data-i18n-en="Context budget (estimated tokens)">上下文预算（估算 token）</span>
+        <input id="s-ctx-budget" type="number" min="2000" max="200000" step="1000" placeholder="48000">
+      </label>
+      <p class="hint-text" id="s-ctx-note" style="margin:-6px 0 12px">—</p>
+        </div>
       </div>
-      <label class="field" data-i18n-nodes><span><span data-i18n-en="Font size">字体大小</span> <b id="v-font">15</b></span>
-        <input id="s-font" type="range" min="12" max="22" step="1" value="15">
-      </label>
-      <label class="field row" data-i18n-nodes><span data-i18n-en="Show token usage">显示 token 使用量</span>
-        <input id="s-showusage" type="checkbox">
-      </label>
-      <p class="hint-text" data-i18n-en="When off, the ↑in ↓out badge disappears from the bubbles. Chats are still saved either way.">关掉后气泡右下角不再显示 ↑输入 ↓输出的角标，聊天记录照常保存。</p>
-      <!-- 朗读（v1.21.56）：用 Web Speech API，音色由系统 TTS 引擎决定 -->
-      <label class="field row" data-i18n-nodes><span data-i18n-en="Read her replies aloud">朗读她的回复</span>
-        <input id="s-tts" type="checkbox">
-      </label>
-      <p class="hint-text">她说完自动念出来。长按任意一条回复也有「朗读这条」。
-        用的是手机自带的语音引擎（音色取决于系统），没装中文语音包时这一项不显示。</p>
     </section>
+<section class="group">
+      <button class="fold-head" id="appear-fold">
+        <span data-i18n-en="Appearance">外观</span>
+        <i class="fold-arrow">▾</i>
+      </button>
+      <div class="fold-wrap" id="appear-wrap">
+        <div class="fold-inner">
+          <!-- 界面语言（v1.21.60）：只影响界面文字，不影响她说什么 -->
+          <div class="field" data-i18n-nodes><span data-i18n-en="Language">语言</span>
+            <select id="s-lang"></select>
+          </div>
+          <p class="hint-text" data-i18n-en="Interface language. It does not change what she says - she replies in whatever language you write to her.">界面语言。不影响她说什么 —— 你用哪种语言写，她就用哪种回。</p>
+          <div class="field" data-i18n-nodes><span data-i18n-en="Theme">主题</span>
+            <select id="s-theme">
+              <option value="dark" data-i18n-en="Dark">深色</option>
+              <option value="light" data-i18n-en="Light">浅色</option>
+              <option value="system" data-i18n-en="Follow system">跟随系统</option>
+            </select>
+          </div>
+          <label class="field" data-i18n-nodes><span><span data-i18n-en="Font size">字体大小</span> <b id="v-font">15</b></span>
+            <input id="s-font" type="range" min="12" max="22" step="1" value="15">
+          </label>
+          <label class="field row" data-i18n-nodes><span data-i18n-en="Show token usage">显示 token 使用量</span>
+            <input id="s-showusage" type="checkbox">
+          </label>
+          <p class="hint-text" data-i18n-en="When off, the ↑in ↓out badge disappears from the bubbles. Chats are still saved either way.">关掉后气泡右下角不再显示 ↑输入 ↓输出的角标，聊天记录照常保存。</p>
+          <!-- 朗读（v1.21.56）：用 Web Speech API，音色由系统 TTS 引擎决定 -->
+          <label class="field row" data-i18n-nodes><span data-i18n-en="Read her replies aloud">朗读她的回复</span>
+            <input id="s-tts" type="checkbox">
+          </label>
+          <p class="hint-text">她说完自动念出来。长按任意一条回复也有「朗读这条」。
+            用的是手机自带的语音引擎（音色取决于系统），没装中文语音包时这一项不显示。</p>
+        </div>
+      </div>
+    </section>
+    <section class="group">
+      <!-- 酒馆三项收进同一个折叠（v0.4.3.2 返工）：用户要的是「像接口那样」——
+           一个「酒馆」头，展开后依次是预设 / 正则 / 聊天记录三段及各自设置。
+           原来这三项是三个并排的折叠头，看起来像三件不相干的行李。 -->
+      <button class="fold-head" id="tavern-fold">
+        <span data-i18n-en="SillyTavern">酒馆</span>
+        <i class="fold-arrow">▾</i>
+      </button>
+      <div class="fold-wrap" id="tavern-wrap">
+        <div class="fold-inner">
+          <!-- 一、酒馆预设：解析 + 展示；转换动作由用户点了才发生 —— 见 app.js 的 describeStPreset。 -->
+          <h4 class="sec-head"><span data-i18n-en="SillyTavern preset">酒馆预设</span></h4>
+          <p class="hint-text" data-i18n-en-html="Look inside a preset exported from SillyTavern. Nothing happens by itself - you pick what is worth keeping.<br> Regex rules can be imported (they only rewrite the prompt copy and the screen). A prompt segment can be turned into a world book entry or appended to her persona.">
+            导入酒馆导出的预设 JSON，看看里面有什么。<b data-i18n-en="It does not take effect by itself">它自己不会生效</b>，要什么由你点。<br>
+            里面的正则可以收进来（只改提示词和显示两处副本）；某一段提示词可以转成世界书条目或加进人设。
+          </p>
+          <button class="ghost-btn" id="btn-preset-import" data-i18n-en="Import a SillyTavern preset">导入酒馆预设 JSON</button>
+          <input id="preset-import-file" type="file" accept=".json,application/json" hidden>
+          <div id="preset-report"></div>
+
+          <!-- 二、酒馆正则：从卡或预设带过来的 findRegex → replaceString，逐条开关 -->
+          <h4 class="sec-head"><span data-i18n-en="Regex scripts">酒馆正则</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h4>
+          <p class="hint-text" data-i18n-en-html="Regex rules carried over from SillyTavern cards or presets. They only rewrite <b>the copy sent to the model</b> and <b>the text drawn on screen</b> - the saved messages are never touched, so turning one off shows you the original again.">从酒馆的角色卡或预设文件里带过来的正则（<code>findRegex</code> / <code>replaceString</code>）。<br>
+            它们只改两处<b data-i18n-en="Copy">副本</b>：送进模型的提示词、屏幕上显示的字。<b data-i18n-en="The saved original is never touched">存档原文一个字都不动</b> ——
+            关掉就能看到原样，删掉也不会丢任何聊天记录。</p>
+          <div id="stregex-list"></div>
+
+          <!-- 三、酒馆聊天记录：.jsonl 导入 -->
+          <h4 class="sec-head"><span data-i18n-en="SillyTavern chat logs">酒馆聊天记录</span></h4>
+          <p class="hint-text" data-i18n-en-html="Import a .jsonl exported from SillyTavern. Cards and world books can be re-downloaded, <b>chat logs cannot</b> - so this is the one piece of luggage worth carrying over. You pick which character it goes to; nothing is guessed.">
+            导入酒馆导出的聊天记录（<code>.jsonl</code>）。角色卡能重下、世界书能重下，
+            <b data-i18n-en="Chat logs, once gone, are gone">聊天记录没了就是没了</b> —— 这是最该接住的那件行李。<br>
+            导进哪个角色由你选，说话的人是谁也先摆给你看，<b data-i18n-en="No guessing">不猜</b>。
+          </p>
+          <button class="ghost-btn" id="btn-stchat-import" data-i18n-en="Import SillyTavern chat log (.jsonl)">导入酒馆聊天记录（.jsonl）</button>
+          <input id="stchat-file" type="file" accept=".jsonl,.json,application/json" hidden>
+          <div id="stchat-report"></div>
+        </div>
+      </div>
+    </section>
+
     <section class="group">
       <h3 data-i18n-en="Data">数据</h3>
       <button class="ghost-btn" id="btn-export-md" data-i18n-en="Export this chat (Markdown)">导出当前角色的对话（Markdown）</button>
@@ -940,7 +971,11 @@
       <input id="file-import" type="file" accept="application/json" hidden>
       <button class="ghost-btn" id="btn-clear-chat" data-i18n-en="Clear this chat">清空当前角色的聊天记录</button>
       <button class="danger-btn" id="btn-wipe" data-i18n-en="Clear everything">清空全部数据</button>
-      <p class="hint-text" data-i18n-en-html="<b>Auto backup</b> runs at most once a day, as plain-text JSON, in “Documents → 梦弦居备份”, keeping the latest 7. It goes to a public folder so it can <b>survive uninstall and “clear data”</b>."><b data-i18n-en="Auto backup">自动备份</b>一天最多一次，明文 JSON，放在「文档 → 梦弦居备份」里、留最近 7 份。
+      <div class="field" data-i18n-nodes><span data-i18n-en="Auto backup frequency">自动备份频率</span>
+        <div class="seg" id="s-backup-every"></div>
+      </div>
+      <p class="hint-text" id="s-backup-every-note">—</p>
+      <p class="hint-text" data-i18n-en-html="<b>Auto backup</b> writes on the schedule picked above, as plain-text JSON, in “Documents → 梦弦居备份”, keeping the latest 7. It goes to a public folder so it can <b>survive uninstall and “clear data”</b>."><b data-i18n-en="Auto backup">自动备份</b>按上面选的频率写，明文 JSON，放在「文档 → 梦弦居备份」里、留最近 7 份。
         写公共目录是为了让它能<b data-i18n-en="Survives uninstall and &quot;clear data&quot;">活过卸载和「清除数据」</b>——放进应用专属目录的话，卸载时会被系统连包一起删掉，那备份就白做了。
         代价是这份文件<b data-i18n-en="Plain text — other apps may see it">是明文、别的 App 也可能看到</b>：介意就备份完自己挪走，或改用下面的「导出全部数据」自己保管。</p>
       <div id="backup-health" class="bh"></div>
@@ -958,24 +993,7 @@
       <button class="ghost-btn" id="btn-cc-export-png" data-i18n-en="Export as PNG card">把当前角色导出为 PNG 卡</button>
       <button class="ghost-btn" id="btn-cc-export-json" data-i18n-en="Export as JSON card">把当前角色导出为 JSON 卡</button>
     </section>
-    <section class="group">
-      <h3><span data-i18n-en="Regex scripts">酒馆正则</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h3>
-      <p class="hint-text" data-i18n-en-html="Regex rules carried over from SillyTavern cards or presets. They only rewrite <b>the copy sent to the model</b> and <b>the text drawn on screen</b> - the saved messages are never touched, so turning one off shows you the original again.">从酒馆的角色卡或预设文件里带过来的正则（<code>findRegex</code> / <code>replaceString</code>）。<br>
-        它们只改两处<b data-i18n-en="Copy">副本</b>：送进模型的提示词、屏幕上显示的字。<b data-i18n-en="The saved original is never touched">存档原文一个字都不动</b> ——
-        关掉就能看到原样，删掉也不会丢任何聊天记录。</p>
-      <div id="stregex-list"></div>
-    </section>
-    <section class="group">
-      <h3 data-i18n-en="SillyTavern chat logs">酒馆聊天记录</h3>
-      <p class="hint-text" data-i18n-en-html="Import a .jsonl exported from SillyTavern. Cards and world books can be re-downloaded, <b>chat logs cannot</b> - so this is the one piece of luggage worth carrying over. You pick which character it goes to; nothing is guessed.">
-        导入酒馆导出的聊天记录（<code>.jsonl</code>）。角色卡能重下、世界书能重下，
-        <b data-i18n-en="Chat logs, once gone, are gone">聊天记录没了就是没了</b> —— 这是最该接住的那件行李。<br>
-        导进哪个角色由你选，说话的人是谁也先摆给你看，<b data-i18n-en="No guessing">不猜</b>。
-      </p>
-      <button class="ghost-btn" id="btn-stchat-import" data-i18n-en="Import SillyTavern chat log (.jsonl)">导入酒馆聊天记录（.jsonl）</button>
-      <input id="stchat-file" type="file" accept=".jsonl,.json,application/json" hidden>
-      <div id="stchat-report"></div>
-    </section>
+
     <div class="ver" data-i18n-nodes>梦弦居 <span id="app-ver">…</span> · 模型默认 deepseek-flash</div>
     <div class="gap"></div>
   </main>
@@ -1162,7 +1180,6 @@
     <p class="hint-text" style="text-align:center;margin:0" data-i18n-en="Drag the image to move it, drag the slider to zoom">按住图片拖动位置 · 拖动滑块缩放</p>
   </main>
 </div>
-
 
 <!-- ===== 每个时段对应几点（v1.21.57：从设置页平铺的 8 行输入框改成弹窗）=====
      做成弹窗的理由：8 个时段 × 2 个数字平铺在设置页里占掉大半屏，

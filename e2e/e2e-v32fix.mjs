@@ -160,15 +160,18 @@ console.log('=== #4 detailDrive「跟随全局」不得被保存动作污染 ===
 }
 
 console.log('');
-console.log('=== #7 low 档下高驱动降级（prompt 不自相矛盾）===');
+console.log('=== #7 驱动档与描写档各自独立（不再按字数预算降档）===');
 {
   const src = readCode(WWW + '/js/persona.js');
-// ⚠️ 断言更新（v1.21.34）：降级范围从"只挡 high/max"放宽到"除 off/low 外全挡" ——
-// 复审 新4 指出 mid 的「动作链 + 具体感受」同样是结构要求，与 low 的 8 字上限物理冲突。
-// ⚠️ 断言更新（v1.21.36）：改用【显式字数映射】而不是硬编码 low 特例（复审 #6）。
-t('有降级逻辑（按字数预算）', src.includes('DRIVE_CAP') && src.includes('DRIVE_NEED') && src.includes('capChars < (DRIVE_NEED[drive] || 0)'));
-  t('降级到 low', src.includes("drive = 'low';"));
-  t('有降级说明', src.includes('按最低档执行'));
+// ⚠️ 断言更新（v0.4.3.3）：字数预算降档机制【整体删除】。
+// 用户实测：三个档都调高，输出却没变长 —— 因为 descLevel「中」(25 字) 撑不下
+// detailDrive「详」(需 45 字)，被静默降成「简」，界面上却一直显示「详」。
+// 他明确要求不要「档位 ↔ 固定字数」这种绑定，所以这一层不再存在。
+t('不再有字数预算降档表', !src.includes('DRIVE_CAP') && !src.includes('DRIVE_NEED'));
+  t('不再静默降档到 low', !src.includes("drive = 'low';"));
+  t('不再印「按最低档执行」', !src.includes('按最低档执行'));
+  t('驱动档原样生效（不降级）', src.includes("const drive = s.detailDrive || 'off';"));
+  t('冲突时只给不涉及数字的兜底', src.includes('就只写最关键的那一件、把它写到位'));
   t('删掉了假的「不冲突」', !src.includes('上面那个长度上限照旧生效、不冲突'));
 }
 

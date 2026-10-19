@@ -84,6 +84,9 @@ t('设置页有「显示 token 使用量」', !!(await page.$('#s-showusage')));
 t('老设置没这个键时默认勾上', (await page.$eval('#s-showusage', el => el.checked)) === true);
 
 console.log('');
+// v0.4.3.2：外观收成了折叠，page.click 要求元素可见，先展开
+await page.evaluate(() => { const f = document.getElementById('appear-fold'); if (f && !f.classList.contains('open')) f.click(); });
+await sleep(500);
 console.log('=== 2. 关掉后角标消失（实测渲染结果）===');
 // 先塞一条带 usage 的消息进库
 await page.evaluate(async () => {
@@ -110,7 +113,8 @@ console.log('   开着时角标: ' + JSON.stringify(onBadge));
 t('开着时能看到角标', !!onBadge && onBadge.includes('111'));
 
 await openSettings();
-await page.click('#s-showusage');            // 关掉
+// v0.4.3.2：外观收进折叠后 page.click 不稳定，直接派发点击
+await page.evaluate(() => document.getElementById('s-showusage').click());   // 关掉
 await sleep(900);
 t('关掉后勾选框为未勾', (await page.$eval('#s-showusage', el => el.checked)) === false);
 await backFromSettings();
@@ -123,7 +127,9 @@ console.log('');
 console.log('=== 3. 重开设置，开关状态读得回来 ===');
 await openSettings();
 t('关掉的状态被记住', (await page.$eval('#s-showusage', el => el.checked)) === false);
-await page.click('#s-showusage'); await sleep(700);   // 开回来
+await page.evaluate(() => { const f = document.getElementById('appear-fold'); if (f && !f.classList.contains('open')) f.click(); });
+await sleep(400);
+await page.evaluate(() => document.getElementById('s-showusage').click()); await sleep(700);   // 开回来
 t('开回来后勾上', (await page.$eval('#s-showusage', el => el.checked)) === true);
 await backFromSettings();
 

@@ -217,12 +217,13 @@ t('一开始抽屉是收着的', (await isHidden('#cmd-drawer')) === true);
 await openDrawer();
 t('点 ＋ 拉出抽屉', (await isHidden('#cmd-drawer')) === false);
 const items = await page.$$eval('#cmd-drawer .cmd-item', e => e.map(x => x.dataset.cmd));
-t('抽屉里有三个功能', items.length === 3, JSON.stringify(items));
-t('三个是 search / direct / image', items.join(',') === 'search,direct,image', JSON.stringify(items));
+t('抽屉里有四个功能', items.length === 4, JSON.stringify(items));
+t('四个是 search / direct / plot / image', items.join(',') === 'search,direct,plot,image', JSON.stringify(items));
 const dtext = await textOf('#cmd-drawer');
 t('抽屉里写着「联网搜索」', dtext.includes('联网搜索'));
 t('抽屉里写着「本轮更改」', dtext.includes('本轮更改'));
 t('抽屉里写着「发送图片」', dtext.includes('发送图片'));
+t('抽屉里写着「剧情方向」', dtext.includes('剧情方向'));
 await page.evaluate(() => document.getElementById('btn-plus').click());
 await sleep(200);
 t('再点一次 ＋ 缩回', (await isHidden('#cmd-drawer')) === true);
@@ -618,6 +619,37 @@ const ttxt = await textOf('#modal-text');
 t('★ 「附加内容」里照实写「没搜成」（F12）', ttxt.includes('没搜成'), ttxt.slice(0, 90));
 await page.evaluate(() => document.getElementById('modal-ok').click());
 await sleep(300);
+
+console.log('');
+console.log('=== 剧情方向（v0.4.3.2）：挂得上、带得走、留得住 ===');
+await openDrawer();
+await pickDrawer('plot');
+t('参数槽里出现「剧情方向」那一行', (await textOf('#cmd-slots')).includes('剧情方向'));
+await fillSlot('plot', '她开始起疑心，气氛往下沉');
+const chipTxt = await textOf('#input-tags');
+t('★ 输入行上方的 chip 写着「剧情方向」', chipTxt.includes('剧情方向'), chipTxt);
+await say('顺着刚才那句往下演'); await sleep(700);
+const pu = await lastUser('cf16');
+const pk = pu && pu.tags ? pu.tags.find(x => x.k === 'plot') : null;
+t('★ 消息带上了「剧情方向」标签', !!pk, JSON.stringify(pu && pu.tags));
+t('★ 标签里存着这一轮写的方向', (pk && pk.arg) === '她开始起疑心，气氛往下沉', JSON.stringify(pk));
+t('参数槽用完就清空了', (await isHidden('#cmd-slots')) === true);
+await page.evaluate((mid) => {
+  const el = [...document.querySelectorAll('#messages .msg')].find(e => e.dataset.id === mid);
+  const b = el && el.querySelector('.more-btn');
+  if (b) b.click();
+}, pu.id);
+await sleep(500);
+const ptxt = await textOf('#modal-text');
+t('★ 「附加内容」里能回看这一轮的方向', ptxt.includes('剧情方向') && ptxt.includes('起疑心'), ptxt.slice(0, 90));
+await page.evaluate(() => document.getElementById('modal-ok').click());
+await sleep(300);
+// 手打 /向 也认（命令必须独占一行）
+await page.evaluate(() => { document.getElementById('input').value = ''; });
+await say('/向 往告白的方向走'); await sleep(700);
+const hu = await lastUser('cf16');
+const hk = hu && hu.tags ? hu.tags.find(x => x.k === 'plot') : null;
+t('★ 手打 /向 也认，且不进正文', !!(hk && hk.arg === '往告白的方向走') && !(hu.content || '').includes('/向'), JSON.stringify(hk) + ' | ' + (hu.content || '').slice(0, 40));
 
 t('全程没有页面报错', errs.length === 0, errs.slice(0,3).join(' | '));
 

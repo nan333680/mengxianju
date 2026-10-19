@@ -232,16 +232,18 @@ console.log('=== 9. 记忆开关 ===');
 }
 
 console.log('');
-console.log('=== 10. 描写上限 × 驱动力的降级（两者互相打架时要降级并说明）===');
+console.log('=== 10. 描写上限 × 驱动力：各自独立生效（v0.4.3.3 起不再降档）===');
 {
   await putChar({ descLevel: 'low', detailDrive: 'max' });
   await enterChat();
   const sys = await send('在吗');
-  t('上限压到 low 时驱动降级', sys.includes('按最低档执行'));
+  t('上限压到 low 时驱动仍原样注入', sys.includes('三段式'));
+  t('不再出现「按最低档执行」的降级说明', !sys.includes('按最低档执行'));
+  t('冲突时给的是不涉及数字的兜底', sys.includes('就只写最关键的那一件'));
   await putChar({ descLevel: 'mid', detailDrive: 'mid' });
   await enterChat();
   const sys2 = await send('在吗');
-  t('不冲突时不出现降级提示', !sys2.includes('按最低档执行'));
+  t('mid × mid 同样不降级', !sys2.includes('按最低档执行'));
 }
 
 console.log('');

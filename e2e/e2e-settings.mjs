@@ -115,12 +115,83 @@ await page.evaluate(() => document.getElementById('btn-settings').click()); awai
 await page.evaluate(() => { const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'mine'); if (b) b.click(); }); await sleep(700);
 const mineGroups = await page.$$eval('#view-mine .group h3', els => els.map(e => e.textContent.trim()));
 console.log('   我的设置栏目: ' + JSON.stringify(mineGroups));
-t('我的设置页栏目正确（我的头像/外观/数据/角色卡/酒馆正则/酒馆聊天记录）',
-  JSON.stringify(mineGroups) === JSON.stringify(['我的头像','外观','数据','角色卡 实验','酒馆正则 实验','酒馆聊天记录']),
+// v0.4.3.2：外观 + 酒馆三项都收成了折叠头（不再是 <h3>），所以 h3 列表只剩三个
+t('我的设置页栏目正确（我的头像 / 数据 / 角色卡）',
+  JSON.stringify(mineGroups) === JSON.stringify(['我的头像','数据','角色卡 实验']),
   JSON.stringify(mineGroups));
-t('「我的设置」页里没有接口那些全局项', mineGroups.indexOf('记忆管理') < 0 && !(await page.$('#view-mine #api-fold')));
-t('「接口」收成了折叠头', (await page.$$eval('#view-settings #api-fold', els => els.length)) === 1);
+// v0.4.3.2：接口从全局页搬到「我的设置」
+t('「我的设置」页里有接口折叠', (await page.$$eval('#view-mine #api-fold', els => els.length)) === 1);
+t('「我的设置」页里有外观折叠', (await page.$$eval('#view-mine #appear-fold', els => els.length)) === 1);
+// v0.4.3.2 返工：三项不是三个并排折叠头，而是**一个「酒馆」折叠**，
+// 展开后里面依次是预设 / 正则 / 聊天记录三段（用户要「像接口那样」一层套一层）。
+t('「我的设置」页里有一个「酒馆」折叠',
+  (await page.$$eval('#view-mine #tavern-fold', els => els.length)) === 1);
+{
+  const secs = await page.$$eval('#view-mine #tavern-wrap .sec-head', els => els.map(e => e.textContent.replace(/\s+/g, '').trim()));
+  t('「酒馆」折叠里依次是预设 / 正则 / 聊天记录三段',
+    secs.join('|') === '酒馆预设|酒馆正则实验|酒馆聊天记录', JSON.stringify(secs));
+}
+t('三项的入口都还在这一个折叠里',
+  (await page.$$eval('#view-mine #tavern-wrap #btn-preset-import', els => els.length)) === 1
+  && (await page.$$eval('#view-mine #tavern-wrap #stregex-list', els => els.length)) === 1
+  && (await page.$$eval('#view-mine #tavern-wrap #btn-stchat-import', els => els.length)) === 1);
+t('全局设置页里不再有接口', (await page.$$eval('#view-settings #api-fold', els => els.length)) === 0);
 t('「时段划分」收成了折叠头', (await page.$$eval('#view-settings #clock-fold', els => els.length)) === 1);
+
+// ---- 自动备份频率（v0.4.3.2，用户要求「加一个更改备份频率」）----
+// 「数据」区在「我的设置」页 —— 第 1 节上面刚好切到了 mine，正好在这儿测。
+console.log('   自动备份频率');
+{
+  const beBtns = await page.$$eval('#view-mine #s-backup-every button', els => els.map(e => e.textContent.trim()));
+  console.log('   实际档位: ' + JSON.stringify(beBtns));
+  t('数据区有四个频率档位', JSON.stringify(beBtns) === JSON.stringify(['每天', '每 3 天', '每周', '关闭']), JSON.stringify(beBtns));
+  const beOn = await page.$eval('#view-mine #s-backup-every button.on', e => e.textContent.trim());
+  t('默认高亮「每天」', beOn === '每天', beOn);
+  const beNote0 = await page.$eval('#view-mine #s-backup-every-note', e => e.textContent.trim());
+  // ⚠️ 这条同时守着「每 天」那个空格 —— 第一版手拼字符串，n=1 时印出来是「每 天最多写一份」。
+  t('说明行是「每天最多写一份」而不是「每 天」', /^每天最多写一份/.test(beNote0), beNote0);
+  t('说明行写出保留份数', /最近 7 份/.test(beNote0), beNote0);
+
+  // 点「每周」→ 落库 + 说明行当场跟着变（不用退出去再进来）
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('#view-mine #s-backup-every button')].find(x => x.textContent.trim() === '每周');
+    if (b) b.click();
+  });
+  await sleep(600);
+  const beSaved = await page.evaluate(async () => {
+    const o = indexedDB.open('ai-companion');
+    const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+    const v = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('settings'); q.onsuccess = () => r(q.result && q.result.v); });
+    db.close(); return v && v.backupEveryDays;
+  });
+  t('点「每周」把 backupEveryDays 落库成 7', beSaved === 7, String(beSaved));
+  const beNote7 = await page.$eval('#view-mine #s-backup-every-note', e => e.textContent.trim());
+  t('说明行当场改成「每周最多写一份」', /^每周最多写一份/.test(beNote7), beNote7);
+
+  // 点「关闭」→ 0，说明行换成「不再自动写新备份」
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('#view-mine #s-backup-every button')].find(x => x.textContent.trim() === '关闭');
+    if (b) b.click();
+  });
+  await sleep(600);
+  const beOff = await page.evaluate(async () => {
+    const o = indexedDB.open('ai-companion');
+    const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+    const v = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('settings'); q.onsuccess = () => r(q.result && q.result.v); });
+    db.close(); return v && v.backupEveryDays;
+  });
+  t('点「关闭」落库成 0', beOff === 0, String(beOff));
+  const beNoteOff = await page.$eval('#view-mine #s-backup-every-note', e => e.textContent.trim());
+  t('关闭时说明行讲清楚「不再写新的、旧的仍能自检」',
+    /不再自动写新备份/.test(beNoteOff) && /仍然可用/.test(beNoteOff), beNoteOff);
+
+  // 收尾：点回「每天」，别把 0 留给后面几节和别的套件
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('#view-mine #s-backup-every button')].find(x => x.textContent.trim() === '每天');
+    if (b) b.click();
+  });
+  await sleep(600);
+}
 // ⚠️ 断言反转（v1.21.47）：「他的设定 / 他的居处」已从设置页搬到【角色编辑页】
 // （每个角色一份，不再是全局共用）。设置页里不该再看到它们。
 t('「我的相关设定」已从设置页撤掉', (await page.$$eval('#view-settings #mine-fold', els => els.length)) === 0);
@@ -141,6 +212,62 @@ await sleep(300);
   // v1.15.2 起栈多了 drawer 一层，退到设置页的上一层是抽屉，还要再关一次
   await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });
   await sleep(500);
+
+console.log('');
+console.log('=== 1b. 备份健康面板把手机路径摆出来（v0.4.3.2）===');
+// 为什么单独一段：路径那行是 autoBackup 真正跑过一次之后才有的，
+// 而 web 端没有 Capacitor Filesystem（autoBackupIfDue 直接 no-filesystem 返回），
+// 所以只能把 kv 里那份"体检记录"直接种进去，验的是面板怎么把它翻译成人话。
+{
+  await page.evaluate(async () => {
+    const o = indexedDB.open('ai-companion');
+    const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+    const now = Date.now();
+    const rec = {
+      last: { name: '梦弦居自动备份-2026-10-17.json', dir: 'DOCUMENTS', count: 3, at: now, ok: true, bytes: 123456, characters: 5, messages: 1709 },
+      write: { ran: true, name: '梦弦居自动备份-2026-10-17.json', at: now, dir: 'DOCUMENTS' },
+      prev: null,
+    };
+    await new Promise((res) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put({ k: 'backupHealth', v: rec });
+      tx.oncomplete = res; tx.onerror = res;
+    });
+    db.close();
+  });
+  await page.reload({ waitUntil: 'networkidle0' }); await sleep(700);
+  await openSettings(page, sleep);
+  await page.evaluate(() => document.getElementById('btn-set-back').click()); await sleep(400);
+  await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); }); await sleep(400);
+  await page.evaluate(() => document.getElementById('btn-settings').click()); await sleep(600);
+  await page.evaluate(() => { const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'mine'); if (b) b.click(); }); await sleep(700);
+  const bh = await page.$eval('#view-mine #backup-health', e => e.innerText);
+  t('面板写出存放位置', /存放位置/.test(bh) && /文档/.test(bh), bh.slice(0, 200).replace(/\n/g, ' | '));
+  // 路径必须逐字对得上 —— 用户要的就是"能照着这个路径去文件管理器里找"
+  t('面板写出手机上的路径', bh.includes('/storage/emulated/0/Documents/梦弦居备份/'), bh.slice(0, 320).replace(/\n/g, ' | '));
+  t('面板写出保留份数', /保留份数/.test(bh) && /3 \/ 7/.test(bh), bh.slice(0, 320).replace(/\n/g, ' | '));
+  t('面板写出备份频率', /备份频率/.test(bh) && /每天/.test(bh), bh.slice(0, 320).replace(/\n/g, ' | '));
+  t('面板写出最近一次自检', /最近一次自检/.test(bh) && /读得回来/.test(bh), bh.slice(0, 400).replace(/\n/g, ' | '));
+  // 收尾：把种进去的记录删掉，别影响后面几节和别的套件
+  await page.evaluate(async () => {
+    const o = indexedDB.open('ai-companion');
+    const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+    await new Promise((res) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').delete('backupHealth');
+      tx.oncomplete = res; tx.onerror = res;
+    });
+    db.close();
+  });
+  await page.evaluate(() => {
+    const v = document.querySelector('.view.active');
+    const b = v && v.querySelector('header .icon-btn');
+    if (b) b.click();
+  });
+  await sleep(300);
+  await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });
+  await sleep(400);
+}
 
 console.log('');
 console.log('=== 2. 造两个角色，验证「覆盖全局」 ===');

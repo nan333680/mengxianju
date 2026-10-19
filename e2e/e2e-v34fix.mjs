@@ -210,7 +210,7 @@ console.log('=== 新3 同名条目不得互相顶掉（滞回行为）===');
 }
 
 console.log('');
-console.log('=== 新4 low 档下 mid 也要降级（比实际 prompt）===');
+console.log('=== 新4 描写档与驱动档各自独立（v0.4.3.3 起不再按字数降档）===');
 {
   await page.evaluate(async () => {
     const o = indexedDB.open('ai-companion');
@@ -232,9 +232,12 @@ console.log('=== 新4 low 档下 mid 也要降级（比实际 prompt）===');
   const hasChain = sysAll.includes('动作链');
   const hasDowngrade = sysAll.includes('按最低档执行');
   console.log('   8字上限=' + has8 + ' 动作链=' + hasChain + ' 降级说明=' + hasDowngrade);
+  // ⚠️ 断言反转（v0.4.3.3）：用户实测「三个档都拉高、输出却没变长」，
+  // 根因是这一层字数预算降档把「中/详」静默降成了「简」，界面还显示原档。
+  // 他明确要求不要档位↔固定字数绑定，机制已整体删除，所以这里反过来断言。
   t('low 档的长度上限仍在', has8);
-  t('mid 的动作链【已降级去掉】', hasChain === false, '仍出现动作链');
-  t('有降级说明', hasDowngrade);
+  t('mid 的动作链【不再被降掉】', hasChain === true, '动作链没出现');
+  t('不再出现降级说明', hasDowngrade === false);
 }
 
 console.log('');

@@ -101,6 +101,15 @@ await page.reload({waitUntil:'networkidle0'}); await sleep(400)   // [提速] �
 await seedChar(page, '测试角色', { greeting: '' });   // 空开场白：不额外多出一条消息
 await page.reload({waitUntil:'networkidle0'}); await sleep(500);
 await openSettings(page, sleep);
+// v0.4.3.2：「接口」搬到了「我的设置」页，先切过去（返回 → 关抽屉 → ⚙ → 点「我的设置」）
+await page.evaluate(() => { const b = document.getElementById('btn-set-back') || document.getElementById('btn-mine-back'); if (b) b.click(); });
+await sleep(500);
+await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });
+await sleep(400);
+await page.evaluate(() => document.getElementById('btn-settings').click());
+await sleep(700);
+await page.evaluate(() => { const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'mine'); if (b) b.click(); });
+await sleep(900);
 // v1.21.57：「接口」收成折叠了，要点里面的按钮（余额查询）得先展开
 await page.evaluate(() => { const f = document.getElementById('api-fold'); if (f && !f.classList.contains('open')) f.click(); });
 await sleep(600);
@@ -130,7 +139,7 @@ const readDeleted = async () => page.evaluate(async()=>{
 });
 const before = await readDeleted();
 t('一开始清单是空的', before.length===0, JSON.stringify(before));
-await page.click('#btn-set-back'); await sleep(400);
+await page.click('#btn-mine-back'); await sleep(400);   // v0.4.3.2 起停在「我的设置」，返回按钮是 mine 那个
   // v1.15.2 起栈多了 drawer 一层，退到设置页的上一层是抽屉，还要再关一次
   await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });
   await sleep(500);

@@ -297,10 +297,10 @@ node tools\bump-version.mjs --check     # 只检查四处一致
 node tools\release-check.mjs
 ```
 
-在本地复刻 CI 的环境跑那 21 套（GitHub runner 是 en-US、而且报 `prefers-reduced-motion: reduce`，
+在本地复刻 CI 的环境跑 CI 清单里的全部套件（GitHub runner 是 en-US、而且报 `prefers-reduced-motion: reduce`，
 本机这两样都不一样 —— **本地绿、CI 红基本都是这两个原因**）：
 
 ```powershell
-node tools\ci-precheck.mjs             # 全套 21 套
+node tools\ci-precheck.mjs             # CI 清单里的全部套件（现在是 22 套，清单从 ci.yml 读）
 node tools\ci-precheck.mjs --lint-only # 只做"套件有没有引用被 gitignore 的文件"这项静态检查
 ```

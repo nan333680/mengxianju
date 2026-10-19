@@ -54,7 +54,14 @@ jobs:
           foreach ($s in $suites) {
             Write-Host "--- $s"
             node "e2e/$s.mjs"
-            if ($LASTEXITCODE -ne 0) { $fail++ }
+            # 红的时候让 annotation 直接写出是哪一套：否则页面上只有
+            # 「Process completed with exit code 1.」，得下载整份日志才知道谁挂的
+            # （v0.5.0 / v0.5.1 两轮都是这么查的）。先存退出码，别被后面的命令盖掉。
+            $code = $LASTEXITCODE
+            if ($code -ne 0) {
+              $fail++
+              Write-Host "::error title=e2e 失败::e2e/$s.mjs 退出码 $code"
+            }
           }
           Write-Host "失败的套件数：$fail / $($suites.Count)"
           if ($fail -gt 0) { exit 1 }

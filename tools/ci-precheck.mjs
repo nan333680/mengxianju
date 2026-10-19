@@ -25,7 +25,15 @@ const lintOnly = process.argv.includes('--lint-only');
 const ci = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
 const block = ci.match(/\$suites\s*=\s*@\(([\s\S]*?)\)/);
 if (!block) { console.error('读不出 ci.yml 里的 $suites 清单'); process.exit(2); }
-const suites = block[1].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+// 解析 $suites：先逐行剥掉 # 注释，再按逗号切。
+// ⚠️ 为什么不能直接 split(',')：bcda026 在数组里加了一行注释（PowerShell 合法、CI 跑得好好的），
+//    裸切会把「# 剧情卡…」和下一行的 'e2e-arc' 粘成一个垃圾字符串当文件名 ——
+//    更阴的是切出来的段数刚好还是 22，数字对上了，眼睛就过去了（v0.5.1 踩到）。
+const suites = block[1].split('\n').map(l => l.replace(/#.*$/, '')).join('\n')
+  .split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+// 解析出来的每一项必须像个套件名，否则宁可报错也别拿着垃圾字符串去 readFileSync
+const junk = suites.filter(s => !/^[A-Za-z0-9_.-]+$/.test(s));
+if (junk.length) { console.error('ci.yml 的 $suites 解析出可疑项：' + JSON.stringify(junk)); process.exit(2); }
 console.log('CI 套件清单：' + suites.length + ' 套');
 
 // ---------- ③ 静态检查：CI 套件不许引用被 gitignore 的路径 ----------
@@ -34,6 +42,7 @@ let lintBad = 0;
 console.log('\n[1/2] 静态检查：CI 套件里有没有引用被 gitignore 的路径');
 for (const s of suites) {
   const file = path.join(root, 'e2e', s + '.mjs');
+  if (!fs.existsSync(file)) { lintBad++; console.error('  ✗ ' + s + '：清单里有它，但 e2e/' + s + '.mjs 不存在'); continue; }
   const src = fs.readFileSync(file, 'utf8');
   // ⚠️ 只看"读"的引用：套件自己 writeFileSync 出来的路径不算问题
   //    （e2e-autobackup 就是先把 _archive/xxx 写出来再用，第一版把它误报了）。

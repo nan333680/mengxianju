@@ -189,7 +189,11 @@ console.log('=== #1 regen 护栏 / #2 #3 #9 #10 #11 ===');
   t('#6 room 用 totalCap', src.includes('const room = Math.max(0, totalCap - curWritable);'));
   t('#9 记忆 live 校验', src.includes('条记忆的角色本机没有，已跳过'));
   t('#10 新建组带 order', src.includes('order: _maxOrder + 1 });'));
-  t('#11 从常量派生（两处）', (src.split("...BACKUP_KV_PREFIXES, 'memTidyBackup:'").length - 1) === 2);
+  // v0.5.0.2 起两处【有意不同】：
+  //   删角色（purgeCharEverywhere）连剧情卡一起清 —— 角色没了，卡留着就是孤儿；
+  //   清空聊天只清 WIPE_CHAT_PREFIXES（= 备份白名单去掉 'arc:'）—— 新键默认保留。
+  t('#11 删角色一处用全量白名单', (src.split("...BACKUP_KV_PREFIXES, 'memTidyBackup:'").length - 1) === 1);
+  t('#11 清空聊天一处用 WIPE_CHAT_PREFIXES', (src.split("...WIPE_CHAT_PREFIXES, 'memTidyBackup:'").length - 1) === 1);
   t('#11 常量含 memArchiveLastAt', src.includes("'memArchiveLastAt:',"));
 }
 

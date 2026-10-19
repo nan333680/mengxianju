@@ -24,6 +24,10 @@ export const PROVIDERS = {
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-flash', vision: 'deepseek-flash',
     reasoning: { none: 'none', low: 'low', high: 'high', max: 'max' },
+    // 「这个请求不用想，直接答」—— 只给那些真的要一句话就答的活（剧情判定器）。
+    // 只写 reasoning_effort 关不掉：实测 reasoning_effort:'none' 时它照样先在
+    // reasoning_content 里盘算一大段，content 有时是空的、有时被 max_tokens 截断。
+    thinkOff: { thinking: { type: 'disabled' } },
     usage: true, think: 'reasoning_content', balance: true,
     note: '默认。自带看图能力，能查余额。',
   },
@@ -129,6 +133,7 @@ async function postChat(url, apiKey, body, signal) {
     // 存一份给下游（见 bodyTextCache 的说明）—— 这里读了，外面就读不到了
     if (txt) bodyTextCache.set(res, txt);
     const drop = /reasoning_effort/i.test(txt) ? 'reasoning_effort'
+               : /thinking/i.test(txt) ? 'thinking'
                : /stream_options|include_usage/i.test(txt) ? 'stream_options'
                : null;
     if (drop && body[drop] !== undefined) {
@@ -438,6 +443,7 @@ export async function onceChat(opts) {
   const {
     apiKey, baseUrl, model, messages, provider, temperature = 0.3, maxTokens = 1024,
     reasoningEffort = 'none',   // 见下面 ⚠️
+    noThink = false,            // 见下面 ⚠️⚠️
   } = opts;
   const spec = providerSpec(provider);
   const eff = (spec.reasoning || {})[reasoningEffort];
@@ -463,9 +469,17 @@ export async function onceChat(opts) {
     //
     // v1.21.47：档位按服务商映射；映射成 null 就【不带这个字段】——
     // 有些兼容端点收到不认识的字段直接 400。
+    // ⚠️⚠️ 光靠 reasoning_effort 关不掉思考（v0.5.0.2 实测，deepseek-flash）：
+    //   reasoning_effort:'none' 时它照样先在 reasoning_content 里盘算，
+    //   300~400 上限会被思考烧穿（finish_reason=length、content 为空串）；
+    //   同一批样本换成 thinking:{type:'disabled'} 后 10 条全对、输出只剩 20 来个 token。
+    // 只有真要「一句话就答」的活才传 noThink —— 别的活想一想是好事，而且这字段
+    // 不是家家都认（不认的由 postChat 按报错摘掉重试）。
+    const thinkOff = noThink && spec.thinkOff ? spec.thinkOff : null;
     res = await postChat(joinUrl(baseUrl, '/chat/completions'), apiKey, {
       model, messages: messages.map(toApiMessage), temperature, max_tokens: maxTokens, stream: false,
       ...(eff ? { reasoning_effort: eff } : {}),
+      ...(thinkOff || {}),
     }, ctl.signal);
   } finally { clearTimeout(t); }
   if (!res.ok) {

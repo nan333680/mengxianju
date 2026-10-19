@@ -13,6 +13,7 @@ import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entr
 import { autoBackupIfDue, verifyLatestBackup, readLatestBackup, BACKUP_DIRS, KEEP as BACKUP_KEEP, DAY_MS as BACKUP_DAY_MS } from './autobackup.js';
 // 导出 Markdown（v1.21.48）：纯函数，接一组消息吐一个字符串
 import { buildChatMarkdown, markdownFileName } from './exportmd.js';
+import { normalizeArc, arcActive, arcFinished, atLastBeat, beatTurns, emptyArc, ARC_BEATS_MAX, ARC_CONSTRAINTS_MAX } from './storyarc.js';
 // 酒馆正则（v0.4.0）：解析 + 应用都在 stregex.js 里，不碰 DOM 也不碰数据库。
 // ⚠️ 红线写在那文件头上：正则只作用于【副本】（提示词 / 屏幕），永不回写存档。
 import { parseStRegexList, applyStRegex, previewOne } from './stregex.js';
@@ -677,7 +678,7 @@ function renderClock() {
   // 现实模式下缩成一行只读小字（v1.20.21，需求「像抽屉那样缩进」）。
   // 保留位置让人看得见现在几点，但不再是可点的大按钮 —— 点了也调不了。
   el.classList.toggle('readonly', real);
-  el.title = real ? '正在跟随手机时间，改不了（想手动调就去设置里关掉）' : '点这里调整剧情时间';
+  el.title = tt(real ? '正在跟随手机时间，改不了（想手动调就去设置里关掉）' : '点这里调整剧情时间');
   renderSceneBar();   // 场景条和时间条共用这一行，一起刷新（v1.21.47）
 }
 
@@ -861,7 +862,7 @@ function renderSceneBar() {
   const st = sceneOf(curChar).trim();
   el.textContent = st ? (tt('场景') + ' · ' + (st.length > 8 ? st.slice(0, 8) + '…' : st)) : tt('场景');
   el.classList.toggle('on', !!st);
-  el.title = st ? ('当前场景：' + st) : '点这里给这一段对话设一个场景';
+  el.title = st ? (tt('当前场景：') + st) : tt('点这里给这一段对话设一个场景');
 }
 
 /** 弹窗里那行小字：当前环境到底是什么（用户要的"小字提醒当前的环境是什么"） */
@@ -1396,6 +1397,7 @@ async function ensureChar() {
 async function showEmptyChat() {
   curCharId = null;
   curChar = null;
+  await refreshArcBar();           // v0.5.0：没角色就没有剧情卡
   const nm = $('chat-name'); if (nm) nm.textContent = '还没有角色';
   const av = $('chat-avatar'); if (av) av.textContent = '🎎';
   const bar = $('chat-clock'); if (bar) bar.textContent = '';
@@ -1424,6 +1426,7 @@ async function selectChar(id) {
   if (!curChar) { await ensureChar(); return; }
   await kv.set('lastCharId', id);   // 记下来，下次打开还回到她这儿
   await loadClock(id);             // 每个角色的剧情时间各走各的
+  await refreshArcBar();           // v0.5.0：剧情卡也是每个角色一张
   $('chat-name').textContent = curChar.name || '未命名';
   const av = $('chat-avatar');
   if (curChar.avatar) {
@@ -2510,10 +2513,12 @@ async function regenerate() {
   //    只记 user 那句的话，她残段产生的记忆会永远留着。
   await noteDeleted([lastUser.content].concat(followers.map(m => m.content || '')).filter(Boolean));
   await kv.set('memNeedTidy:' + curCharId, true);   // 让它下次整理务必跑一趟
+  // v0.5.0.4：这一轮要重演，自动判定标的 done 过期了（人手标的不动）
+  await clearAutoDone(curCharId);
   await renderMessages();
   // ⚠️ 把 sameSpk 带过去（v0.4.0 复查，用户拍板续写/重生成走 A）：
   //    群聊时它让"重新生成"仍然由【刚才那个人】重说 —— 不带的话指针已经推到下一个人了。
-  send({ sameSpeaker: sameSpk });
+  send({ sameSpeaker: sameSpk, regen: true });
 }
 
 // 每帧最多真正滚一次。流式输出时每个 chunk 都会调它，以前是一次调用排一个
@@ -5311,6 +5316,8 @@ async function exportChatMarkdown() {
  * @param {string} [opts.sameSpeaker]  群聊专用（v0.4.0 复查）：这一轮必须由这个成员说。
  *                   重新生成 / 换一个版本时由调用方传进来 —— 它们会先删掉旧回复，
  *                   所以必须在【删之前】把"刚才是谁说的"取好，不能等 send() 自己去读。
+ * @param {boolean} [opts.regen]  这一轮是"重新生成 / 换一个版本"（v0.5.0.4）：不是在往前演，
+ *                   是把同一轮重演一遍。剧情卡的轮数计数和自动判定标的 done 都要据此跳过/清掉。
  *
  * 为什么续写要做成 send 的一个分支、而不是另写一条生成路径：
  * 这条路径上挂着几十个已经踩过的坑（时间标记、记忆节奏、滚动摘要失效、
@@ -5654,6 +5661,19 @@ let namedInText = false;
     // 记忆召回的话题（v1.21.56）：用【本轮说的话 + 最近两条】。
     // 刻意不用上面那个 wbText —— 它带 6 条上下文，二元组命中会掺进太多噪声。
     const memTopic = [visibleText].concat(pastRaw.slice(-2).map(m => m.content || '')).join(' ');
+    // 剧情卡（v0.5.0）：跨轮的方向层。每轮都从库里读一次 ——
+    // 他在面板里改完下一轮就生效，不用重开聊天；读不到就当没卡。
+    let arc = null;
+    try { arc = normalizeArc(await kv.get('arc:' + myChar.id, null)); } catch { arc = null; }
+    // 群聊的「各人的目的」在卡里按角色 id 存；提示词要印名字，这里给出映射。
+    // 单聊是空对象（没 agenda 就不出现那一段）。
+    const arcNames = {};
+    if (arc && Object.keys(arc.agenda).length) {
+      for (const id of Object.keys(arc.agenda)) {
+        const m = id === myChar.id ? myChar : await chars.get(id).catch(() => null);
+        if (m) arcNames[id] = m.name || '';
+      }
+    }
     const turnNote = buildTurnNote(myChar, P, {
       memories, useKaomoji, useEmoji, worldbook, rolling, topic: memTopic,
       clock: clockFull(clockState), clockLocked: !!clockState.locked,
@@ -5664,6 +5684,8 @@ let namedInText = false;
       directives: _cmds.filter(c => c.k === 'direct' && c.arg).map(c => c.arg),
       // 「剧情方向」（v0.4.3.2）：他这一轮想让事态往哪走 —— 只这一轮，不进人设、不进历史。
       plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
+      // 「剧情卡」（v0.5.0）：跨轮的方向层（当前拍）。没在跑就是 off，提示词里不出现。
+      arc, arcNames,
       // 「上一轮的要求」（v0.4.2.2）：这一轮没再提「本轮更改」时，把上一轮那条继续带一轮。
       // 这一轮又提了就以本轮为准（传空 —— 上一轮那条当场作废，不留长尾）。
       carry: _cmds.some(c => c.k === 'direct' && c.arg) ? [] : (_prevCarry ? [_prevCarry] : []),
@@ -6016,6 +6038,18 @@ let namedInText = false;
       const adv = lastSpoken ? (allChars.find(x => x.id === lastSpoken.speakerId) || speaker) : speaker;
       await advanceGroupTurn(myChar, adv);
     }
+    // 剧情卡：这一轮演完了，当前拍轮数 +1（v0.5.0.3）。和自动判定开不开无关。
+    // ⚠️ 必须 await：自动判定读的是库里的 turns，不等着落完它读到的是上一轮的数字，
+    //    于是「轮数够了才判」这道门永远差一轮（实测：刚打开判定时一次都不触发）。
+    //    代价只有一次 IndexedDB 读写，几毫秒。
+    // v0.5.0.4：只有「他真说了一句、她真回了一轮」才算新的叙事轮。
+    // 重新生成 / 换版本 / 续写都是同一轮的重复 —— 抽 4 次不满意 turns 就到 4，
+    // 自动判定的「至少 4 轮」这道门就形同虚设。
+    if (!(opts && opts.regen) && !cont) await bumpArcTurns(myCharId);
+    // 剧情卡自动判定（v0.5.0.2，beta，卡片上勾了才跑）。
+    // ⚠️ 只【标记演完】，绝不自动推进：判错会毁掉节奏且没法回滚，推进权留给人。
+    // 不 await —— 这一轮已经成了，判定晚几百毫秒回来不该拖慢界面。
+    maybeAutoJudgeArc(myCharId, P, pieces.map(x => x.text).join(''), text);
     // 她说完自动读出来（v1.21.56，开关默认关）。
     // ⚠️ 放在【整段都落库之后】：分段发送时逐段念会一顿一顿的，连起来念才像说话。
     if (S.ttsOn) speak(pieces.map(x => x.text).join(''));
@@ -10207,7 +10241,7 @@ function renderClockRanges() {
       + `<input type="number" min="0" max="24" data-k="${p.k}" data-i="0" value="${esc(a)}">`
       + `<i>—</i>`
       + `<input type="number" min="0" max="24" data-k="${p.k}" data-i="1" value="${esc(b)}">`
-      + `<em>点</em></div>`;
+      + `<em>${esc(tt('点'))}</em></div>`;
   }).join('');
   box.querySelectorAll('input').forEach(inp => {
     inp.onchange = () => {
@@ -10538,6 +10572,780 @@ function searchKeyFor() {
  *   同一个事实两个说法。顺带把 === false 也改成 !S.searchOn：
  *   老备份缺这个键时，严格等于会走成「缺 key」而设置页走成「未启用」。
  */
+/* ===== 剧情卡（v0.5.0）=====
+   一张卡 = 「这段关系要往哪走」。逻辑在 www/js/storyarc.js，这里只管界面和存储。
+   数据放 kv（'arc:' + charId），和 clock 一个套路 —— 不动 characters 的结构。
+   ⚠️ 'arc:' 必须登记在 BACKUP_KV_PREFIXES 里（v0.5.0.2 补的）：
+      它是两段式键，导出、自动备份会带上，导入时按「键名 + 旧 id」逐段换成新 id。
+      而清空聊天用的是 WIPE_CHAT_PREFIXES（= 备份白名单去掉 arc:）——
+      聊天记录清了，剧情卡得留着，不然用户辛苦写的几拍跟着没了。
+   ⚠️ 单聊和群聊共用一个 key 空间：群在数据里就是一条 character 记录。
+*/
+
+/** 正在编辑的草稿。打开弹窗时从库里拷一份，取消就不落盘。 */
+let _arcEdit = emptyArc();
+let _arcOwner = '';
+/** 群成员 id → 名字。arcPrompt 用它把 agenda 印成「谁想要什么」；单聊是空对象。 */
+let _arcNames = {};
+/** 上一次推进之前的快照，给弹窗里的「撤销」用（v0.5.0.3）。 */
+let _arcUndo = null;
+/**
+ * 打开弹窗那一刻，库里这张卡有没有内容（v0.5.1）。
+ * 判「这是新建还是在编辑旧卡」只能用这个快照 —— 不能用 _arcEdit，
+ * 因为「＋ 加一拍」「删一拍」「设为当前」都会中途改写 _arcEdit。
+ * 用 _arcEdit 判会踩到这条真实操作顺序：
+ *   新建空卡 → 先点「＋ 加一拍」（此时 _arcEdit.beats.length 变 1）→ 再写方向 → 保存
+ *   → 被判成「原来就有内容」→ 存成 off，顶栏显示「剧情 · 关」，他刚写的卡一句都不进提示词。
+ */
+let _arcOpenedHad = false;
+let _arcUndoTimer = 0;
+/** 聊天底部那条「这一拍像演完了」。{ charId, beat } */
+let _arcInline = null;
+/** 内联条自己那条 12 秒倒计时（v0.5.0.4：推进后的「撤销」也会用到）。 */
+let _arcInlineTimer = 0;
+
+const arcKey = (id) => 'arc:' + id;
+
+async function loadArcFor(id) {
+  if (!id) return emptyArc();
+  try { return normalizeArc(await kv.get(arcKey(id), null)); } catch { return emptyArc(); }
+}
+
+/** 顶部那条「剧情 · 2/3」。切角色、保存、清空都要刷一次。 */
+async function refreshArcBar() {
+  const btn = $('chat-arc');
+  if (!btn) return;
+  // ⚠️ v0.5.0.3：读之前先记下是谁。await 之后快速切角色，这个按钮会被写成【上一个角色】
+  //    的进度（下一次刷新才纠正，但那一瞬顶栏在说谎）。
+  const id = curCharId;
+  const a = await loadArcFor(id);
+  if (id !== curCharId) return;   // 已经切走了，别拿旧卡去画新会话
+  const on = arcActive(a);
+  const fin = arcFinished(a);
+  const n = a.beats.length;
+  btn.classList.toggle('on', on);
+  btn.classList.toggle('done', fin);
+  // ⚠️ v0.5.0.2：关掉的卡也要看得出来。
+  //    以前「关掉」和「从没建过」显示的是同一个裸「剧情」——用户不知道自己还留着一张关着的卡，
+  //    想接着演时只能凭记忆猜。现在关掉显示「剧情 · 关」，点开还是原内容。
+  // ⚠️ v0.5.0.3：演完是第三种状态。以前最后一拍也标 done 之后 status 还是 on，
+  //    顶栏照样「2/2」、提示词照样注入，用户点了「演完了」下一轮她还在演同一拍。
+  // v0.5.0.4 追加：判据从「!on && !fin」改成直接读 status —— 三处（顶栏 / 弹窗黄条 / 推进按钮）
+  // 现在都只认 status 一个来源，不再各自再算一遍。
+  const off = a.status === 'off' && !!(a.direction || n);
+  const zh = getActiveLang() === 'zh';
+  const zhTxt = fin ? '剧情 · 完'
+    : off ? '剧情 · 关'
+    : (on && n ? '剧情 · ' + (a.currentBeat + 1) + '/' + n : '剧情');
+  const enTxt = fin ? 'Plot · done'
+    : off ? 'Plot · off'
+    : (on && n ? 'Plot ' + (a.currentBeat + 1) + '/' + n : 'Plot');
+  btn.textContent = zh ? zhTxt : enTxt;
+  // ⚠️ v0.5.0.1：这颗按钮【同时】归 applyI18n 管（index.html 上有 data-i18n-en）。
+  //    英文下观察者 200ms 后会拿 dataset.i18nEn（初始是 'Plot'）把 textContent 覆盖掉，
+  //    于是刚写好的「Plot 2/3」被打回裸「Plot」，切回中文又会被还原成第一次记下的「剧情」。
+  //    症状：英文界面里那颗按钮永远没有进度。把两个语种的当前值同步进 dataset，
+  //    applyI18n 要写的时候会发现"已经是这个了"，就不会动。
+  btn.dataset.i18nZh = zhTxt;
+  btn.dataset.i18nEn = enTxt;
+}
+
+function renderArcBeats() {
+  const box = $('arc-beats');
+  const beats = _arcEdit.beats;
+  const cur = Math.min(_arcEdit.currentBeat, Math.max(0, beats.length - 1));
+  if (!beats.length) {
+    box.innerHTML = '<p class="arc-empty">' + esc(tt('还没拍。写个方向直接保存也行 —— 不发拍就只按方向走。')) + '</p>';
+  } else {
+    // ⚠️ v0.5.0.1：这里每一个字都过 tt()。
+    //    原来整段是硬编码中文 —— applyI18n 的兜底扫【扫不到 input】，
+    //    所以英文界面下拍号、四个 placeholder、删除按钮的 title 全是中文。
+    // ⚠️ v0.5.0.2：加了两样状态 ——「演完没有」（done）和「演完实际发生了什么」（result）。
+    //    没有 result，推进到下一拍之后模型完全不知道上一拍结果：卡上的「转折」写的是
+    //    【预期】怎么结束，不等于真的那么发生了（它可能压根没发生）。
+    box.innerHTML = beats.map((b, i) => `
+      <div class="arc-beat${i === cur ? ' cur' : ''}${b.done ? ' done' : ''}" data-i="${i}">
+        <div class="arc-beat-head">
+          <span class="arc-beat-no">${esc(tt('第 ' + (i + 1) + ' 拍'))}</span>
+          <input data-f="t" maxlength="60" placeholder="${esc(tt('这一拍叫什么（可空）'))}" value="${esc(b.t)}">
+          <button class="arc-beat-del" data-act="del" title="${esc(tt('删掉这一拍'))}">✕</button>
+        </div>
+        <div class="arc-beat-flags">
+          <button class="arc-flag${b.done ? ' on' : ''}" data-act="done">${esc(b.done ? tt('✓ 演完了') : tt('还没演完'))}</button>
+          <button class="arc-flag${i === cur ? ' on' : ''}" data-act="set">${esc(i === cur ? tt('当前') : tt('设为当前'))}</button>
+          <span class="arc-turns${i === cur && !b.done && (b.turns || 0) < _arcEdit.minTurns ? ' thin' : ''}">${esc(tt('演了 ' + (b.turns || 0) + ' 轮 / 至少 ' + _arcEdit.minTurns + ' 轮'))}</span>
+        </div>
+        <div class="arc-beat-row"><label>${esc(tt('要到'))}</label><input data-f="goal" maxlength="200" placeholder="${esc(tt('这一拍要达到的地方'))}" value="${esc(b.goal)}"></div>
+        <div class="arc-beat-row"><label>${esc(tt('卡在'))}</label><input data-f="obs" maxlength="200" placeholder="${esc(tt('卡在哪、谁不肯让'))}" value="${esc(b.obs)}"></div>
+        <div class="arc-beat-row"><label>${esc(tt('终点'))}</label><input data-f="turn" maxlength="200" placeholder="${esc(tt('到这一拍结束才该发生的事'))}" value="${esc(b.turn)}"></div>
+        <div class="arc-beat-row"><label>${esc(tt('结果'))}</label><input data-f="result" maxlength="240" placeholder="${esc(tt('演完之后实际发生了什么（可空）'))}" value="${esc(b.result)}"></div>
+      </div>`).join('');
+  }
+  $('arc-beats-cnt').textContent = beats.length + ' / ' + ARC_BEATS_MAX;
+  $('arc-add-beat').disabled = beats.length >= ARC_BEATS_MAX;
+  renderArcNow();
+  renderArcCnt();
+}
+
+/** 「现在演到第几拍」那一行 + 推进按钮的文案（v0.5.0.3：三态 + 轮数）。 */
+function renderArcNow() {
+  const beats = _arcEdit.beats;
+  const n = beats.length;
+  const cur = Math.min(_arcEdit.currentBeat, Math.max(0, n - 1));
+  const b = beats[cur];
+  const fin = _arcEdit.status === 'done';
+  const tb = beatTurns(_arcEdit, cur);
+  // 整串过 tt()（「第 N 拍：名字」有专门的 pattern，英文下是全角冒号换成半角的
+  // 'Beat N: 名字'）—— 分开拼会把中文全角「：」漏进英文界面。
+  $('arc-now-b').textContent = fin
+    ? tt('这一段演完了')
+    : (n ? tt('第 ' + (cur + 1) + ' 拍' + (b && b.t ? '：' + b.t : '') + ' · 第 ' + tb.turns + ' 轮') : tt('还没拍'));
+  $('arc-now').classList.toggle('fin', fin);
+  const btn = $('arc-next');
+  // v0.5.0.4：关掉的卡不能推 —— advanceArc 会因为 arcActive=false 直接返回空，
+  // 按钮亮着却点不动，是最难看的一种「没反应」。
+  const offNow = _arcEdit.status === 'off' && !!(_arcEdit.direction || n);
+  btn.disabled = offNow || (!n && !fin);
+  btn.textContent = fin ? tt('开新一段')
+    : (atLastBeat(_arcEdit) ? tt('这一段演完了 →') : tt('这一拍演完了 →'));
+  const hint = $('arc-now-h');
+  if (hint) {
+    hint.textContent = offNow
+      ? tt('这张卡是关着的 —— 先点上面的「重新开启」，它才会进提示词。')
+      : fin
+      ? tt('这张卡不会进提示词了。想接着演就加一拍；开新一段 = 清空方向和几拍，重新写一张。')
+      : (n && !b.done && tb.turns < tb.min
+        ? tt('这一拍才演 ' + tb.turns + ' 轮，至少 ' + tb.min + ' 轮才算演完 —— 别急着点。')
+        : tt('点右边那颗 = 这一拍收尾、立刻保存、走到下一拍。每拍下面写的「结果」会进下一轮的提示词。'));
+  }
+}
+
+/** 「不能发生什么」右上角的 N / 8（v0.5.0.4 上限 6 → 8）。超了标红，保存前会问一句。 */
+function renderArcCnt() {
+  const el = $('arc-cnt-c');
+  if (!el) return;
+  const n = $('arc-constraints').value.split('\n').map(x => x.trim()).filter(Boolean).length;
+  el.textContent = n + ' / ' + ARC_CONSTRAINTS_MAX;
+  el.classList.toggle('over', n > ARC_CONSTRAINTS_MAX);
+}
+
+/** 群聊：渲染「各人的目的」。单聊整块藏起来；顺便把 _arcNames 填好。 */
+async function renderArcAgenda(arc) {
+  const box = $('arc-aga');
+  const list = $('arc-aga-list');
+  _arcNames = {};
+  const c = _arcOwner ? await chars.get(_arcOwner) : null;
+  const mem = [];
+  if (c && Array.isArray(c.memberIds)) {
+    for (const id of c.memberIds) {
+      const x = await chars.get(id).catch(() => null);
+      if (x) mem.push(x);
+    }
+  }
+  if (!mem.length) { box.classList.add('hidden'); list.innerHTML = ''; return; }
+  box.classList.remove('hidden');
+  list.innerHTML = mem.map(m => `
+    <div class="arc-aga-row">
+      <label>${esc(m.name || tt('（无名）'))}</label>
+      <input data-aga="${esc(m.id)}" maxlength="120" placeholder="${esc(tt('这一场里他想要什么（可空）'))}" value="${esc(arc.agenda[m.id] || '')}">
+    </div>`).join('');
+  for (const m of mem) _arcNames[m.id] = m.name || '';
+}
+
+/** 从表单收一张卡。currentBeat 跟着界面上的高亮走。 */
+function collectArc() {
+  const beats = [...$('arc-beats').querySelectorAll('.arc-beat')].map(el => ({
+    t: el.querySelector('[data-f="t"]').value,
+    goal: el.querySelector('[data-f="goal"]').value,
+    obs: el.querySelector('[data-f="obs"]').value,
+    turn: el.querySelector('[data-f="turn"]').value,
+    result: el.querySelector('[data-f="result"]').value,
+    done: el.classList.contains('done'),
+  }));
+  const agenda = {};
+  for (const el of $('arc-aga-list').querySelectorAll('[data-aga]')) {
+    const v = String(el.value || '').trim();
+    if (v) agenda[el.dataset.aga] = v;
+  }
+  const curEl = $('arc-beats').querySelector('.arc-beat.cur');
+  const direction = $('arc-direction').value;
+  return normalizeArc({
+    title: $('arc-title').value,
+    direction,
+    constraints: $('arc-constraints').value.split('\n'),
+    beats,
+    agenda,
+    autoJudge: $('arc-auto').checked,
+    currentBeat: curEl ? Number(curEl.dataset.i) : 0,
+    // v0.5.0.4：status 不再被「保存」顺手改掉 —— 这是上一版最不诚实的一处。
+    //   ① 关掉的卡（off）保存、加拍之后【仍然是 off】。关掉就是真暂停，重开只有一条
+    //      明路：弹窗顶上那条「重新开启」（#arc-on）。上一版注释写着「弹窗顶上会明说
+    //      『保存就会重新打开』」，但界面上根本没有那句话 —— 注释在撒谎，现在真的这么做了。
+    //   ② 从零写起的卡（打开时库里是空的）保存 = 新建，进 on。
+    //      判据看【打开时】有没有内容，不能看现在有没有 —— 现在有了正是他刚写的。
+    //   ③ done 的卡改字保存之后还是 done。
+    //   ④ 空卡永远 off，不然 arcActive 会对着一张空白卡生成整段提示词。
+    status: (() => {
+      if (!direction.trim() && !beats.length) return 'off';
+      if (_arcEdit.status !== 'off') return _arcEdit.status;   // on / done 都不动
+      // v0.5.1：判据必须用打开时的快照。写 _arcEdit 会踩「先加拍、后写方向」——
+      //   「＋ 加一拍」把 _arcEdit.beats 变成 1 条，于是刚写的新卡被当成「原本就有内容」存成 off。
+      return _arcOpenedHad ? 'off' : 'on';   // 关掉的卡保持关；空白新建进 on
+    })(),
+    updatedAt: Date.now(),
+  });   // v0.5.0.3：空拍默认保留（见 storyarc.js）—— 刚加、还没填的那一拍要活着
+}
+
+async function openArcModal() {
+  if (!curCharId) return;
+  _arcOwner = curCharId;
+  _arcUndo = null;
+  $('arc-undo').classList.add('hidden');
+  _arcEdit = await loadArcFor(curCharId);
+  _arcOpenedHad = !!(_arcEdit.direction || _arcEdit.beats.length);   // v0.5.1：只认打开时的样子
+  $('arc-title').value = _arcEdit.title;
+  $('arc-direction').value = _arcEdit.direction;
+  $('arc-constraints').value = _arcEdit.constraints.join('\n');
+  $('arc-auto').checked = !!_arcEdit.autoJudge;
+  await renderArcAgenda(_arcEdit);
+  renderArcBeats();
+  // v0.5.0.4：关掉的卡顶上挂一条 —— 保存不会再悄悄把它打开，要开得点这里。
+  const isOff = _arcEdit.status === 'off' && !!(_arcEdit.direction || _arcEdit.beats.length);
+  $('arc-offbar').classList.toggle('hidden', !isOff);
+  $('arc-modal').classList.remove('hidden');
+}
+
+function closeArcModal() { $('arc-modal').classList.add('hidden'); }
+
+/**
+ * 切角色竞态（v0.5.0.2）：弹窗是异步打开的（要读 kv 和群成员），
+ * 这几毫秒里用户可能已经切到别人的会话来 —— 然后保存就会把 A 的卡写进 B。
+ * 只要 owner 已经不是当前角色，一律不落盘。
+ */
+function arcStale() {
+  if (!_arcOwner || _arcOwner !== curCharId) { closeArcModal(); return true; }
+  return false;
+}
+
+/**
+ * 「不能发生什么」超上限时问一句。返回 true = 继续，false = 他反悔了，调用方什么都别做。
+ *
+ * ⚠️ v0.5.0.4 追加：这段原来是 saveArc 里的一段内联代码，结果是只有「保存」会问 ——
+ *    关掉剧情 / 重新开启 / 弹窗推进 三条路照样落盘，第 9、10 条无声消失。
+ *    更要紧的是那三条路连"超了"都看不出来：collectArc() 自己就调了 normalizeArc，
+ *    超出的部分在进函数那一刻已经被 slice 掉了。所以这里必须读 DOM 原文，
+ *    而且必须让所有写卡的路径都先过它。
+ */
+async function checkConstraintsDrop() {
+  const el = $('arc-constraints');
+  if (!el) return true;
+  const cs = el.value.split('\n').map(x => x.trim()).filter(Boolean);
+  if (cs.length <= ARC_CONSTRAINTS_MAX) return true;
+  const drop = cs.slice(ARC_CONSTRAINTS_MAX);
+  return !!(await confirmBox(tt('「不能发生什么」写多了'),
+    '<p>' + esc(tt('最多只留 ' + ARC_CONSTRAINTS_MAX + ' 条，下面这些会丢掉：')) + '</p>'
+    + '<p class="mono">' + drop.map(x => esc(x)).join('<br>') + '</p>', tt('丢掉')));
+}
+
+/**
+ * 记一拍「演完了 / 没演完」，并把 result 一起对齐（v0.5.0.4 追加）。
+ *
+ * ⚠️ 取消完成必须清 result。不清的话下一次标 done 时，arcPrompt 会把一条已经作废的
+ *    结论当成「上一拍实际发生的事」注入进去 —— 用户明明点了「再演一轮」把这一拍退回去重演，
+ *    纠正过的剧情却会被旧结论顶回来。原来只有 clearAutoDone 清了，另外两条路（内联的
+ *    「再演一轮」和弹窗里手点 ✓ 取消）都留着。
+ */
+function setBeatDone(b, done, by) {
+  if (!b) return;
+  b.done = !!done;
+  b.doneBy = done ? (by || 'user') : '';
+  if (!done) b.result = '';
+}
+
+async function saveArc() {
+  if (arcStale()) return;
+  if (!(await checkConstraintsDrop())) return;
+  // v0.5.0.4：空拍【保留】（见 storyarc.js 的 normalizeArc），旧注释「把没填的拍丢掉」已过期。
+  const a = normalizeArc(collectArc());
+  try {
+    await kv.set(arcKey(_arcOwner), a);
+  } catch (e) {
+    toast(tt('保存失败：') + ((e && e.message) || e));
+    return;
+  }
+  hideArcInline();   // 卡改了，底上那条判定结果可能已经对不上
+  await refreshArcBar();
+  closeArcModal();
+  toast(tt(a.status === 'off' ? '剧情卡已保存（这张卡是关着的）' : (a.status === 'done' ? '剧情卡已保存（这一段已演完）' : '剧情卡已保存')));
+}
+
+/**
+ * 写一张卡进库，只回「成没成」（v0.5.0.4 追加）。
+ *
+ * 为什么要包一层：存储写失败的时候，界面最不该做的事就是继续说「已完成」。
+ * IndexedDB 配额满、被系统清数据、写事务被中止 —— 这些恰恰是最需要它说实话的时刻。
+ * 失败时只 toast 一句失败原因，界面由调用方原样留着，他还能重试。
+ */
+async function writeArc(id, a) {
+  try { await kv.set(arcKey(id), a); return true; }
+  catch (e) { toast(tt('保存失败：') + ((e && e.message) || e)); return false; }
+}
+
+async function turnOffArc() {
+  if (arcStale()) return;
+  if (!(await checkConstraintsDrop())) return;   // 关掉也会落盘，超限照样得问
+  const a = normalizeArc(collectArc());
+  // 只关掉开关，内容留着 —— 下次想接着演不用重写一遍
+  a.status = 'off';
+  try {
+    await kv.set(arcKey(_arcOwner), a);
+  } catch (e) {
+    // v0.5.0.4 追加：原来这里把异常吞了，然后照样 toast「已关掉」——
+    // 存储写失败时界面在撒谎，而撒谎的那句话正好是「它已经不生效了」。
+    toast(tt('关掉失败：') + ((e && e.message) || e));
+    return;   // 弹窗留着，别关 —— 关了他会以为已经生效
+  }
+  hideArcInline();
+  await refreshArcBar();
+  closeArcModal();
+  toast(tt('这一段的剧情卡已关掉（内容还在）'));
+}
+
+// —— 事件 ——
+$('chat-arc').onclick = openArcModal;
+$('arc-cancel').onclick = closeArcModal;
+$('arc-save').onclick = saveArc;
+$('arc-off').onclick = turnOffArc;
+
+/**
+ * 重新开启一张关掉的卡（v0.5.0.4）。
+ * 这是 off → on 的【唯一】入口：保存、加拍、推进都保持 off。
+ * 上一版是「改一个字保存就悄悄重新打开」，界面上没有任何说明。
+ */
+$('arc-on').onclick = async () => {
+  if (arcStale()) return;
+  if (!(await checkConstraintsDrop())) return;   // 重开也会落盘，超限照样得问
+  // v0.5.0.4 追加：这条是唯一一条 off → on 的路，写库前必须让 normalizeArc 判一次
+  // 「这张卡算不算开着」。旧写法是 `!a.direction && !a.beats.length` —— 一个空拍也算
+  // length === 1，于是"空拍卡"能重新开启：黄条消失、toast 说已重开、库里 status='on'，
+  // 而 arcActive() 读同一份数据仍然 false —— 顶栏「剧情 · 关」、推进按钮亮着却推不动。
+  // 上一版刚把 status 和 arcActive 绑成一个来源，结果在这条唯一入口上又拆了一次。
+  // 现在不自己判：把 status 直接交给 normalizeArc，它判空卡会强制 off，
+  // 判完还是 off 就说明这张卡真的开不了（不变量：status==='on' ⟺ arcActive()）。
+  const a = normalizeArc(Object.assign(collectArc(), { status: 'on' }));
+  if (a.status !== 'on') { toast(tt('这张卡还是空的，先写个方向或填一拍')); return; }
+  if (a.currentBeat >= a.beats.length) a.currentBeat = 0;
+  if (!(await writeArc(_arcOwner, a))) return;
+  _arcEdit = a;
+  $('arc-offbar').classList.add('hidden');
+  hideArcInline();
+  renderArcBeats();
+  await refreshArcBar();
+  toast(tt('已重新开启 —— 这一轮开始它会进提示词'));
+};
+$('arc-modal').addEventListener('click', (e) => { if (e.target === $('arc-modal')) closeArcModal(); });
+
+// 「这一拍演完了 →」/「这一段演完了 →」/「开新一段」
+// ⚠️ 只推进一拍，绝不连跳 —— 连跳等于把中间的戏跳过去了。
+// ⚠️ v0.5.0.3：点下去【立刻落盘】。以前只改内存里的草稿，用户还得再点「保存」——
+//    关弹窗、切角色、杀进程，进度就回到旧的了。按钮写着「演完了」，实际只是「草稿里演完了」，
+//    状态机没有提交点。现在推进本身就是提交。
+$('arc-next').onclick = arcNext;
+
+/**
+ * 把第 beat 拍标成演完、走到下一拍（最后一拍则整张卡进 done），立刻落盘。
+ * @returns {Promise<string|null>} 成功 = toast 文案；没推进 = null（v0.5.0.4 追加：以前返回空串，
+ *   调用方分不出「推了但没话可说」和「压根没推」，于是照样弹撤销条、照样像成功）。
+ */
+async function advanceArc(charId, beat) {
+  const a = await loadArcFor(charId);
+  if (!arcActive(a)) return null;
+  const b = a.beats[beat];
+  if (!b) return null;
+  // 已经往前走过了，别再重来（同一点击重复触发 = 一次跳两拍）。
+  // 但「自动判定已经标了 done、人再点一次确认」是合法路径 —— 那时 currentBeat 还停在这一拍。
+  if (b.done && a.currentBeat !== beat) return null;
+  b.done = true;
+  b.doneBy = 'user';
+  const n = a.beats.length;
+  let msg;
+  if (beat >= n - 1) {
+    a.status = 'done';
+    msg = tt('这一段演完了 —— 这张卡不再进提示词');
+  } else {
+    a.currentBeat = beat + 1;
+    if (a.beats[beat + 1]) a.beats[beat + 1].turns = 0;
+    msg = tt('演到第 ' + (beat + 2) + ' 拍（已保存）');
+  }
+  await kv.set(arcKey(charId), normalizeArc(a));
+  if (charId === curCharId) await refreshArcBar();
+  return msg;
+}
+
+async function arcNext() {
+  if (arcStale()) return;
+  if (_arcEdit.status === 'done') { await startNewArc(); return; }
+  if (!(await checkConstraintsDrop())) return;   // 推进前也会落盘，超限照样得问
+  const draft = collectArc();
+  const n = draft.beats.length;
+  if (!n) return;
+  const i = Math.min(draft.currentBeat, n - 1);
+  const prev = normalizeArc(_arcEdit);   // 撤销快照（推进前的样子）
+  try {
+    // 先把界面上的改动落一次 —— 推进不能把用户刚写的方向/结果丢掉
+    await kv.set(arcKey(_arcOwner), normalizeArc(draft));
+    const msg = await advanceArc(_arcOwner, i);
+    _arcEdit = await loadArcFor(_arcOwner);
+    renderArcBeats();
+    if (!msg) {
+      // v0.5.0.4 追加：一步没动就别摆出「可以撤销」的样子。
+      // 原来这里不判返回值：空拍 / off / 已推进过的时候，界面照样出现撤销按钮，
+      // 看起来像推进成功了，实际什么都不缺（也什么都不发生）。
+      await refreshArcBar();
+      toast(tt('这一拍没有可推进的内容'));
+      return;
+    }
+    _arcUndo = { id: _arcOwner, arc: prev, at: Date.now() };
+    hideArcInline();   // v0.5.0.4：推进过了，之前那条「像演完了」就过期了
+    toast(msg);
+    $('arc-undo').classList.remove('hidden');
+    clearTimeout(_arcUndoTimer);
+    _arcUndoTimer = setTimeout(() => { const u = $('arc-undo'); if (u) u.classList.add('hidden'); }, 12000);
+  } catch (e) {
+    toast(tt('保存失败：') + ((e && e.message) || e));
+  }
+}
+
+$('arc-undo').onclick = undoArcNext;
+
+// 聊天底部那条内联条的两个出口（v0.5.0.3）
+$('arc-inline').onclick = async (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn || !_arcInline) return;
+  const { charId, beat } = _arcInline;
+  if (charId !== curCharId) { hideArcInline(); return; }
+  if (btn.dataset.act === 'no') {
+    // 「再演一轮」= 判错了：把 done 清回去，别让它影响下一轮注入
+    try {
+      const a = await loadArcFor(charId);
+      const b = a.beats[beat];
+      if (b && b.done && a.currentBeat === beat) {
+        setBeatDone(b, false);   // v0.5.0.4 追加：取消完成要连 result 一起清（否则旧结论会诈尸）
+        await kv.set(arcKey(charId), normalizeArc(a));
+      }
+    } catch { /* 清不掉也就多留一个 done 标记 */ }
+    hideArcInline();
+    await refreshArcBar();
+    return;
+  }
+  if (btn.dataset.act === 'undo') {
+    await undoArcById(charId);
+    hideArcInline();
+    return;
+  }
+  try {
+    // v0.5.0.4：内联「推进」也要能后悔 —— 先抓推进前的快照，
+    // 推进完这条直接变成「已推进 · 撤销」。上一版只有弹窗里的推进能撤销，
+    // 自动判定之后误点一下，这一拍就再也回不去了。
+    const prev = normalizeArc(await loadArcFor(charId));
+    const msg = await advanceArc(charId, beat);
+    if (!msg) {
+      // v0.5.0.4 追加：一步没动就别摆出「可以撤销」的样子（和弹窗那条同理）。
+      hideArcInline();
+      await refreshArcBar();
+      toast(tt('这一拍没有可推进的内容'));
+      return;
+    }
+    _arcUndo = { id: charId, arc: prev, at: Date.now() };
+    toast(msg);
+    showArcUndoBar(charId);
+  } catch (err) {
+    toast(tt('保存失败：') + ((err && err.message) || err));
+  }
+};
+
+/** 撤销上一次推进：把快照按回去。只在弹窗还开着、还是同一张卡时有效。 */
+/**
+ * 重新生成 = 这一轮要重演一遍，自动判定标的 done 当场过期（v0.5.0.4）。
+ * 只清 doneBy='auto' 的：人手点的「这一拍演完了」是他的判断，重抽一次不该被系统抹掉。
+ * result 一起清 —— 那是「实际发生了什么」，重演之后旧的会误导下一轮。
+ */
+async function clearAutoDone(charId) {
+  try {
+    const a = await loadArcFor(charId);
+    const b = a.beats[a.currentBeat];
+    if (!b || !b.done || b.doneBy !== 'auto') return;
+    setBeatDone(b, false);
+    await kv.set(arcKey(charId), normalizeArc(a));
+    // 不动 _arcEdit：那是弹窗里的草稿，重抽时弹窗一般不在这，覆盖它反而会把人家正在写的字冲掉。
+    hideArcInline();
+    await refreshArcBar();
+  } catch { /* 清不掉也就多留一个过期的 done 标记 */ }
+}
+
+/**
+ * 撤销上一次推进（v0.5.0.4：弹窗和内联条共用一份）。
+ * 传 id 时只认这张卡，不要求弹窗还开着 —— 内联条是在弹窗外推进的，撤销也得能用。
+ */
+async function undoArcById(id) {
+  if (!_arcUndo || _arcUndo.id !== id) return;
+  const back = normalizeArc(_arcUndo.arc);   // 推进【前】的状态（currentBeat / done / status / turns）
+  try {
+    // ⚠️ 只回滚【状态】，内容以库里最新的为准。
+    //    推进那一下已经把表单落过一次盘，用旧快照整张覆盖会把他刚写的「结果」和新加的拍冲掉 ——
+    //    他点的是「撤销推进」，不是「撤销我刚才写的字」。
+    const now = normalizeArc(await loadArcFor(id));
+    now.currentBeat = back.currentBeat;
+    now.status = back.status;
+    now.beats.forEach((b, i) => {
+      const o = back.beats[i];
+      b.done = !!(o && o.done);
+      b.doneBy = o ? (o.doneBy || '') : '';
+      b.turns = o ? o.turns : 0;
+    });
+    await kv.set(arcKey(id), now);
+    if (id === _arcOwner) _arcEdit = now;
+  } catch (e) {
+    // v0.5.0.4 追加：原来这里空 catch 之后照样清 _arcUndo、藏按钮、报「撤回上一拍」——
+    // 一步都没退回去，而且撤销按钮没了，连重试的机会都不给。现在留着按钮，让他再试。
+    toast(tt('撤销失败：') + ((e && e.message) || e));
+    return;
+  }
+  _arcUndo = null;
+  $('arc-undo').classList.add('hidden');
+  if (id === _arcOwner) renderArcBeats();
+  await refreshArcBar();
+  toast(tt('撤回上一拍'));
+}
+
+/** 弹窗里那个「撤销」按钮走这里。 */
+async function undoArcNext() { await undoArcById(_arcOwner); }
+
+/** 开新一段：清空这张卡（确认一次）。聊天记录不动。 */
+async function startNewArc() {
+  if (arcStale()) return;
+  const ok = await confirmBox(tt('开新一段'),
+    '<p>' + esc(tt('清空方向、几拍、各人的目的，从空白开始。聊天记录不动。')) + '</p>', tt('清空'));
+  if (!ok) return;
+  // v0.5.0.4 追加：先落盘再清界面。原来是"先清空界面、再 try 存、失败就算了"——
+  // 存失败时屏幕上是空白，库里还留着旧卡，下一轮提示词照样按旧卡注入，
+  // 而他看到的是「清空了」。现在存不进去就什么都不动。
+  if (!(await writeArc(_arcOwner, normalizeArc(emptyArc())))) return;
+  _arcEdit = emptyArc();
+  // v0.5.1：清空之后不许还留着上一段的「撤销」。留着的话点「撤销」会把旧快照
+  //   （上一段的 currentBeat / done / turns）写回这张刚清空的新卡，把新卡改乱。
+  _arcOpenedHad = false;   // 空白起步 = 新建，下一拍/方向写完保存就该进 on
+  _arcUndo = null;
+  clearTimeout(_arcUndoTimer);
+  const ub = $('arc-undo');
+  if (ub) ub.classList.add('hidden');
+  $('arc-title').value = '';
+  $('arc-direction').value = '';
+  $('arc-constraints').value = '';
+  $('arc-auto').checked = false;
+  hideArcInline();
+  await renderArcAgenda(_arcEdit);
+  renderArcBeats();
+  await refreshArcBar();
+  toast(tt('清空了 —— 写个新方向吧'));
+}
+
+$('arc-del-card').onclick = async () => {
+  if (!_arcOwner) return;
+  const ok = await confirmBox(tt('删掉这张卡'),
+    '<p>' + esc(tt('整张剧情卡都会删掉：方向、几拍、各人的目的。')) + '</p>'
+    + '<p>' + esc(tt('聊天记录不动。')) + '</p>', tt('删掉'));
+  if (!ok) return;
+  // v0.5.0.4 追加：删不掉别报"已删掉"。卡还在库里、下一轮照样注入，
+  // 而界面已经关掉弹窗、顶栏复位 —— 他没有任何理由再去查一次。
+  try { await kv.del(arcKey(_arcOwner)); }
+  catch (e) { toast(tt('删不掉：') + ((e && e.message) || e)); return; }
+  _arcUndo = null;   // v0.5.1：卡都没了，撤销没有落点
+  clearTimeout(_arcUndoTimer);
+  hideArcInline();
+  await refreshArcBar();
+  closeArcModal();
+  toast(tt('剧情卡已删掉'));
+};
+
+$('arc-constraints').addEventListener('input', renderArcCnt);
+
+$('arc-add-beat').onclick = () => {
+  if (_arcEdit.beats.length >= ARC_BEATS_MAX) return;
+  const a = collectArc();
+  const wasEmpty = a.beats.length === 0;
+  // v0.5.0.3：这一段已经演完了还点「加一拍」= 想接着往下演。
+  // 不复活 status 的话，新加的这一拍永远进不了提示词（加了个寂寞）。
+  if (a.status === 'done') { a.status = 'on'; a.currentBeat = a.beats.length; }
+  a.beats.push({ t: '', goal: '', obs: '', turn: '', result: '', done: false, turns: 0 });
+  if (wasEmpty) a.currentBeat = 0; // 第一拍加进来时它就是「当前拍」
+  _arcEdit = a;
+  renderArcBeats();
+};
+$('arc-beats').addEventListener('click', async (e) => {
+  const t = e.target instanceof Element ? e.target.closest('[data-act]') : null;
+  if (!t) return;
+  const box = t.closest('.arc-beat');
+  if (!box) return;
+  const i = Number(box.dataset.i);
+  const a = collectArc();
+  if (t.dataset.act === 'del') {
+    // ⚠️ v0.5.0.1：原来是原生 confirm()。它在 WebView 里会盖住整个页面、
+    //    按钮是系统的「确定/取消」，和其它弹窗长得完全不一样，而且中文写死翻不了。
+    const ok = await confirmBox(tt('删掉这一拍'),
+      '<p>' + esc(tt('删掉第 ' + (i + 1) + ' 拍？')) + '</p>', tt('确定'));
+    if (!ok) return;
+    a.beats.splice(i, 1);
+    if (a.currentBeat >= a.beats.length) a.currentBeat = Math.max(0, a.beats.length - 1);
+    else if (a.currentBeat > i) a.currentBeat--;
+  } else if (t.dataset.act === 'done') {
+    setBeatDone(a.beats[i], !a.beats[i].done, 'user');
+  } else {
+    a.currentBeat = i;
+  }
+  _arcEdit = a;
+  renderArcBeats();
+});
+
+/**
+ * 剧情卡自动判定（v0.5.0.2，beta；v0.5.0.3 收成能用的半自动）。
+ *
+ * 为什么是「只标记不推进」：判定错了会把她本来该慢慢演的一拍直接判成演完，
+ * 而推进是不可回滚的（下一轮的提示词就换拍了）。标记成 done 只是让界面上多一个 ✓，
+ * 用户看到不对可以再点掉，看到对了自己点「这一拍演完了 →」。
+ *
+ * v0.5.0.3 补了三件让它真的省事：
+ *   ① 判定结果带 result 和 confidence。只回 done 等于「告诉你演完了，不告诉你演了什么」——
+ *      下一拍的提示词缺上一拍的结果，这一判几乎白判。
+ *   ② 置信度 ≥ 0.6 才动手；低置信一律不碰。
+ *   ③ 标完在聊天底部出一条内联条（推进 / 再演一轮），不用为了翻页去开弹窗。
+ *
+ * 为什么不用启发式：试过的关键词法在「她提了一嘴「东西我扔了」」和「她真的把东西扔了」
+ * 之间完全分不开 —— 而这两种在正文里长得几乎一样，只能让模型读上下文判。
+ */
+async function maybeAutoJudgeArc(charId, P, text, userMsg) {
+  try {
+    if (!charId || !P || !P.apiKey || !String(text || '').trim()) return;
+    const a = await loadArcFor(charId);
+    if (!arcActive(a) || !a.autoJudge) return;
+    const beatIdx = a.currentBeat;   // v0.5.0.4 追加：判定回来要核对"还是不是这一拍"
+    const b = a.beats[a.currentBeat];
+    if (!b || b.done) return;
+    // v0.5.0.3：轮数不够就根本不问 —— 既省一次请求，也不给「她自己判早了」的机会。
+    if ((b.turns || 0) < a.minTurns) return;
+    const want = [
+      b.goal ? '这一拍要到的地方：' + b.goal : '',
+      b.obs ? '卡在哪：' + b.obs : '',
+      b.turn ? '到这一拍结束才该发生的事：' + b.turn : '',
+    ].filter(Boolean).join('\n');
+    if (!want) return;
+    const out = await onceChat({
+      apiKey: P.apiKey, baseUrl: P.baseUrl, provider: P.provider, model: P.model,
+      // 关掉思考（noThink）：判定只要一个 true/false，让它想反而想歪 —— 实测同一批
+      // 样本开着思考 7~8 对 10（该判 true 的都判成 false 或撞 max_tokens 返回空），
+      // 关掉之后 10/10。上限仍给足：万一某个端点不认 thinking 字段、被迫开着思考，
+      // 1000 才不会被烧穿。
+      maxTokens: 1000, noThink: true,
+      messages: [
+        { role: 'system', content: '你是一个剧情进度判定器。只输出一个 JSON 对象，不要任何别的话。' },
+        { role: 'user', content:
+          '【这一拍要求】\n' + want
+          // v0.5.0.4：原来是 slice(-1500) —— 写长回复时前面发生的事判定器根本看不到，
+          // 判 false 是假阴性，判 true 可能只凭结尾一句话。现在读全文（上限 12000 字只是防炸，
+          // deepseek 的上下文远不止这个数）。
+          + (userMsg ? '\n\n【他这一轮说的话】\n' + String(userMsg).slice(0, 2000) : '')
+          + '\n\n【她这一轮演出来的】\n' + String(text).slice(0, 12000)
+          + '\n\n问：这一拍是不是已经【真的演完】了？\n'
+          + '· 「要到」那件事已经在正文里实际发生（不是被提到、不是打算做、不是她嘴上说会做）→ done = true\n'
+          + '  真的发生了就够了：哪怕她只问了一句、态度很差、做得很粗糙、只有半句话，也算。\n'
+          + '· 只有气氛和铺垫、还在僵持、只是表示"接下来要…" → done = false\n'
+          + '· 「到这一拍结束才该发生的事」已经真的发生，也算 done = true\n'
+          + '宁可判 false，别判 true —— 判早了会把她还没演完的戏跳过去。\n'
+          + '另外两项：\n'
+          + '· result：done=true 时用一句话写【实际发生了什么】（谁做了什么、结果是什么），60 字以内；done=false 时给空串。\n'
+          + '· confidence：0~1 的小数。0.9 = 正文里那件事清清楚楚发生了；0.6 = 大致算发生了；0.4 = 只是提了一嘴。\n'
+          + '只输出：{"done":false,"result":"","confidence":0.0}' },
+      ],
+    });
+    const m = String(out || '').match(/\{[\s\S]*\}/);
+    if (!m) return;
+    const o = parseJsonSafe(m[0]);
+    if (!o || o.done !== true) return;
+    const conf = Number(o.confidence);
+    if (!(conf >= 0.6)) return;   // 没把握就不动手（v0.5.0.3）
+    // 判定这几百毫秒里用户可能已经改了卡 —— 重新读一次再写。
+    // v0.5.0.4 追加：以前只检查「当前拍还没 done」，不检查「当前拍还是不是刚才判的那一拍」。
+    // 判定请求飞在路上时他点了推进，回来的结论会被写到【下一拍】上，甚至把下一拍标成 done ——
+    // 判错拍比漏判坏得多：错的那一拍会带着一个不属于它的 result 进提示词。
+    const cur = await loadArcFor(charId);
+    if (cur.currentBeat !== beatIdx) return;   // 拍已经换了，这条判定作废
+    const cb = cur.beats[cur.currentBeat];
+    if (!cb || cb.done) return;
+    cb.done = true;
+    cb.doneBy = 'auto';
+    // 判定读的上下文最多，result 只有它写得出来 —— 丢掉就等于白判一次。
+    if (o.result) cb.result = String(o.result).replace(/\s+/g, ' ').trim().slice(0, 240);
+    await kv.set(arcKey(charId), normalizeArc(cur));
+    if (charId === curCharId) {
+      await refreshArcBar();
+      showArcInline(charId, cur.currentBeat, cb.result);
+    }
+  } catch { /* 判定失败无所谓：不标记，下一轮再判 */ }
+}
+
+/** 这一轮演完了：当前拍 turns +1（v0.5.0.3 的节奏计量）。和自动判定开不开无关。 */
+async function bumpArcTurns(charId) {
+  try {
+    if (!charId) return;
+    const a = await loadArcFor(charId);
+    if (!arcActive(a) || !a.beats.length) return;
+    const b = a.beats[a.currentBeat];
+    if (!b || b.done) return;
+    b.turns = (b.turns || 0) + 1;
+    await kv.set(arcKey(charId), normalizeArc(a));
+  } catch { /* 记不上就算了，下一轮继续 */ }
+}
+
+/** 聊天底部那条「这一拍像演完了 · 推进 / 再演一轮」（v0.5.0.3）。 */
+function showArcInline(charId, beat, result) {
+  const box = $('arc-inline');
+  if (!box) return;
+  // v0.5.0.4 追加：撤销条挂着一个 12 秒的定时器。这条新内联条要是被它盖过去，
+  // 旧定时器到点会把【新】这条一起藏掉 —— 用户看到的是「判定结果闪一下就没了」。
+  clearTimeout(_arcInlineTimer);
+  _arcInlineTimer = 0;
+  _arcInline = { charId, beat };
+  box.innerHTML = '<span class="ai-txt">' + esc(result ? tt('这一拍像演完了：') + result : tt('这一拍像演完了'))
+    + '</span>'
+    + '<button class="ai-btn" data-act="go">' + esc(tt('推进')) + '</button>'
+    + '<button class="ai-btn ghost" data-act="no">' + esc(tt('再演一轮')) + '</button>';
+  box.classList.remove('hidden');
+}
+
+/**
+ * 推进之后那条变成「已推进 · 撤销」，12 秒后自己收起来（v0.5.0.4）。
+ * 为什么只挂 12 秒：撤销是给「点错了」用的，不是给人回头改历史的。
+ */
+function showArcUndoBar(charId) {
+  const box = $('arc-inline');
+  if (!box) return;
+  _arcInline = { charId, beat: -1, undo: true };
+  box.innerHTML = '<span class="ai-txt">' + esc(tt('已经推到下一拍了')) + '</span>'
+    + '<button class="ai-btn ghost" data-act="undo">' + esc(tt('撤销')) + '</button>';
+  box.classList.remove('hidden');
+  clearTimeout(_arcInlineTimer);
+  _arcInlineTimer = setTimeout(hideArcInline, 12000);
+}
+
+function hideArcInline() {
+  const box = $('arc-inline');
+  _arcInline = null;
+  clearTimeout(_arcInlineTimer);
+  if (!box) return;
+  box.classList.add('hidden');
+  box.innerHTML = '';
+}
+
 function refreshSearchHint() {
   const el = $('search-hint');
   if (!el) return;
@@ -10552,7 +11360,7 @@ function renderSearchVendor() {
   sel.value = prov;
   const b = SEARCH_BACKENDS[prov];
   const keyBox = $('s-search-key');
-  if (keyBox) keyBox.placeholder = b.hint + '（不填就用不了 /搜）';
+  if (keyBox) keyBox.placeholder = tt(b.hint) + tt('（不填就用不了 /搜）');
   const how = $('s-search-how');
   if (how) {
     const reuseOk = b.reuse && S.provider === 'zhipu' && S.apiKey;
@@ -11307,6 +12115,8 @@ function bindSettings() {
       applyI18n();          // 静态文本（h3 / 折叠头 / 提示）
       watchI18n();          // 切到英文后挂观察者：异步渲染出来的文案也能跟上（v0.4.2）
       renderDrawerMenu();   // 抽屉是拼出来的
+      renderClock();          // 时间条/场景条是手拼的（v0.5.0.1）—— 不重刷会留着上一个语言的写法
+      await refreshArcBar();  // 剧情条同上
       toast(v === 'en' ? 'Language: English' : '界面语言：中文');
     };
   }
@@ -11543,8 +12353,8 @@ function openMemEditor(memId, charId) {
       // 开了时间细化才让填"几点"（精确到分钟）
       + (S.clockDetail
           ? '<p id="mem-edit-hourrow" style="margin-top:6px;' + (isEvent ? '' : 'display:none') + '">'
-            + '到 <input type="number" id="mem-edit-hour" min="0" max="23" style="width:70px" value="' + (typeof m.untilHour === 'number' ? m.untilHour : '') + '" placeholder="时">'
-            + ' : <input type="number" id="mem-edit-min" min="0" max="59" style="width:70px" value="' + (typeof m.untilMinute === 'number' ? m.untilMinute : '') + '" placeholder="分">'
+            + '到 <input type="number" id="mem-edit-hour" min="0" max="23" style="width:70px" value="' + (typeof m.untilHour === 'number' ? m.untilHour : '') + '" placeholder="' + esc(tt('时')) + '">'
+            + ' : <input type="number" id="mem-edit-min" min="0" max="59" style="width:70px" value="' + (typeof m.untilMinute === 'number' ? m.untilMinute : '') + '" placeholder="' + esc(tt('分')) + '">'
             + ' 为止（留空 = 那一天过完）</p>'
           : '');
     $('modal-ok').textContent = '保存';
@@ -11862,7 +12672,11 @@ const BACKUP_KV_PREFIXES = [
   'msgSeq:', 'memSummed:', 'memSumAt:', 'memDedupeAt:', 'memArchiveAt:', 'memArchiveLastAt:',
   'memDeleted:', 'memRolling:', 'clock:', 'greeted:',
   // v1.21.35 新增：0 产出批次的重试计数（P0-1 的配套键，漏了会留孤儿）
-  'memZeroRetry:', 'memNeedTidy:'
+  'memZeroRetry:', 'memNeedTidy:',
+  // v0.5.0.2：剧情卡。「导出全部数据」漏了它，换台机器导入回来卡就没了 ——
+  // 而它是用户手写的、写起来最费时的东西（方向 + 五拍的四个字段）。
+  // 它是两段式 'arc:<charId>'，导入时的 remap 逐段试，charId 会被换成新 id。
+  'arc:'
 ];
 
 // ⚠️ 有几个键【没有冒号】，前缀表装不下它们（v0.4.0）。
@@ -11870,6 +12684,11 @@ const BACKUP_KV_PREFIXES = [
 //    是【他自己的设置】，换台机器导回去当然要跟着走 ——
 //    漏了它，"导出全部数据"就成了半个备份，而且没人会发现少了什么。
 const BACKUP_EXACT_KEYS = ['stRegex'];
+
+/** 清空聊天时要【一起】清掉的键（v0.5.0.2）。
+ *  就是备份表去掉 arc：那几个全是「这段对话的记账」，对话没了它们毫无意义。
+ *  剧情卡不一样 —— 它是【这段剧情】本身，清聊天不该顺手删掉用户手写的东西。 */
+const WIPE_CHAT_PREFIXES = BACKUP_KV_PREFIXES.filter(p => p !== 'arc:');
 
 function isBackupKey(k) {
   const s = String(k || '');
@@ -13673,6 +14492,20 @@ function bindEvents() {
     if (!sure) { toast('已取消'); return; }
 
     const id = curCharId;
+    // v0.5.0.2：剧情卡【不跟聊天记录一起清】，单独问一次。
+    // 它不属于聊天记录 —— 是这段剧情本身，而且是用户手写的东西
+    //（方向 + 最多五拍、每拍四个字段），清聊天顺手删掉毫无道理。
+    // 默认保留：点「取消」= 留着，下一段剧情接着用；点「清掉」才删。
+    const arcNow = await loadArcFor(id);
+    const hasArc = !!(arcNow && (arcNow.direction || arcNow.beats.length));
+    let wipeArc = false;
+    if (hasArc) {
+      wipeArc = await confirmBox('剧情卡也清掉吗？',
+        `<p>「${nm}」还留着一张剧情卡（${arcNow.beats.length} 拍${arcNow.title ? '：' + esc(arcNow.title) : ''}）。</p>`
+        + '<p>它<b>不属于聊天记录</b>，默认留着 —— 清完聊天还能接着演。</p>'
+        + '<p>要连它一起删就点「清掉」；只清聊天就点「取消」。</p>',
+        '清掉');
+    }
     // ⚠️ 长期记忆也要清（2026-09-28 改）。
     //
     // 起因（需求，原话）：
@@ -13710,7 +14543,18 @@ function bindEvents() {
     //   memRolling —— ⚠️ 滚动摘要（v1.18.10 新增）。它是"你们之前发生过什么"，
     //                 清空聊天就是要从头开始，留着会把【已经不存在的前情】讲给她听，
     //                 她会提到用户根本没经历过的往事。
-    // ⚠️ 改成扫库，不再靠人工维护的前缀表（v0.3.1 复查）。
+    // ⚠️ v0.5.0.2：改成【只清登记过的键】，不再"凡是以 :<角色id> 结尾的都删"。
+    //
+    // 下面那句 k.endsWith(':' + id) 本来是"不留孤儿键"的兜底（v0.3.1 加的，起因是
+    // kv.del(k + id) 删不掉三段式的 memZeroRetry:<scope>:<id>）。但它把【不属于聊天记录】
+    // 的东西一起杀了 —— 剧情卡 'arc:<charId>' 就是这么没的：清一次聊天，手写的方向
+    // 和五拍全没了，界面上没有任何提示。将来任何以角色 id 收尾的新键都踩同一个坑。
+    //
+    // 现在的口径：默认【留着】，只有登记进 WIPE_CHAT_PREFIXES 的才随聊天一起清。
+    // 漏删最多留个孤儿键（删角色那条路仍然扫尾缀，一定收得干净），误删是真数据没了 ——
+    // 这两种错的代价不对等。
+    //
+    // ⚠️ 再往下那段是旧说明，留着供追溯（v0.3.1 复查）。
     //
     // 起因：下面这一行原来是 kv.del(k + id) —— 只有【两段式】的键删得掉。
     // 而 memZeroRetry 是三段式：zeroRetryKey() 产出
@@ -13725,12 +14569,13 @@ function bindEvents() {
       const allKv = await kv.entries();
       for (const e of allKv) {
         const k = String(e.k || '');
+        if (!WIPE_CHAT_PREFIXES.some(p => k.startsWith(p))) continue;
         if (k.endsWith(':' + id) || k.endsWith(':' + id + ':real')) {
           try { await kv.del(e.k); } catch { /* 单条清不掉不影响整体 */ }
         }
       }
     } catch { /* 扫库失败就退回按清单清，保证不崩 */
-      for (const k of [...BACKUP_KV_PREFIXES, 'memTidyBackup:']) {
+      for (const k of [...WIPE_CHAT_PREFIXES, 'memTidyBackup:']) {
         try { await kv.del(k + id); } catch { /* 同上 */ }
       }
     }
@@ -13745,6 +14590,10 @@ function bindEvents() {
       await startRealClock(id);
       clockState = { ...clockState, ...realNow() };
     }
+    if (wipeArc) {
+      try { await kv.del(arcKey(id)); } catch { /* 删不掉也就是多留一张卡，不阻断 */ }
+    }
+    await refreshArcBar();
     await renderMessages();
     toast('已清空，「' + (curChar?.name || '她') + '」的记忆和记录都清掉了'
           + (memCount ? '（' + memCount + ' 条记忆）' : '') + '，回到第一天');
@@ -13816,7 +14665,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.4.4';
+const WEB_VERSION_FALLBACK = '0.5.1';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
@@ -13860,7 +14709,7 @@ async function init() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     const before = getActiveLang();
-    if (refreshLang() !== before) { applyI18n(); watchI18n(); renderDrawerMenu(); }
+    if (refreshLang() !== before) { applyI18n(); watchI18n(); renderDrawerMenu(); refreshArcBar(); }
   });
   applyTheme();
   // ⚠️ 「跟随系统」要【当场】跟着变（v0.3.1）。

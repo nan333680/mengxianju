@@ -191,6 +191,43 @@ t('★ 属性类文案英文下不含中文', attr.en.every(s => !CJK.test(s)), 
 t('★ 属性类文案中文下逐字还原', JSON.stringify(attr.zh) === JSON.stringify(attr.keys), JSON.stringify(attr.zh));
 
 console.log('');
+console.log('=== 全站 title / placeholder 在英文下不留中文 ===');
+// v0.5.0.1：applyI18n 的属性分支只认 data-i18n-en-ph / data-i18n-en-title。
+// index.html 里静态写的中文 placeholder/title 全都要标；运行时拼出来的走 tt()。
+// 命令字面量 /真实文件夹名/ 语言选项的原名是刻意保留的，白名单放行。
+const scanAttr = () => page.evaluate(() => {
+  const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+  const OK = ['/搜', '梦弦居备份', '中文'];
+  const out = [];
+  for (const e of document.querySelectorAll('[title],[placeholder]')) {
+    for (const k of ['title', 'placeholder']) {
+      const v = e.getAttribute(k) || '';
+      if (!CJK.test(v)) continue;
+      if (OK.some(w => v.includes(w))) continue;
+      out.push(k + '=' + v);
+    }
+  }
+  return out;
+});
+await page.evaluate(() => document.getElementById('btn-settings').click()); await sleep(700);
+await page.evaluate(() => { const b=[...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x=>x.dataset.wbDrawer==='mine'); if(b)b.click(); }); await sleep(800);
+await page.evaluate(v => { const s = document.getElementById('s-lang'); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); }, 'en'); await sleep(900);
+const attrEn = await scanAttr();
+t('★ 我的设置页：title/placeholder 无中文', attrEn.length === 0, attrEn.slice(0, 6).join(' | '));
+await page.evaluate(() => { const b=document.getElementById('btn-mine-back'); if(b)b.click(); }); await sleep(400);
+await page.evaluate(() => { const b=[...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x=>x.dataset.wbDrawer==='settings'); if(b)b.click(); }); await sleep(900);
+const attrEn2 = await scanAttr();
+t('★ 全局设置页：title/placeholder 无中文', attrEn2.length === 0, attrEn2.slice(0, 6).join(' | '));
+// 角色编辑页也扫一遍（那里有一批「点这里编辑她的设定」）
+await page.evaluate(() => { const b=document.getElementById('btn-drawer-close'); if(b) b.click(); }); await sleep(500);
+await page.evaluate(() => document.getElementById('btn-chars').click()); await sleep(700);
+await page.evaluate(() => { const c=document.querySelectorAll('#char-list .char-card')[0]; const b=c&&c.querySelector('button[data-edit]'); if(b)b.click(); }); await sleep(900);
+const attrEn3 = await scanAttr();
+t('★ 角色编辑页：title/placeholder 无中文', attrEn3.length === 0, attrEn3.slice(0, 6).join(' | '));
+await page.evaluate(() => { const b=document.getElementById('btn-edit-back'); if(b)b.click(); }); await sleep(500);
+await page.evaluate(v => { const s = document.getElementById('s-lang'); if (!s) return; }, 'zh');
+
+console.log('');
 t('全程无 JS 错误', errs.length===0, errs.slice(0,3).join(' | '));
 console.log('');
 console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');

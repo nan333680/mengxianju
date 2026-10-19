@@ -12,22 +12,26 @@
 <!-- ============ 聊天 ============ -->
 <div id="view-chat" class="view active">
   <header class="topbar">
-    <button class="icon-btn" id="btn-chars" title="角色">☰</button>
+    <button class="icon-btn" id="btn-chars" title="角色" data-i18n-en-title="Character">☰</button>
     <div class="title" id="chat-title" data-i18n-nodes>
-      <span class="avatar-sm tap-edit" id="chat-avatar" title="点这里编辑她的设定">🎎</span>
-      <div class="title-txt tap-edit" id="chat-titletxt" title="点这里编辑她的设定">
+      <span class="avatar-sm tap-edit" id="chat-avatar" title="点这里编辑她的设定" data-i18n-en-title="Tap to edit her profile">🎎</span>
+      <div class="title-txt tap-edit" id="chat-titletxt" title="点这里编辑她的设定" data-i18n-en-title="Tap to edit her profile">
         <span id="chat-name" data-i18n-en="No character selected">未选择角色</span>
         <span class="sub" id="chat-status" data-i18n-en="Offline">离线</span>
       </div>
     </div>
-    <button class="icon-btn" id="btn-settings" title="设置">⚙</button>
+    <button class="icon-btn" id="btn-settings" title="设置" data-i18n-en-title="Settings">⚙</button>
   </header>
 
   <!-- v1.21.47：原来整条都是时间按钮。场景要一个常驻入口，但顶部不该再多占一行，
        所以把这条 bar 切成两段：左边时间、右边场景（有场景时右边会亮起来）。 -->
   <div class="bar-row" data-i18n-nodes>
-    <button class="clock-bar" id="chat-clock" title="点这里调整剧情时间" data-i18n-en="Day 1 · Morning">第 1 天 · 早上</button>
-    <button class="clock-bar scene-bar" id="chat-scene" title="这一段对话发生在哪" data-i18n-en="Scene">场景</button>
+    <button class="clock-bar" id="chat-clock" title="点这里调整剧情时间" data-i18n-en-title="Tap to adjust the story time">第 1 天 · 早上</button>
+    <button class="clock-bar scene-bar" id="chat-scene" title="这一段对话发生在哪" data-i18n-en-title="Where this conversation happens">场景</button>
+    <!-- 「剧情」条（v0.5.0）：有卡时显示「剧情 · 2/3」，没卡就灰着。
+         和场景挤同一条 bar —— 顶部已经三行了，不再单开一行。 -->
+    <button class="clock-bar arc-bar" id="chat-arc" title="这段剧情往哪走"
+            data-i18n-en="Plot" data-i18n-en-title="Where this story is going">剧情</button>
   </div>
 
   <!-- 群聊的在场名单（v0.4.0）：只在群聊里出现。点一个名字 = 下一轮让她说。
@@ -63,10 +67,14 @@
          ⚠️ 必须看得见、点得掉：隐形状态迟早变成「她为什么还在按上一轮的演」。
          渲染在 app.js 的 renderCarryTag()，点 ✕ 走 cancelCarryOver()。 -->
     <div id="carry-tag" class="carry-tag hidden"></div>
+    <!-- 剧情卡自动判定给出的内联推进条（v0.5.0.3）——
+         判完在这里出「推进 / 再演一轮」，不用为了翻页去开剧情卡弹窗。
+         内容与事件都由 app.js 的 showArcInline() 管。 -->
+    <div id="arc-inline" class="arc-inline hidden"></div>
     <div class="composer-row">
-      <button class="icon-btn" id="btn-continue" title="让她接着往下写（不用你说话）">⟳</button>
+      <button class="icon-btn" id="btn-continue" title="让她接着往下写（不用你说话）" data-i18n-en-title="Let her keep writing (you do not have to speak)">⟳</button>
       <textarea id="input" rows="1" data-i18n-en-ph="Say something..." placeholder="说点什么…"></textarea>
-      <button class="icon-btn" id="btn-plus" title="附加功能">＋</button>
+      <button class="icon-btn" id="btn-plus" title="附加功能" data-i18n-en-title="Extras" data-i18n-en="+">＋</button>
       <button class="send-btn" id="btn-send" data-i18n-en="Send">发送</button>
       <button class="send-btn stop hidden" id="btn-stop" data-i18n-en="Stop">停止</button>
     </div>
@@ -89,7 +97,7 @@
   <header class="topbar">
     <button class="icon-btn" id="btn-chars-back">←</button>
     <div class="title"><span data-i18n-en="Characters">角色</span></div>
-    <button class="icon-btn" id="btn-new-char">＋</button>
+    <button class="icon-btn" id="btn-new-char" data-i18n-en="+">＋</button>
   </header>
   <main class="scroll">
     <div id="char-list" class="char-list"></div>
@@ -109,7 +117,7 @@
     <div class="g-head">
       <div class="avatar-lg" id="g-avatar-lg">👥</div>
       <div class="g-head-txt" data-i18n-nodes>
-        <input id="g-name" type="text" placeholder="给这个群起个名字">
+        <input id="g-name" type="text" placeholder="给这个群起个名字" data-i18n-en-ph="Name this group">
         <span class="sub" id="g-sub">—</span>
       </div>
     </div>
@@ -122,7 +130,7 @@
       <button class="fold-head" id="gf-members"><span data-i18n-en="Members">群成员</span><em class="fold-num" id="g-member-num">—</em><i class="fold-arrow">▾</i></button>
       <div class="fold-wrap" id="gfw-members"><div class="fold-inner">
         <div class="g-members" id="g-members"></div>
-        <div class="hint-text" data-i18n-en-html="Tap her avatar = edit <b>how she is in this group</b>; long-press = remove her from the group.<br>The ＋ at the end adds members; this order is also the order they take turns.">点她的头像 = 改「她在这个群里是什么样」；长按 = 把她移出群。<br>末尾那个 ＋ 是加人，这里的顺序就是轮流发言的顺序。</div>
+        <div class="hint-text" data-i18n-en-html="Tap her avatar = edit <b>how she is in this group</b>; long-press = remove her from the group.<br>The + at the end adds members; this order is also the order they take turns.">点她的头像 = 改「她在这个群里是什么样」；长按 = 把她移出群。<br>末尾那个 ＋ 是加人，这里的顺序就是轮流发言的顺序。</div>
       </div></div>
     </section>
 
@@ -130,17 +138,17 @@
       <button class="fold-head" id="gf-set"><span data-i18n-en="Group setup">群设定</span><i class="fold-arrow">▾</i></button>
       <div class="fold-wrap" id="gfw-set"><div class="fold-inner">
         <label class="field" data-i18n-nodes><span data-i18n-en="What this group is about">这个群是怎么回事</span>
-          <textarea id="g-note" rows="3" placeholder="比如：每周六下午在她家喝茶。三个人认识很多年了，说话不客气。"></textarea>
+          <textarea id="g-note" rows="3" placeholder="比如：每周六下午在她家喝茶。三个人认识很多年了，说话不客气。" data-i18n-en-ph="e.g. tea at her place every Saturday afternoon. The three have known each other for years and do not mince words."></textarea>
         </label>
         <label class="field" data-i18n-nodes><span data-i18n-en="Who he is in their eyes (shared by the group)">在她们眼里，他是谁（这个群共用一份）</span>
-          <textarea id="g-he" rows="3" placeholder="比如：他是常来的老客，三个人都认识他，但只有甲知道他姓什么。"></textarea>
+          <textarea id="g-he" rows="3" placeholder="比如：他是常来的老客，三个人都认识他，但只有甲知道他姓什么。" data-i18n-en-ph="e.g. he is a regular; all three know him, but only A knows his surname."></textarea>
         </label>
         <label class="field" data-i18n-nodes><span data-i18n-en="Where this group is (city / season / the room)">这个群在哪儿（城市 / 季节 / 这间屋子）</span>
-          <textarea id="g-place" rows="3" placeholder="比如：南方小城，梅雨季。老居民楼六层，客厅堆着书和一架旧钢琴。"></textarea>
+          <textarea id="g-place" rows="3" placeholder="比如：南方小城，梅雨季。老居民楼六层，客厅堆着书和一架旧钢琴。" data-i18n-en-ph="e.g. a small town in the south, rainy season. Sixth floor of an old block; books and an old piano piled in the living room."></textarea>
         </label>
         <p class="hint-text" data-i18n-en-html="This one is <b>permanent</b> (sent every round, and it hits the cache). The “Scene” on the chat page is <b>temporary</b> and changes often.">这条是<b data-i18n-en="Always on">常驻</b>的（每轮都发、能命中缓存）。聊天页那个「场景」是<b data-i18n-en="Temporary">临时</b>的，改得勤。</p>
         <label class="field" data-i18n-nodes><span data-i18n-en="His place in this group (usually leave blank)">他在这个群里的住处（一般不填）</span>
-          <textarea id="g-home" rows="3" placeholder="留空 = 用 ⚙ 里全局那份「他的居处」。"></textarea>
+          <textarea id="g-home" rows="3" placeholder="留空 = 用 ⚙ 里全局那份「他的居处」。" data-i18n-en-ph="Leave blank to use the global "where he lives" from ⚙."></textarea>
         </label>
         <p class="hint-text" data-i18n-en-html="How it differs from the field above: that one says <b>where the group is</b>, this one says <b>what his place is like</b>. Leave it blank when the group is at his home — fill it only if the group is elsewhere and you still want his home described.">和上面那条的分工：上面写<b data-i18n-en="Where the group is">这个群在哪</b>，这条写<b data-i18n-en="What his place is like">他家什么样</b>。
           群就在他家的时候留空就行 —— 只有「群在别处、你还想写他家里的样子」时才要填。</p>
@@ -396,7 +404,7 @@
         <div class="fold-inner">
           <p class="profile-tip" data-i18n-en-html="What your place looks like. Once written, she <b>follows it</b> when describing your home, your room or the view outside instead of making things up.<br>She should not invent what you did not write — so <b>the more specific the better</b>: layout, the view, the weather, what is nearby.">你住的地方长什么样。写上以后，她写到你家、房间、窗外时<b data-i18n-en="She will follow this">会照这个来</b>，不会自己编。<br>
             没写到的地方她也不该乱加——所以<b data-i18n-en="The more specific the better">越具体越好</b>：房间布局、窗外的景色、天气、周边有什么。</p>
-          <textarea id="e-home" rows="8" class="profile-box" placeholder="比如：住在城南一栋老式居民楼六层，两室一厅。卧室朝南，窗台放着一排书和一个旧台灯……"></textarea>
+          <textarea id="e-home" rows="8" class="profile-box" placeholder="比如：住在城南一栋老式居民楼六层，两室一厅。卧室朝南，窗台放着一排书和一个旧台灯……" data-i18n-en-ph="e.g. sixth floor of an old block in the south of town, two rooms. Bedroom faces south; a row of books and an old lamp on the sill…"></textarea>
           <div class="profile-foot" data-i18n-nodes>
             <span class="cnt" id="e-home-count">—</span>
             <span class="btns">
@@ -497,7 +505,7 @@
           </label>
           <p class="hint-text" data-i18n-en-html="Her outfit and state <b>right now</b>. Switching it off keeps the text but stops applying it.">她<b data-i18n-en="Right now">此刻</b>的穿着和状态。关掉之后内容还留着，但暂时不生效。</p>
           <textarea id="e-look" rows="4" class="profile-box look-box"
-            placeholder="二十来字就够，比如：穿着紫色连衣裙，外套脱了搭在椅背上"></textarea>
+            placeholder="二十来字就够，比如：穿着紫色连衣裙，外套脱了搭在椅背上" data-i18n-en-ph="Twenty words is plenty. e.g. purple dress, coat off and over the back of the chair."></textarea>
           <div class="profile-foot" data-i18n-nodes>
             <span class="cnt" id="e-look-count" data-i18n-en="0 chars">0 字</span>
             <span class="btns">
@@ -596,7 +604,7 @@
   </header>
   <main class="scroll">
 
-    <p class="hint-text" style="margin:0 0 14px" data-i18n-en="Global things that apply to every character: expression, memory, web search, time of day. Each character has her own settings under Characters -> tap her -> Edit.">这一页是<b data-i18n-en="Shared by all characters">所有角色共用</b>的：描写、记忆、联网、时段。<br>
+    <p class="hint-text" style="margin:0 0 14px" data-i18n-en-html="Global things that apply to every character: expression, memory, web search, time of day.<br>API, your own avatar / appearance / tavern / data / character cards live in My settings. Each character's own temperament and parameters are under Characters → tap her → Edit.">这一页是<b>所有角色共用</b>的：描写、记忆、联网、时段。<br>
       接口、你自己的头像 / 外观 / 酒馆 / 数据 / 角色卡在「我的设置」里。每个角色自己的脾气和参数，在「角色列表 → 点角色 → 编辑」里调。</p>
 
     <section class="group">
@@ -739,7 +747,7 @@
 
           <label class="field" data-i18n-nodes>
             <span data-i18n-en="Search API key">搜索 API Key</span>
-            <input id="s-search-key" type="password" placeholder="tvly-...（不填就用不了 /搜）">
+            <input id="s-search-key" type="password" placeholder="tvly-...（不填就用不了 /搜）" data-i18n-en-ph="tvly-... (required for /搜)">
           </label>
 
           <p class="hint-text" id="s-search-how" style="margin:0" data-i18n-en-html="Search uses <b>Tavily</b> — free to sign up, 1000 searches a month, no card needed: <b>tavily.com</b> → sign up → copy the key (starts with <b>tvly-</b>) → paste it above.">
@@ -917,7 +925,7 @@
           <label class="field row" data-i18n-nodes><span data-i18n-en="Read her replies aloud">朗读她的回复</span>
             <input id="s-tts" type="checkbox">
           </label>
-          <p class="hint-text">她说完自动念出来。长按任意一条回复也有「朗读这条」。
+          <p class="hint-text" data-i18n-en-html="She reads it out as soon as it arrives. Long-press any reply for Read this one.<br>It uses the phone's built-in speech engine (the voice depends on the system); this item is hidden if no Chinese voice pack is installed.">她说完自动念出来。长按任意一条回复也有「朗读这条」。
             用的是手机自带的语音引擎（音色取决于系统），没装中文语音包时这一项不显示。</p>
         </div>
       </div>
@@ -1057,7 +1065,7 @@
 <div id="view-drawer" class="view side-right" data-i18n-en-html="<b>Settings</b>">
   <header class="topbar">
     <div class="title"><span data-i18n-en="Settings">设置</span></div>
-    <button class="icon-btn" id="btn-drawer-close" title="关闭">✕</button>
+    <button class="icon-btn" id="btn-drawer-close" title="关闭" data-i18n-en-title="Close">✕</button>
   </header>
   <main class="scroll">
     <div id="drawer-menu" class="drawer-menu"></div>
@@ -1128,9 +1136,9 @@
     <button class="icon-btn" id="btn-wbe-back">←</button>
     <div class="title"><span id="wbe-title" data-i18n-en="Entries">条目</span></div>
     <div class="top-actions" data-i18n-nodes>
-      <button class="icon-btn sm" id="btn-wbe-import" title="导入条目">⤓</button>
-      <button class="icon-btn sm" id="btn-wbe-export" title="导出条目">⤒</button>
-      <button class="icon-btn" id="btn-wbe-custom" title="组列自定义">⋯</button>
+      <button class="icon-btn sm" id="btn-wbe-import" title="导入条目" data-i18n-en-title="Import entries">⤓</button>
+      <button class="icon-btn sm" id="btn-wbe-export" title="导出条目" data-i18n-en-title="Export entries">⤒</button>
+      <button class="icon-btn" id="btn-wbe-custom" title="组列自定义" data-i18n-en-title="Customize columns">⋯</button>
     </div>
   </header>
   <main class="scroll">
@@ -1147,8 +1155,8 @@
     <button class="icon-btn" id="btn-wbs-back">←</button>
     <div class="title"><span id="wbs-title" data-i18n-en="Per-character">单独角色</span></div>
     <div class="top-actions" data-i18n-nodes>
-      <button class="icon-btn sm" id="btn-wbs-import" title="导入条目">⤓</button>
-      <button class="icon-btn sm" id="btn-wbs-export" title="导出条目">⤒</button>
+      <button class="icon-btn sm" id="btn-wbs-import" title="导入条目" data-i18n-en-title="Import entries">⤓</button>
+      <button class="icon-btn sm" id="btn-wbs-export" title="导出条目" data-i18n-en-title="Export entries">⤒</button>
     </div>
   </header>
   <main class="scroll">
@@ -1188,9 +1196,9 @@
 <div id="phase-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box">
     <h4 data-i18n-en="What hours each time of day covers">每个时段对应几点</h4>
-    <p>聊天里说「早上」「傍晚」的时候，她按这里理解具体是几点。<br>
+    <p data-i18n-en-html="When the chat says &quot;morning&quot; or &quot;evening&quot;, this is how she understands the actual hours.<br>24-hour clock: left is the start, right is the end; put 24 as the end to mean midnight.<br><b>Nothing is saved until you press OK.</b>">聊天里说「早上」「傍晚」的时候，她按这里理解具体是几点。<br>
       24 小时制：左边是开始、右边是结束，结束填 24 表示到午夜。<br>
-      <b data-i18n-en="Nothing is saved until you press OK.">点「确定」才会存下来。</b></p>
+      <b>点「确定」才会存下来。</b></p>
     <div id="clock-ranges"></div>
     <div class="modal-btns" data-i18n-nodes>
       <button class="ghost-btn" id="phase-cancel" data-i18n-en="Cancel">取消</button>
@@ -1231,16 +1239,16 @@
       <button class="ghost-btn sm" id="clock-day-minus">−</button>
       <!-- max 与 app.js 的 DAY_MAX 保持一致（v1.21.42 从 9999 放宽，支持千百年尺度的剧情）。
            日的框同样给到 7 位：允许填超过 365 的数，超出的部分折进年。 -->
-      <span class="day-input" data-i18n-nodes>第 <input id="clock-year" class="yr" type="number" min="1" max="27398" step="1" value="1"> 年
-        <input id="clock-day" type="number" min="1" max="9999999" step="1" value="1"> 天</span>
-      <button class="ghost-btn sm" id="clock-day-plus">＋</button>
+      <span class="day-input"><span data-i18n-en="Year">第</span> <input id="clock-year" class="yr" type="number" min="1" max="27398" step="1" value="1"><span data-i18n-en=", Day"> 年</span>
+        <input id="clock-day" type="number" min="1" max="9999999" step="1" value="1"><span data-i18n-en=""> 天</span></span>
+      <button class="ghost-btn sm" id="clock-day-plus" data-i18n-en="+">＋</button>
     </div>
     <div class="field" data-i18n-nodes><span data-i18n-en="Time of day">时段</span><div class="seg" id="clock-phase"></div></div>
     <div class="field" id="clock-time-row" data-i18n-nodes><span data-i18n-en="Exact time">具体时间</span>
       <div class="clock-time">
-        <input id="clock-hour" type="number" min="0" max="23" step="1" placeholder="时">
+        <input id="clock-hour" type="number" min="0" max="23" step="1" placeholder="时" data-i18n-en-ph="hr">
         <b>:</b>
-        <input id="clock-min" type="number" min="0" max="59" step="5" placeholder="分">
+        <input id="clock-min" type="number" min="0" max="59" step="5" placeholder="分" data-i18n-en-ph="min">
         <button class="ghost-btn sm" id="clock-now-set" data-i18n-en="Use the time of day">用当前时段</button>
       </div>
     </div>
@@ -1272,6 +1280,84 @@
 <!-- ============ 导入：先看内容，再选模式 ============ -->
 <!-- 刻意不复用 #modal：那个只有「确定/取消」两个按钮，这里要 5 选 1 + 一段文件预览。
      也刻意排在 #modal 之后 —— .view 之外的弹窗同样靠 DOM 顺序决定层级（血泪 8）。 -->
+<!-- ============ 剧情卡（v0.5.0）============ -->
+<!-- 一张卡 = 这段关系要往哪走。为什么是弹窗不是设置页里的一项：
+     它跟着【这个角色/这个群】走，是聊天时随时要看要改的东西，
+     放到设置页里就得「进设置 → 找角色 → 翻到最下面 → 改完返回」。
+     结构和 #drive-modal 一致（列表 + 底部按钮），层级靠 DOM 顺序。 -->
+<div id="arc-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box arc-box">
+    <h4 data-i18n-en="Where this story is going">这段剧情往哪走</h4>
+    <p class="arc-sub">写出方向，她自己往下演；不用写台词，也不用写完整大纲。<br>
+       <b>只注入当前这一拍</b> —— 后面几拍不进提示词，也不会被要求一次演完。</p>
+
+    <!-- v0.5.0.4：关掉的卡在这里明说，并且只给一条重开的路。
+         上一版是「改一个字保存就悄悄重新打开」，界面上一个字都没提。 -->
+    <div class="arc-offbar hidden" id="arc-offbar">
+      <span>这张卡已经关掉了，不会进提示词。想接着用就点右边那颗。</span>
+      <button class="arc-link" id="arc-on" data-i18n-en="Reopen">重新开启</button>
+    </div>
+
+    <label class="arc-field">
+      <span>这段叫什么<em>（可空）</em></span>
+      <input id="arc-title" type="text" maxlength="60" placeholder="红蓝的旧物" data-i18n-en-ph="e.g. The old thing">
+    </label>
+
+    <label class="arc-field">
+      <span>想往哪走</span>
+      <textarea id="arc-direction" rows="3" maxlength="1200" data-i18n-en-ph="From testing each other to a showdown, but neither admits they care first."
+        placeholder="从互相试探到摊牌，但谁都不先承认在意。"></textarea>
+    </label>
+
+    <label class="arc-field">
+      <span>不能发生什么<em>（一行一条）</em><b class="arc-cnt" id="arc-cnt-c"></b></span>
+      <textarea id="arc-constraints" rows="2" maxlength="480" data-i18n-en-ph="No making up out of nowhere&#10;No sudden amnesia"
+        placeholder="不无故和解&#10;不突然失忆"></textarea>
+    </label>
+
+    <div class="arc-now" id="arc-now">
+      <div class="arc-now-t">
+        <span class="arc-now-l">现在演到</span>
+        <b class="arc-now-b" id="arc-now-b">第 1 拍</b>
+        <button class="arc-undo hidden" id="arc-undo" data-i18n-en="Undo">撤销</button>
+        <button class="arc-next" id="arc-next">这一拍演完了 →</button>
+      </div>
+      <p class="arc-now-h">点右边那颗 = 这一拍收尾、立刻保存、走到下一拍。每拍下面写的「结果」会进下一轮的提示词。</p>
+    </div>
+
+    <div class="arc-beats-head">
+      <span>几拍</span>
+      <span class="arc-beats-cnt" id="arc-beats-cnt">0 / 12</span>
+    </div>
+    <div id="arc-beats" class="arc-beats"></div>
+    <button class="ghost-btn arc-add" id="arc-add-beat">＋ 加一拍</button>
+
+    <div class="arc-aga hidden" id="arc-aga">
+      <div class="arc-beats-head">
+        <span>各人的目的</span>
+        <span class="arc-beats-cnt">群聊才用</span>
+      </div>
+      <p class="arc-now-h">这一场里每个人想要什么。只给名字的话，模型会让所有人替同一件事说话。</p>
+      <div id="arc-aga-list"></div>
+    </div>
+
+    <label class="arc-auto">
+      <input type="checkbox" id="arc-auto">
+      <span>自动判定这一拍演完没有<em>（beta，每轮多一次小请求）</em></span>
+    </label>
+
+    <div class="arc-del-row">
+      <button class="arc-link" id="arc-del-card">删掉这张卡</button>
+    </div>
+
+    <div class="arc-foot">
+      <button class="ghost-btn" id="arc-off" data-i18n-en="Turn off">关掉剧情</button>
+      <button class="ghost-btn" id="arc-cancel" data-i18n-en="Cancel">取消</button>
+      <button class="send-btn" id="arc-save" data-i18n-en="Save">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- 描写详细程度档位选择（v1.21.31）：点设置页/角色页那一项弹出来。
      做成弹窗而不是内嵌下拉，是因为每档都要带一段说明，内嵌会把设置页撑得更长。
      排在 #import-modal 之前 —— 层级靠 DOM 顺序（血泪 8）。 -->
@@ -1309,7 +1395,7 @@
     <p class="drive-sub" data-i18n-en-html="Makes this conversation happen somewhere, at some time. <b>Not written into the persona</b> — it affects only this chat with this character; after “Save and apply” it <b>takes effect on the next reply</b>.">让这一段对话发生在某个地方、某个时候。<br>
       <b data-i18n-en="Not written into the persona">不写进人设</b>，只影响这个角色的这次聊天；「保存并应用」之后<b data-i18n-en="Takes effect on the next reply">下一条回复立刻生效</b>。</p>
     <textarea id="scene-text" rows="6" class="profile-box"
-      placeholder="比如：这会儿是在祭典的夜里，街上人多，远处在放烟花"></textarea>
+      placeholder="比如：这会儿是在祭典的夜里，街上人多，远处在放烟花" data-i18n-en-ph="e.g. it is festival night; the street is crowded and fireworks go off in the distance"></textarea>
     <p class="hint-text scene-cur" id="scene-cur" data-i18n-en="Current scene: none">当前场景：无</p>
     <div class="modal-btns" data-i18n-nodes>
       <button class="ghost-btn" id="scene-clear" data-i18n-en="Clear">清除</button>

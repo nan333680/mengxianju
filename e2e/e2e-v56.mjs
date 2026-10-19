@@ -19,8 +19,15 @@ const readOr = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { retur
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 console.log('=== 1. 记忆召回：挑的是「相关的」，不是「最新的」 ===');
-const tmp = path.join(os.tmpdir(), 'e2e-v56-persona-' + process.pid + '.mjs');
-fs.copyFileSync(R + '/www/js/persona.js', tmp);
+// 拷到临时目录再 import：这条路上 persona.js 的相对 import 会按【临时目录】解析。
+// v0.5.0 的 persona.js 多了一行 import ./storyarc.js，
+// 只拷 persona.js 会在 temp 里找不到它 —— ERR_MODULE_NOT_FOUND，整套直接崩（退出码 1，0.2s）。
+// 所以整个 js 目录一起拷，以后再加相对 import 也不会崩。
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-v56-persona-'));
+for (const f of fs.readdirSync(R + '/www/js')) {
+  if (f.endsWith('.js')) fs.copyFileSync(R + '/www/js/' + f, path.join(tmpDir, f));
+}
+const tmp = path.join(tmpDir, 'persona.js');
 const P = await import(pathToFileURL(tmp).href);
 
 const COFFEE = ['你喜欢咖啡', '你常去巷口那家咖啡店', '咖啡要加奶不加糖'];
@@ -136,7 +143,7 @@ t('默认不勾（不打扰）', ttsEnv.checked === false);
 console.log('       [环境] 这个浏览器里 window.speechSynthesis 存在: ' + ttsEnv.api + '（真机 WebView 是 Chrome 内核，同源）');
 t('没有 JS 报错', errs.length === 0, errs.join(' | '));
 
-try { fs.unlinkSync(tmp); } catch {}
+try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 console.log('');
 console.log('通过 ' + pass + ' / 失败 ' + fail);
 await browser.close(); server.close();

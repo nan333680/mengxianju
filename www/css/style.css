@@ -716,7 +716,13 @@ input + .hint-text{ margin-top:8px; }
 .clock-bar:active{ background:var(--bg3); color:var(--fg2); }
 /* v1.21.47：时间 + 场景两个入口共用这一条，不额外占一行高度 */
 .bar-row{ display:flex; align-items:stretch; flex-shrink:0; }
-.bar-row .clock-bar{ flex:1 1 auto; width:auto; min-width:0; }
+/* v0.5.0：这条 bar 上现在有三个按钮（时间 / 场景 / 剧情）。
+   原来只写了 flex:1 平分，开了「跟随手机时间」之后时间条会被挤到换行 ——
+   所以这里补上 nowrap + 省略号，让挤不下的时候是打点而不是折成两行。
+   权重 2:1：时间条上的字最长（第 3 天 · 傍晚 · 晴　· 跟随手机时间），最该多占。 */
+.bar-row .clock-bar{ flex:1 1 auto; width:auto; min-width:0; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+.bar-row #chat-clock{ flex:2 1 auto; }
 .scene-bar{
   flex:0 0 auto; max-width:46%;
   border-left:1px solid var(--line);
@@ -761,6 +767,10 @@ input + .hint-text{ margin-top:8px; }
 .clock-time b{ color:var(--fg2); }
 
 /* ===== 确认弹窗 ===== */
+/* ⚠️ z-index 一样高时，层级由【DOM 顺序】决定。而 #modal 排在 #arc-modal /
+   #import-modal 前面，于是在剧情卡里调 confirmBox 会被那张卡盖住 ——
+   人看到的是「点了 ✕ 没反应」。确认框必须永远在最上面，所以单独抬一层。 */
+#modal{ z-index:1300; }
 .modal{
   position:fixed; inset:0; z-index:1200; padding:24px;
   background:rgba(0,0,0,.55);
@@ -1412,3 +1422,202 @@ input[type="range"] { touch-action: pan-y; }
 
 /* 群成员二级页：滑块旁边的档位名（v0.4.1.8） */
 .gm-band{ font-style:normal; color:var(--fg3); font-size:12px; margin-left:6px; }
+
+/* ===== 剧情卡（v0.5.0）===== */
+/* 顶部第三条 bar 上的「剧情」入口。和场景条并排：
+   场景 max-width:46% 是给它自己留的，剧情条只放「剧情 · 2/3」这种短字，
+   所以让它按内容宽（flex:0 0 auto），剩下的都给时间条。 */
+/* ⚠️ 选择器要带 .bar-row：光写 .arc-bar 会被 `.bar-row .clock-bar{flex:1 1 auto}` 盖掉，
+   挤的时候它照样被压 —— 这一条是百分数计数，压一点就变成「剧情 · …」。 */
+.bar-row .arc-bar{
+  flex:0 0 auto; max-width:34%;
+  border-left:1px solid var(--line);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* 有卡在跑时亮起来 —— 和 scene-bar.on 同一套视觉语言 */
+.arc-bar.on{ color:var(--pri2); }
+/* 关掉的卡（v0.5.0.2）：暗一档，和「从没建过」区分开 —— 以前两者都是裸「剧情」。 */
+.arc-bar.off{ color:var(--fg3); }
+
+/* padding-bottom 归 0：底部按钮条是 sticky 的，让它自己带内边距贴到弹窗下沿，
+   否则 16px 的容器内边距会让第二拍的内容从按钮条下面露出来。 */
+.arc-box{ max-height:82vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-bottom:0; }
+.arc-box > h4{ margin-bottom:6px; }
+.arc-sub{ margin:0 0 14px; font-size:12px; line-height:1.7; color:var(--fg3); }
+.arc-sub b{ color:var(--fg2); }
+
+/* v0.5.0.4：关掉的卡顶上那条黄条。整条只做一件事 —— 告诉他这卡现在不生效，
+   以及重开在哪。没有这条的话，「保存」会静默把 off 改成 on（0.5.0.3 的行为），
+   那等于界面在替他做决定。 */
+.arc-offbar{
+  display:flex; align-items:center; gap:10px;
+  margin:0 0 14px; padding:9px 11px;
+  border:1px solid rgba(240,180,60,.45); border-radius:10px;
+  background:rgba(240,180,60,.10);
+  font-size:12px; line-height:1.6; color:var(--fg2);
+}
+.arc-offbar.hidden{ display:none; }
+.arc-offbar span{ flex:1 1 auto; min-width:0; }
+.arc-link{
+  flex:0 0 auto; padding:4px 10px; font-size:12px; font-family:inherit;
+  border:1px solid var(--pri); border-radius:8px;
+  background:transparent; color:var(--pri2); cursor:pointer;
+}
+.arc-link:active{ background:var(--bg3); }
+
+.arc-field{ display:block; margin:0 0 12px; }
+.arc-field > span{ display:block; margin-bottom:5px; font-size:12.5px; color:var(--fg2); }
+.arc-field > span em{ font-style:normal; color:var(--fg3); font-size:11.5px; }
+.arc-field input, .arc-field textarea{
+  width:100%; box-sizing:border-box;
+  padding:9px 11px; border:1px solid var(--line); border-radius:10px;
+  background:var(--bg3); color:var(--fg);
+  font-family:inherit; font-size:13.5px; line-height:1.6;
+  resize:vertical;
+}
+.arc-field input:focus, .arc-field textarea:focus{ border-color:var(--pri); outline:none; }
+
+.arc-beats-head{ display:flex; align-items:center; gap:8px; margin:14px 0 8px; font-size:12.5px; color:var(--fg2); }
+.arc-beats-cnt{ margin-left:auto; font-size:11.5px; color:var(--fg3); }
+.arc-beats{ display:flex; flex-direction:column; gap:10px; }
+
+.arc-beat{
+  border:1px solid var(--line); border-radius:12px;
+  padding:10px 11px; background:var(--bg3);
+}
+/* 当前这一拍高亮 —— 提示词里注入的就是它，界面上得对得上 */
+.arc-beat.cur{ border-color:var(--pri); box-shadow:0 0 0 1px var(--pri) inset; }
+.arc-beat-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.arc-beat-no{ flex:0 0 auto; font-size:11.5px; color:var(--fg3); }
+.arc-beat-head input{
+  flex:1 1 auto; min-width:0;
+  padding:6px 9px; border:1px solid var(--line); border-radius:8px;
+  background:var(--bg2); color:var(--fg); font-family:inherit; font-size:13px;
+}
+.arc-beat-head input:focus{ border-color:var(--pri); outline:none; }
+.arc-beat-set{ flex:0 0 auto; padding:3px 8px; font-size:11.5px; border-radius:8px;
+  border:1px solid var(--line); background:transparent; color:var(--fg3); cursor:pointer; }
+.arc-beat.cur .arc-beat-set{ color:var(--pri2); border-color:var(--pri2); }
+.arc-beat-del{ flex:0 0 auto; padding:3px 7px; font-size:12px; border:none; background:transparent;
+  color:var(--fg3); cursor:pointer; }
+.arc-beat-del:active{ color:var(--danger, #e0574f); }
+.arc-beat-row{ display:flex; align-items:center; gap:6px; margin-top:6px; }
+.arc-beat-row > label{ flex:0 0 auto; width:3.6em; font-size:11.5px; color:var(--fg3); }
+.arc-beat-row > input{
+  flex:1 1 auto; min-width:0;
+  padding:6px 9px; border:1px solid var(--line); border-radius:8px;
+  background:var(--bg2); color:var(--fg); font-family:inherit; font-size:12.5px;
+}
+.arc-beat-row > input:focus{ border-color:var(--pri); outline:none; }
+
+.arc-empty{ margin:2px 0 0; padding:18px 12px; text-align:center; font-size:12.5px; line-height:1.7;
+  color:var(--fg3); border:1px dashed var(--line); border-radius:10px; }
+.arc-add{ width:100%; margin-top:10px; }
+/* 82vh 的滚动区里，填到第二拍时这三颗按钮就被推到视口外了 ——
+   用户填完内容反而找不到「保存」。粘在底部：滚到哪都在。
+   bottom:-16px 抵掉 .modal-box 的 padding-bottom，滚到底时贴着弹窗下沿。 */
+.arc-foot{ display:flex; gap:8px; margin-top:16px; position:sticky; bottom:0; z-index:2;
+  background:var(--bg2); padding:12px 0 16px; border-top:1px solid var(--line); }
+/* 三颗按钮并排必须看着一样高、一样圆角、都不折行（v0.5.0.1）。
+   原来：ghost-btn 带 width:100% + padding:12px + margin-bottom:10px，send-btn 是 21px 胶囊，
+   于是「关掉剧情」四个字在 393px 上被挤成「关掉剧/情」两行，另外两颗圆角还不一样 ——
+   三个按钮一个高一个矮、一个方一个圆，看着就是没对齐。 */
+.arc-foot > button{
+  flex:1 1 0; min-width:0; height:42px; margin:0; padding:0 6px;
+  border-radius:12px; font-size:14px; font-family:inherit;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  display:inline-flex; align-items:center; justify-content:center;
+}
+.arc-foot #arc-save{ flex:1.4 1 0; height:42px; border-radius:12px; padding:0 6px; }
+
+/* ----- v0.5.0.2：推进 / 状态 / 群聊目的 ----- */
+
+/* 「现在演到第 N 拍」+ 一键推进。放在拍列表上面 ——
+   先告诉用户"注入提示词的是哪一拍"，再让他决定推不推。 */
+.arc-now{ margin:0 0 12px; padding:10px 11px; border-radius:12px;
+  border:1px solid var(--line); background:var(--bg3); }
+.arc-now-t{ display:flex; align-items:center; gap:8px; }
+.arc-now-l{ flex:0 0 auto; font-size:11.5px; color:var(--fg3); }
+.arc-now-b{ flex:1 1 auto; min-width:0; font-size:13px; color:var(--fg);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.arc-next{ flex:0 0 auto; padding:6px 10px; border-radius:9px; cursor:pointer;
+  border:1px solid var(--pri); background:transparent; color:var(--pri2);
+  font-family:inherit; font-size:12px; white-space:nowrap; }
+.arc-next:active{ background:var(--pri); color:#fff; }
+.arc-next:disabled{ opacity:.45; border-color:var(--line); color:var(--fg3); }
+.arc-now-h{ margin:7px 0 0; font-size:11.5px; line-height:1.6; color:var(--fg3); }
+
+/* 每拍的两颗状态胶囊：演完没有 / 是不是当前拍 */
+.arc-beat-flags{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+.arc-flag{ padding:3px 8px; font-size:11.5px; border-radius:8px; cursor:pointer;
+  border:1px solid var(--line); background:transparent; color:var(--fg3); font-family:inherit; }
+.arc-flag.on{ color:var(--pri2); border-color:var(--pri2); }
+.arc-beat-flags [data-act="done"].on{ color:#5fbf7f; border-color:#5fbf7f; }
+/* 演完了的拍压暗一点：一眼看出走到哪了，又不至于看不见内容 */
+.arc-beat.done{ opacity:.68; }
+.arc-beat.done.cur{ opacity:1; }
+
+/* ===== v0.5.0.3：把剧情卡从「存得住」补成「演得完」 ===== */
+
+/* 演完了（最后一拍也收尾）：顶栏第四种状态，跟 on / off / 从没建过都分得开 */
+.arc-bar.done{ color:#5fbf7f; }
+
+/* 每拍右上角的「演了 N 轮 / 至少 M 轮」—— 轮数不够时压暗，够了才正常色。
+   这是节奏唯一的可见证据：以前 5 拍 3 轮就走完，界面上完全看不出来。 */
+.arc-turns{ flex:0 0 auto; margin-left:auto; font-size:11px; color:var(--fg3); }
+.arc-turns.thin{ color:#c8a03c; }
+
+/* 演完态的「现在演到」块：绿色边框 + 推进按钮换成「开新一段」 */
+.arc-now.fin{ border-color:#5fbf7f; }
+.arc-now.fin .arc-now-b{ color:#5fbf7f; }
+.arc-now.fin .arc-next{ border-color:#5fbf7f; color:#5fbf7f; }
+
+/* 推进之后的「撤销」—— 12 秒内有效，和 arc-next 并排 */
+.arc-undo{
+  flex:0 0 auto; padding:6px 10px; border-radius:9px; cursor:pointer;
+  border:1px solid var(--line); background:transparent; color:var(--fg2);
+  font-family:inherit; font-size:12px; white-space:nowrap;
+}
+.arc-undo:active{ background:var(--bg2); }
+
+/* 聊天底部的内联推进条（自动判定标完 done 之后出现） */
+.arc-inline{
+  display:flex; align-items:center; gap:8px;
+  margin:6px 0 2px; padding:8px 10px;
+  border:1px solid var(--pri); border-radius:12px; background:var(--bg3);
+}
+.arc-inline .ai-txt{
+  flex:1 1 auto; min-width:0; font-size:12.5px; line-height:1.5; color:var(--fg2);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.arc-inline .ai-btn{
+  flex:0 0 auto; padding:5px 10px; border-radius:9px; cursor:pointer;
+  border:1px solid var(--pri); background:var(--pri); color:#fff;
+  font-family:inherit; font-size:12px; white-space:nowrap;
+}
+.arc-inline .ai-btn.ghost{ background:transparent; color:var(--fg2); border-color:var(--line); }
+
+
+/* 「不能发生什么」右上角的 3 / 6 */
+.arc-cnt{ float:right; font-style:normal; font-size:11.5px; color:var(--fg3); }
+.arc-cnt.over{ color:var(--danger, #e0574f); }
+
+/* 群聊：各人的目的（单聊整块 .hidden） */
+.arc-aga{ margin-top:4px; }
+.arc-aga-row{ display:flex; align-items:center; gap:6px; margin-top:6px; }
+.arc-aga-row > label{ flex:0 0 auto; min-width:3.6em; max-width:7em; font-size:11.5px; color:var(--fg3);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.arc-aga-row > input{ flex:1 1 auto; min-width:0;
+  padding:6px 9px; border:1px solid var(--line); border-radius:8px;
+  background:var(--bg2); color:var(--fg); font-family:inherit; font-size:12.5px; }
+
+/* 自动判定（beta）。默认关，勾了才每轮多一次小请求 */
+.arc-auto{ display:flex; align-items:flex-start; gap:8px; margin-top:14px; font-size:12.5px; color:var(--fg2); }
+.arc-auto input{ flex:0 0 auto; margin-top:2px; }
+.arc-auto em{ font-style:normal; color:var(--fg3); font-size:11.5px; }
+
+/* 「删掉这张卡」：别和底部三颗抢眼，做成右下角一个小链接 */
+.arc-del-row{ display:flex; justify-content:flex-end; margin-top:10px; }
+.arc-link{ padding:4px 6px; border:none; background:transparent; cursor:pointer;
+  font-family:inherit; font-size:12px; color:var(--fg3); }
+.arc-link:active{ color:var(--danger, #e0574f); }

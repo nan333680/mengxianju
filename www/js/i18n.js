@@ -438,6 +438,23 @@ const EXTRA_ZH = {
   "最近一次自检": "Last self-check",
   "从没跑过": "Never run",
   "主数据对账": "Main data check",
+  "备份频率": "Backup frequency",
+  "每天": "Every day",
+  "每 3 天": "Every 3 days",
+  "每周": "Every week",
+  "关掉自动备份": "Turn auto backup off",
+  "每天最多写一份，写完会当场读回来验一遍；本地只留最近 7 份。": "At most one file per day; it reads the file back right after writing to verify it. Only the latest 7 are kept on the device.",
+  "还没填 key": "No key yet",
+  // 「点」是时段表里的小时单位（0–24 点）。英文里数字后面不加单位，所以给空串。
+  "点": "",
+  // 运行时光拼出来的 title / placeholder（下面的元素拿不到 index.html 上的 data 标注）
+  "正在跟随手机时间，改不了（想手动调就去设置里关掉）": "Following the phone time; turn that off in settings to set it by hand",
+  "点这里调整剧情时间": "Tap to adjust the story time",
+  "点这里给这一段对话设一个场景": "Tap to give this conversation a scene",
+  "当前场景：": "Scene: ",
+  "（不填就用不了 /搜）": " (required for /搜)",
+  "时": "hr",
+  "分": "min",
   "对得上": "OK",
   "记录": "records",
   "Kimi（月之暗面）": "Kimi (Moonshot)",
@@ -532,6 +549,105 @@ const BY_ZH = {
   '这一轮大概往哪走？例如：她开始起疑心，气氛往下沉': 'Where should the plot head this turn? e.g. she starts getting suspicious',
   '说明这张图…': 'Describe this image…',
   '上一批图片还在处理，稍等一下': 'Still processing the last batch, one moment',
+  // v0.5.0 剧情卡。弹窗里的静态标注走 data-i18n-en，这里登记的是 app.js 拼出来的那几条
+  // （空态提示是纯 JS 串，扫不到）。
+  '还没拍。写个方向直接保存也行 —— 不发拍就只按方向走。': 'No beats yet. A direction alone is fine — it will follow that without beats.',
+  '剧情卡已保存': 'Plot card saved',
+  '剧情卡已清空': 'Plot card cleared',
+  '这一段的剧情卡已关掉（内容还在）': 'Plot card turned off (its content is kept)',
+  // ⚠️ v0.5.0.1：剧情卡弹窗里剩下的中文。
+  //    静态标注靠 applyI18n 的兜底扫（扫文本节点、命中词典才换），
+  //    动态的是 app.js 里 sc(…) 拼出来的 —— 两边都查这张表。
+  '这段剧情往哪走': 'Where this story is going',
+  '写出方向，她自己往下演；不用写台词，也不用写完整大纲。':
+    'Write the direction and she plays it out; no lines, no full outline needed.',
+  '只注入当前这一拍': 'Only the current beat is injected',
+  '—— 后面几拍不进提示词，也不会被要求一次演完。':
+    '— the later beats never enter the prompt and are not asked to be acted out at once.',
+  '这段叫什么': 'What is this called',
+  '（可空）': '(optional)',
+  '想往哪走': 'Where should it go',
+  '不能发生什么': 'What must not happen',
+  '（一行一条）': '(one per line)',
+  '几拍': 'Beats',
+  '＋ 加一拍': '+ Add a beat',
+  '这一拍叫什么（可空）': 'Name this beat (optional)',
+  '设为当前': 'Set as current',
+  '当前': 'Current',
+  '删掉这一拍': 'Delete this beat',
+  '要到': 'Reach',
+  '卡在': 'Blocked by',
+  '终点': 'Ends with',
+  '这一拍要达到的地方': 'What this beat should reach',
+  '卡在哪、谁不肯让': "Where it stalls, who won't give",
+  '到这一拍结束才该发生的事': 'What only happens once this beat ends',
+  '从互相试探到摊牌，但谁都不先承认在意。': 'From testing each other to laying it bare — but nobody admits it first.',
+  '不无故和解\n不突然失忆': 'No unearned reconciliation\nNo sudden amnesia',
+  // v0.5.0.2：推进 / 状态 / 群聊各人的目的 / 删卡
+  '现在演到': 'Now at',
+  '还没拍': 'No beats yet',
+  '这一拍演完了 →': 'This beat is done →',
+  '这一段演完了 →': 'This arc is done →',
+  '点右边那颗 = 这一拍收尾、立刻保存、走到下一拍。每拍下面写的「结果」会进下一轮的提示词。':
+    'Tap the one on the right to close this beat, save it right away and move on. What you write under Result feeds into the next turn.',
+  '还没演完': 'Not done yet',
+  '✓ 演完了': '✓ Done',
+  '结果': 'Result',
+  '演完之后实际发生了什么（可空）': 'What actually happened (optional)',
+  '这一拍已经收尾。这段走到头了 —— 想接着演就往下面加一拍':
+    'That beat is closed. You are at the end of this arc — add another beat below to keep going.',
+  '各人的目的': "Everyone's agenda",
+  '群聊才用': 'Group chats only',
+  '这一场里每个人想要什么。只给名字的话，模型会让所有人替同一件事说话。':
+    'What each person wants in this scene. With names alone the model makes everyone push the same thing.',
+  '（无名）': '(unnamed)',
+  '这一场里他想要什么（可空）': 'What they want in this scene (optional)',
+  '自动判定这一拍演完没有': 'Auto-detect when a beat is done',
+  '（beta，每轮多一次小请求）': ' (beta, one extra small request per turn)',
+  '删掉这张卡': 'Delete this card',
+  '整张剧情卡都会删掉：方向、几拍、各人的目的。': 'The whole plot card is deleted: direction, beats, agendas.',
+  '聊天记录不动。': 'Chat history is untouched.',
+  // v0.5.0.3：剧情卡状态机（推进落盘 / 终态 / 撤销 / 节奏 / 内联条）
+  '这一段演完了': 'This arc is done',
+  '开新一段': 'Start a new arc',
+  '清空': 'Clear',
+  '清空方向、几拍、各人的目的，从空白开始。聊天记录不动。':
+    'Clears the direction, the beats and every agenda, starting from a blank card. Chat history is untouched.',
+  '清空了 —— 写个新方向吧': 'Cleared — write a new direction',
+  '撤回到上一拍': 'Back to the previous beat',
+  '保存失败：': 'Save failed: ',
+  '关掉失败：': 'Could not turn it off: ',
+  '这一拍没有可推进的内容': 'Nothing to advance here — this beat has no content',
+  '这一拍像演完了：': 'This beat looks done: ',
+  '这一拍像演完了': 'This beat looks done',
+  '推进': 'Advance',
+  '再演一轮': 'One more round',
+  '这一段演完了 —— 这张卡不再进提示词': 'This arc is done — the card no longer reaches the prompt',
+  '这张卡不会进提示词了。想接着演就加一拍；开新一段 = 清空方向和几拍，重新写一张。':
+    'This card no longer reaches the prompt. Add a beat to keep going; start a new arc clears the direction and beats so you can write a fresh one.',
+  '剧情卡已删掉': 'Plot card deleted',
+  '删掉': 'Delete',
+  '这一拍看样子演完了 —— 打开剧情卡确认要不要往前推':
+    'This beat looks finished — open the plot card to decide whether to move on',
+  // ⚠️ v0.5.0.4：off 语义改成「真暂停」之后新增的那几句。
+  //    off 卡保存/加拍不再偷偷变 on，重开只有「重新开启」一条明路 —— 所以这条路的
+  //    每一步都得说人话，不能靠界面自己猜。
+  '这张卡已经关掉了，不会进提示词。想接着用就点右边那颗。':
+    'This card is turned off, so it never reaches the prompt. To keep using it, tap the button on the right.',
+  '重新开启': 'Reopen',
+  '已重新开启 —— 这一轮开始它会进提示词': 'Reopened — it will reach the prompt from this turn on',
+  '这张卡是关着的 —— 先点上面的「重新开启」，它才会进提示词。':
+    'This card is turned off — tap Reopen above before it can reach the prompt.',
+  '剧情卡已保存（这张卡是关着的）': 'Plot card saved (this card is turned off)',
+  '「不能发生什么」写多了': 'Too many items under What must not happen',
+  '丢掉': 'Drop',
+  '这张卡是空的，先写个方向': 'This card is empty — write a direction first',
+  '这张卡还是空的，先写个方向或填一拍': 'Still empty — write a direction or fill in a beat first',
+  '删不掉：': 'Could not delete it: ',
+  '撤销失败：': 'Undo failed: ',
+  '已经推到下一拍了': 'Moved on to the next beat',
+  '撤销': 'Undo',
+  '撤回上一拍': 'Went back one beat',
 };
 
 let _lang = 'zh';       // 实际生效的（'zh' / 'en'）
@@ -604,14 +720,41 @@ const BY_PATTERN = [
   [/^(\d+) 行$/, (m) => m[1] + (m[1] === '1' ? ' line' : ' lines')],
   [/^\/ (\d+) 条$/, (m) => '/ ' + m[1] + ' items'],
   [/^· 模型默认 (.+)$/, (m) => '· Default model ' + m[1]],
+  // v0.5.0.1 剧情卡：拍号与删除确认都是「固定词 + 数字」拼出来的
+  [/^第 (\d+) 拍$/, (m) => 'Beat ' + m[1]],
+  [/^删掉第 (\d+) 拍？$/, (m) => 'Delete beat ' + m[1] + '?'],
+  [/^演到第 (\d+) 拍$/, (m) => 'Now at beat ' + m[1]],
+  // v0.5.0.4：下面这几条都是「固定词 + 数字」拼出来的完整句子，精确表里放不下
+  [/^演了 (\d+) 轮 \/ 至少 (\d+) 轮$/, (m) => 'played ' + m[1] + (m[1] === '1' ? ' round' : ' rounds') + ' / at least ' + m[2]],
+  [/^这一拍才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,
+    (m) => 'Only ' + m[1] + (m[1] === '1' ? ' round' : ' rounds') + ' into this beat; at least ' + m[2] + ' before it counts as done — no rush.'],
+  [/^第 (\d+) 拍：(.*) · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ': ' + m[2] + ' · round ' + m[3]],
+  [/^最多只留 (\d+) 条，下面这些会丢掉：$/, (m) => 'Only ' + m[1] + ' can be kept; these will be dropped:'],
+  [/^第 (\d+) 拍：(.+)$/, (m) => 'Beat ' + m[1] + ': ' + m[2]],
+  // v0.5.0.3：轮数与推进
+  [/^第 (\d+) 拍：(.*) · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ': ' + m[2] + ' · round ' + m[3]],
+  [/^第 (\d+) 拍 · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ' · round ' + m[2]],
+  [/^演了 (\d+) 轮 \/ 至少 (\d+) 轮$/, (m) => 'round ' + m[1] + ' / at least ' + m[2]],
+  [/^演到第 (\d+) 拍（已保存）$/, (m) => 'Now at beat ' + m[1] + ' (saved)'],
+  [/^这一拍才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,
+    (m) => 'Only ' + m[1] + ' rounds so far; ' + m[2] + ' is the minimum before this beat counts as done — hold on.'],
 ];
+
+/** 只查词典、不看当前语言（v0.5.0.1 抽出来的）。
+ *  为什么要它：data-i18n-nodes 的元素【只在第一次遇到时】算一遍英文缓存，
+ *  而那一次多半发生在中文状态下 —— 走 tt() 会因为它「中文下原样返回」把英文串成中文，
+ *  于是这些元素（版本行、「第 X 年 Y 天」……）切到英文后永远不翻。 */
+function _tr(zh) {
+  // 用 in 而不是真值判断：「点」这类单位在英文里就该是空串，falsy 判会把它漏掉。
+  if (zh in BY_ZH) return BY_ZH[zh];
+  if (zh in EXTRA_ZH) return EXTRA_ZH[zh];
+  for (const [re, f] of BY_PATTERN) { const m = re.exec(String(zh)); if (m) return f(m); }
+  return zh;
+}
 
 export function tt(zh) {
   if (_lang !== 'en') return zh;          // 中文下原样返回，一个字节都不动
-  if (BY_ZH[zh]) return BY_ZH[zh];
-  if (EXTRA_ZH[zh]) return EXTRA_ZH[zh];
-  for (const [re, f] of BY_PATTERN) { const m = re.exec(String(zh)); if (m) return f(m); }
-  return zh;
+  return _tr(zh);
 }
 
 /**
@@ -702,7 +845,13 @@ function _applyI18n(root) {
         if (n.nodeType !== 3) continue;
         const raw = n.textContent;
         const t = raw.replace(/\s+/g, ' ').trim();
-        if (!t || !/[\u4e00-\u9fa5]/.test(t)) continue;
+        // ⚠️ 「含中文才处理」这条只对【英文】成立（v0.5.0.1 修）：
+        //    英文下没中文就没得翻，跳过是对的；但中文下要还原的恰恰是【我们翻成英文的那份】——
+        //    它一个中文都没有，原来的 continue 会把还原也一起挡掉，于是靠兜底扫翻过的界面文字
+        //    切回中文后永久留在英文（要重启 App 重新加载 index.html 才恢复）。
+        if (_lang === 'en') {
+          if (!t || !/[\u4e00-\u9fa5]/.test(t)) continue;
+        } else if (n.__en === undefined) continue;
         // ⚠️ 只动【我们自己写进去的那份】（v0.4.2 修）：
         //    第一版在中文下无条件把节点恢复成"第一次看到时的原文"，于是 JS 后来更新过的
         //    文字会被悄悄地改回旧值 —— 群世界书标题被改回「单独角色」、聊天页页眉被改回
@@ -734,13 +883,22 @@ function _applyI18n(root) {
   for (const el of box.querySelectorAll('[data-i18n-nodes]')) {
     const nodes = [...el.childNodes].filter(n => n.nodeType === 3);
     if (!nodes.length) continue;
+    // ⚠️ 缓存对不上就重建（v0.5.0.1）：JS 可能后来改了子节点的个数/顺序，
+    //    对不上还硬按老数组写，会把内容写错位或写出 undefined。
+    if (el.dataset.i18nNodesZh) {
+      let n0 = 0;
+      try { n0 = JSON.parse(el.dataset.i18nNodesZh).length; } catch { n0 = -1; }
+      if (n0 !== nodes.length) { delete el.dataset.i18nNodesZh; delete el.dataset.i18nNodesEn; }
+    }
     if (!el.dataset.i18nNodesZh) {
       el.dataset.i18nNodesZh = JSON.stringify(nodes.map(n => n.textContent));
       el.dataset.i18nNodesEn = JSON.stringify(nodes.map(n => {
         const raw = n.textContent;
         const t = raw.replace(/\s+/g, ' ').trim();
         if (!t) return raw;
-        const en = tt(t);
+        // ⚠️ 必须用 _tr 而不是 tt（v0.5.0.1）：缓存建立时多半还在中文下，
+        //    tt() 那时原样返回，enArr 会整份存成中文 —— 之后切英文写回去的还是中文。
+        const en = _tr(t);
         if (!en) return raw;
         // 保住原样的前后空白，免得两个片段粘在一起
         const lead = (/^\s*/.exec(raw) || [''])[0];
@@ -757,6 +915,12 @@ function _applyI18n(root) {
   for (const el of box.querySelectorAll('[data-i18n-en-ph]')) {
     if (el.dataset.i18nZhPh === undefined) el.dataset.i18nZhPh = el.getAttribute('placeholder') || '';
     el.setAttribute('placeholder', _lang === 'en' ? el.dataset.i18nEnPh : el.dataset.i18nZhPh);
+  }
+  // title 同理（v0.5.0.1）。原来只认 placeholder，「剧情」那颗按钮的 title 一直是中文 ——
+  // 属性不在兜底扫的范围内，长按看到的就是一句中文夹在英文界面里。
+  for (const el of box.querySelectorAll('[data-i18n-en-title]')) {
+    if (el.dataset.i18nZhTitle === undefined) el.dataset.i18nZhTitle = el.getAttribute('title') || '';
+    el.setAttribute('title', _lang === 'en' ? el.dataset.i18nEnTitle : el.dataset.i18nZhTitle);
   }
   // 带格式的段落（说明文字里常夹着 <b> / <br>）：整块换 innerHTML。
   // ⚠️ 只能用在【纯展示】的段落上 —— innerHTML 赋值会把里面的元素重建一遍，

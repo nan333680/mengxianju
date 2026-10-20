@@ -200,7 +200,17 @@ await page.evaluate(async (dataUrl) => {
   inp.files = dt.files;
   inp.dispatchEvent(new Event('change', { bubbles: true }));
 }, fakeImg);
-await sleep(3000);
+// ⚠️ 这里原来固定等 3 秒。本地够，CI 的 runner 不够 —— 识图这条链路要读文件、
+//    可能压缩、发请求、再回填，慢机器上 3 秒根本走不完，6 条断言全红
+//    （CI 上这套 25/6，本地 31/0；ci-precheck 复刻不出这一条，因为它模拟的是语言和
+//    reduced-motion，模拟不了"机器慢"）。改成轮询到结果真出现，最多 25 秒。
+for (let i = 0; i < 125; i++) {
+  if (visionCalls.length > 0) {
+    const v = await page.$eval('#e-look', el => el.value);
+    if (v.includes('紫色连衣裙')) break;
+  }
+  await sleep(200);
+}
 const afterImg = await page.$eval('#e-look', el => el.value);
 console.log('   框内容: ' + JSON.stringify(afterImg.slice(0, 80)));
 t('发出了识图请求', visionCalls.length > 0);

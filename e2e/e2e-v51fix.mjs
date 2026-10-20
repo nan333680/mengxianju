@@ -52,7 +52,7 @@ console.log('');
 console.log('=== 3. 常驻世界书只能进稳定前缀 ===');
 // 混进本轮段 = 每轮改一次前缀 = 前缀缓存全废、token 翻十倍。
 t('发送路径把常驻条目喂给 buildStablePrompt',
-  !!appJs && appJs.includes('buildStablePrompt(myChar, P, await worldbookConst(myCharId))'));
+  !!appJs && appJs.includes('const wbConst = await worldbookConst(myCharId)') && appJs.includes('buildStablePrompt(myChar, P, wbConst)'));
 t('worldbookHits 跳过 always 档（不然就同时进了两处）',
   !!appJs && appJs.includes("if (e.pos === 'always') continue;"));
 t('稳定前缀里那段叫「基础设定」', (readOr(R + '/www/js/persona.js') || '').includes('# 基础设定'));

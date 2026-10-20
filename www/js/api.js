@@ -444,6 +444,8 @@ export async function onceChat(opts) {
     apiKey, baseUrl, model, messages, provider, temperature = 0.3, maxTokens = 1024,
     reasoningEffort = 'none',   // 见下面 ⚠️
     noThink = false,            // 见下面 ⚠️⚠️
+    // v0.5.2：小说正文一次要写 1200 字，90 秒不够用（记忆整理那种短活仍用默认）。
+    timeoutMs = 90000,
   } = opts;
   const spec = providerSpec(provider);
   const eff = (spec.reasoning || {})[reasoningEffort];
@@ -451,7 +453,7 @@ export async function onceChat(opts) {
   // 记忆总结 / 查重走这里。没有超时的话，一次卡住会让 _summarizing / _deduping
   // 永远保持 true，之后所有记忆任务都静默不再执行。
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(new Error('记忆整理超时（90 秒）')), 90000);
+  const t = setTimeout(() => ctl.abort(new Error('等太久了：' + Math.round(timeoutMs / 1000) + ' 秒没有回数据')), timeoutMs);
   let res;
   try {
     // ⚠️ 必须显式关掉思考模式（2026-09-26 修）

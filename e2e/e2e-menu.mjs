@@ -71,21 +71,35 @@ const cid = await page.evaluate(async () => {
   const cid = (cs.find(c => c.name === '菜单测试') || cs[0]).id;
   const tx = db.transaction('messages','readwrite');
   const st = tx.objectStore('messages');
-  const base = Date.now() - 10000;
+  // ⚠️ seed 的时间必须【晚于开场白】（v0.5.1.5）：第一次串链是按 ts 升序串的，
+  //    早于开场白的 seed 会被串到开场白【前面】—— 开场白成了链尾，
+  //    后面「删中间一条」「再塞一条」全跟着错位，看着像功能坏了。
+  const base = Date.now() + 1000;
   for (let i=0;i<4;i++) st.put({ id:'seed-'+i, charId:cid, role: i%2 ? 'assistant':'user', content:'种子消息 '+i, images:[], ts: base + i*1000 });
   await new Promise(r => { tx.oncomplete = r; });
   db.close();
   return cid;
 });
 await page.reload({ waitUntil:'networkidle0' });
-await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
+// ⚠️ 原来这里是固定 sleep(400)（"探针实测就绪只要 ~1ms"）。这个结论只在
+// 【库里没有需要串链的消息】时成立 —— 4 条 seed 消息都要先跑一遍 seedParents
+// 才画得出来，而那是一轮 getAll + 写入。固定 400ms 一旦不够，屏幕上只剩 1 条，
+// 后面 msgCenter 直接崩在 getBoundingClientRect 上（错的是等待，不是功能）。
+await page.waitForFunction(() => document.querySelectorAll('#messages .msg').length >= 4, { timeout: 20000 }).catch(()=>{});
 console.log('  角色=' + cid + '，渲染消息数=' + await page.$$eval('.msg', e=>e.length));
 
-const msgCenter = (i) => page.evaluate((i) => {
+// ⚠️ 先等这条消息真的在 DOM 里（v0.5.1.5）。renderMessages 是
+// 「先 box.innerHTML = '' 再 await seedParents/curMsgs 后填充」，
+// 那中间有一小段列表是空的 —— 固定 sleep 撞进去就取到 undefined，
+// 崩在 getBoundingClientRect 上，看着像功能坏了。
+const msgCenter = async (i) => {
+  await page.waitForFunction((i) => !!document.querySelectorAll('.msg')[i], { timeout: 10000 }, i).catch(()=>{});
+  return page.evaluate((i) => {
   const el = document.querySelectorAll('.msg')[i];
   const r = el.getBoundingClientRect();
   return { x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2) };
 }, i);
+};
 
 // Android 真实长按：550ms 定时器 + 系统 contextmenu 都会触发 showMsgMenu
 const longPressAndroid = async (i) => {
@@ -120,15 +134,20 @@ console.log('');
 console.log('=== 3. 点菜单内空白/gap 也要关闭 ===');
 await clearMenus();
 await longPressAndroid(1);
-const pad = await page.evaluate(() => {
+const nBefore = await page.$$eval('.msg', e => e.length);
+// ⚠️ 这里【不按坐标点】（v0.5.1.5）。
+// 菜单的 padding 只有 6px，而 touchscreen.tap 的落点和 elementFromPoint 对不齐
+// （差一两像素就滑到第一个按钮上）—— 那一下等于点了「编辑重发」，
+// 它按设计会连带删掉后面所有消息，于是本节看着像「点空白把记录删光了」。
+// 要验的是「点到菜单本体（不是按钮）也得关」，直接对菜单派发 click 就覆盖了这条路径。
+await page.evaluate(() => {
   const m = document.querySelector('.msg-menu');
-  const b = m.getBoundingClientRect();
-  return { x: Math.round(b.left + 3), y: Math.round(b.top + 3) };
+  if (m) m.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 });
-await page.touchscreen.tap(pad.x, pad.y);
-await sleep(400);
+await sleep(350);
 n = await menuCount();
 t('点菜单内边缘空白 → 菜单关闭', n===0, '实际='+n+' 个');
+t('点空白不会误删消息', (await page.$$eval('.msg', e => e.length)) === nBefore, nBefore + ' -> ' + await page.$$eval('.msg', e => e.length));
 
 console.log('');
 console.log('=== 4. 点「删除这条」后必须全消失 ===');
@@ -203,11 +222,12 @@ await page.evaluate(async () => {
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const cs = await new Promise(r => { const q = db.transaction('characters').objectStore('characters').getAll(); q.onsuccess = () => r(q.result); });
   const tx = db.transaction('messages', 'readwrite');
-  tx.objectStore('messages').put({ id: 'edit-test-1', charId: (cs.find(x => x.name === '菜单测试') || cs[0]).id, role: 'user', content: '这句要改', images: [], ts: Date.now() });
+  tx.objectStore('messages').put({ id: 'edit-test-1', charId: (cs.find(x => x.name === '菜单测试') || cs[0]).id, role: 'user', content: '这句要改', images: [], ts: Date.now() + 10000 });
   await new Promise(r => { tx.oncomplete = r; }); db.close();
 });
 await page.reload({ waitUntil: 'networkidle0' });
-await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
+// 这条没有 parentId，要先被 seedParents 串进链里才画得出来（v0.5.1.5）。
+await page.waitForFunction(() => !!document.querySelector('#messages .msg[data-id="edit-test-1"]'), { timeout: 20000 }).catch(()=>{});
 const idx = await page.evaluate(() => [...document.querySelectorAll('.msg')].findIndex(el => el.dataset.id === 'edit-test-1'));
 t('找到了自己发的那条', idx >= 0, 'index=' + idx);
 await longPressAndroid(idx);

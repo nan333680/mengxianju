@@ -339,7 +339,10 @@ t('记忆总结真的发起了（拿到了请求）', !!memBody, memBody.slice(-
 t('输入里标了成员名（甲）', memBody.includes('甲：'), '');
 t('输入里标了成员名（乙）', memBody.includes('乙：'), '');
 t('旁白标成「旁白：」，不算在某个人头上', memBody.includes('旁白：'), '');
-t('用户的话还是「他：」', memBody.includes('他：'), '');
+// v0.5.2：用户那一行的标签不再是写死的「他：」—— 没设名字时是「你：」，
+// 设了名字就是名字。理由见 app.js 的 memUserTag()。
+t('用户的话标成「你：」（没设名字时的默认）', memBody.includes('你：'), '');
+t('输入里不再有「他：」这个第三人称标签', !memBody.includes('他：'), '');
 // ⚠️ 只看【正文行】—— 提示词里自己会引用一次 `【群名：】` 来解释规则，
 //    拿 includes 整个 body 去判会假红（第一版就是这么错的）。
 const txLines = memBody.split(String.fromCharCode(10));

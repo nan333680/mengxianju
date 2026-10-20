@@ -564,7 +564,7 @@ export function insertTextChunk(pngBytes, keyword, text) {
  */
 const MK_CARD_KEYS = [
   'temperature', 'maxTokens', 'contextRounds', 'reasoningEffort',
-  'kaomojiFreq', 'emojiFreq', 'verbosity', 'descLevel', 'detailDrive',
+  'kaomojiFreq', 'emojiFreq', 'verbosity', 'epicChain', 'descLevel', 'detailDrive',
   'splitMessages', 'povLock', 'thinkMode', 'searchPolicy', 'clockPolicy',
   // ⚠️ povStyle 是现行字段（v1.21.49 起），povLock 已经废弃只是还留着兼容。
   //    这张表原来只有废弃的那个 —— 于是 L2/L3/L4 视角的角色导出卡片再导回来，
@@ -602,7 +602,7 @@ function mkParams(char) {
  */
 const NUM_LIMITS = {
   temperature: [0, 2], maxTokens: [1, 1000000], contextRounds: [1, 2000],
-  kaomojiFreq: [0, 1], emojiFreq: [0, 1], typingDelay: [0, 60],
+  kaomojiFreq: [0, 1], emojiFreq: [0, 1], typingDelay: [0, 60], epicChain: [0, 4],
 };
 const BOOL_KEYS = ['splitMessages', 'thinkMode', 'appearanceOn', 'longMemory', 'allowEditMine', 'hesitation', 'showTyping', 'povLock'];
 const STR_KEYS = {
@@ -619,7 +619,9 @@ function sanitizeParam(k, v) {
   if (lim) {
     const n = Number(v);
     if (!Number.isFinite(n)) return undefined;
-    return Math.min(lim[1], Math.max(lim[0], n));
+    const c = Math.min(lim[1], Math.max(lim[0], n));
+    // epicChain 数的是【段数】，只认整数：2.5 段是看不懂的
+    return k === 'epicChain' ? Math.round(c) : c;
   }
   return v;
 }

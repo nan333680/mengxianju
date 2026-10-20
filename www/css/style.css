@@ -390,6 +390,24 @@ input[type=checkbox]{
 .mem-item .del{
   color:var(--danger); background:none; border:none; font-size:16px; cursor:pointer;
 }
+/* 被取代的旧说法（v0.5.1.1）：留着能看，但一眼看出它不生效了 */
+.mem-item.sup{ opacity:.55; }
+.mem-item.sup .txt{ text-decoration:line-through; text-decoration-color:var(--fg3); }
+.mem-item .restore{
+  flex:0 0 auto; font-size:12px; padding:3px 8px; border-radius:8px; cursor:pointer;
+  color:var(--pri); background:transparent; border:1px solid var(--pri);
+}
+
+/* 记忆来源弹层（v0.5.1.1）：每条来源一段，讲的人 + 第几天 + 原文 */
+.mem-src{ padding:9px 11px; border-radius:10px; background:var(--bg2); border:1px solid var(--line); margin-bottom:8px; }
+.mem-src .mh{ font-size:11.5px; color:var(--fg3); margin-bottom:4px; }
+.mem-src .mb{ font-size:13.5px; line-height:1.55; word-break:break-word; white-space:pre-wrap; }
+
+/* 「这一轮用了什么」弹层（v0.5.1.1） */
+.inj-h{ margin:14px 0 6px; font-size:12.5px; font-weight:600; color:var(--fg2); }
+.inj-h:first-child{ margin-top:0; }
+.inj-row{ font-size:13.5px; line-height:1.55; padding:6px 10px; border-radius:9px;
+  background:var(--bg2); border:1px solid var(--line); margin-bottom:6px; word-break:break-word; }
 
 /* ===== 我的设定（全局一份）===== */
 .profile-box{
@@ -411,6 +429,16 @@ input[type=checkbox]{
   background:var(--bg2); border-left:3px solid var(--pri);
   font-size:11.5px; color:var(--fg3); line-height:1.6;
 }
+/* 「她怎么看你」（v0.5.2）：比「我的设定」短得多，一行一条，故意不用 min-height 撑大 */
+.addr-f{ display:block; margin:0 0 12px; }
+.addr-f > span{ display:block; font-size:12px; color:var(--fg3); margin-bottom:5px; }
+.addr-in, .addr-ta{
+  width:100%; box-sizing:border-box; padding:9px 11px; border-radius:10px;
+  font-size:13.5px; line-height:1.6; background:var(--bg2); color:var(--fg);
+  border:1px solid var(--line); font-family:inherit; outline:none;
+}
+.addr-ta{ resize:vertical; min-height:50px; }
+.addr-in:focus, .addr-ta:focus{ border-color:var(--pri); }
 /* ===== 聊天栏：点头像/名字直接进她的编辑页 ===== */
 .tap-edit{ cursor:pointer; }
 .tap-edit:active{ opacity:.6; }
@@ -541,6 +569,28 @@ input + .hint-text{ margin-top:8px; }
   margin-right:7px; background:var(--bg3); color:var(--fg3); white-space:nowrap;
 }
 .mem-tag.ev{ color:var(--pri2); }
+/* 「已被取代」= 这个槽位后来改过口，这条是旧说法 */
+.mem-tag.sup{ color:var(--fg3); border:1px dashed var(--line); background:transparent; }
+/* ===== 记忆时间线（v0.5.1.1）===== */
+.mem-views{ margin-bottom:10px; }
+.mem-views button{ font-size:12px; }
+.tl{ position:relative; padding-left:14px; margin:2px 0 10px; }
+.tl::before{ content:''; position:absolute; left:3px; top:4px; bottom:4px; width:1px; background:var(--line); }
+.tl-row{ position:relative; display:flex; gap:10px; padding:5px 0; align-items:flex-start; cursor:pointer; }
+.tl-row::before{ content:''; position:absolute; left:-13px; top:12px; width:7px; height:7px;
+  border-radius:50%; background:var(--pri); }
+.tl-row.dead{ opacity:.5; }
+.tl-row.dead::before{ background:var(--fg3); }
+.tl-row .tl-d{ flex:0 0 auto; font-size:11.5px; color:var(--fg3); white-space:nowrap; padding-top:2px; min-width:52px; }
+.tl-row .tl-b{ flex:1; min-width:0; font-size:13.5px; line-height:1.5; word-break:break-word; }
+.tl-row .tl-k{ display:block; font-size:11px; color:var(--fg3); margin-top:2px; }
+
+/* 「已过期」= 事件过了限期，留着看但不再进提示词 */
+.mem-tag.exp{ color:var(--fg3); border:1px solid var(--line); background:transparent; }
+/* 槽位名（职业/住处/…），点它能看出"这条以后会被同槽位的新说法顶掉" */
+.mem-tag.key{ color:var(--pri2); }
+/* 「来自 N 条」：点开看原文，记忆回链 */
+.mem-tag.src{ cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
 /* 「自定义」= 你自己写进去的 */
 .mem-tag.mine{ color:var(--pri); border:1px solid var(--pri); background:transparent; }
 
@@ -602,6 +652,19 @@ input + .hint-text{ margin-top:8px; }
 .msg.me .bub .tag-chip{
   color:#fff; border-color:rgba(255,255,255,.30); background:rgba(255,255,255,.18);
 }
+/* 复读角标（v0.5.5）：只在跟前面某条重合率过阈值时才挂上。
+   用告警色而不是附加功能的紫色 —— 它说的不是"这一轮带了什么功能"，
+   而是"这一条可能出问题了"，两种信息混成一个颜色会读混。 */
+.bub .rep-chip{
+  font-size:10.5px; line-height:1.6; padding:1px 7px; border-radius:999px;
+  white-space:nowrap; cursor:help;
+  color:#e0a33a;
+  background:color-mix(in srgb, #e0a33a 12%, transparent);
+  border:1px solid color-mix(in srgb, #e0a33a 32%, transparent);
+}
+.msg.me .bub .rep-chip{ color:#ffe0a3; border-color:rgba(255,224,163,.35); background:rgba(255,224,163,.16); }
+.bub .t.has-more .rep-chip,
+.bub .t.has-more .rep-chip + .story-time{ margin-left:auto; }
 .msg.me .bub .more-btn{ color:rgba(255,255,255,.88); }
 /* ===== 「上一轮的要求」余温条（v0.4.2.2）=====
    上一轮用「本轮更改」提的要求，这一轮继续作数一次，显示成虚线 chip。
@@ -1621,3 +1684,187 @@ input[type="range"] { touch-action: pan-y; }
 .arc-link{ padding:4px 6px; border:none; background:transparent; cursor:pointer;
   font-family:inherit; font-size:12px; color:var(--fg3); }
 .arc-link:active{ color:var(--danger, #e0574f); }
+/* ===== 小说阅读模式（v0.5.1.5） =====
+   目标不是"好看"，是"能连着读几千字"：气泡边界、头像、时间戳、token、角标
+   在连续阅读里全是噪声 —— 每一条都在打断段落。所以这里把它们全收掉，
+   只留文字本身，换成衬线字体和更宽的行距。
+   区分"我"和"她"用色温（我这边偏紫、她那边正常），不用左右对齐 ——
+   小说的段落是从左到右连排的，左右分栏会读成聊天记录。 */
+.read-bar{
+  display:flex; align-items:center; gap:8px;
+  padding:8px 12px; font-size:12px; color:var(--fg2);
+  background:var(--bg2); border-bottom:1px solid var(--line);
+}
+.read-bar .rb-txt{ color:var(--fg); font-weight:600; }
+.read-bar .rb-sub{ color:var(--fg3); font-size:11.5px; flex:1 1 auto; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.read-bar .rb-exit{
+  flex:0 0 auto; padding:5px 12px; border-radius:14px; cursor:pointer;
+  border:1px solid var(--line); background:var(--bg3); color:var(--fg2);
+  font-family:inherit; font-size:12px;
+}
+.read-bar .rb-exit:active{ color:var(--pri); border-color:var(--pri); }
+
+/* 阅读模式的外壳（v0.5.1.6）。
+   上一版只收了下发那三条操作条，顶栏 / API 横幅 / 输入栏 / 群聊名单全留着，
+   底下永远摆着一个输入框 —— 那不是"读"，是"边聊边看大一点的字"。
+   进阅读模式就只留正文和右上角那个「退出」。 */
+#view-chat.reading-shell .topbar,
+#view-chat.reading-shell .setup-banner,
+#view-chat.reading-shell .group-roster,
+#view-chat.reading-shell .composer{ display:none !important; }
+/* 顶栏收掉以后 read-bar 就是最上面那一行，得自己让出状态栏的位置，
+   否则「退出」会被刘海/挖孔吃掉，点不到就只能靠返回键。 */
+#view-chat.reading-shell .read-bar{
+  padding-top:calc(8px + var(--sat));
+  position:sticky; top:0; z-index:4;
+}
+/* 没有输入栏以后，正文可以一直滚到底：最后一段不该停在离屏幕边缘很远的地方 */
+#view-chat.reading-shell #messages{ padding-bottom:calc(48px + var(--sab)); }
+
+#messages.reading{ gap:0; padding:4px 18px 48px; }
+#messages.reading .msg{ display:block; max-width:100%; }
+#messages.reading .msg .av{ display:none; }
+/* 阅读时分章标题：一条细线夹着「第 N 天」，比空一行更能定位 */
+#messages.reading .chap{
+  display:flex; align-items:center; gap:12px;
+  margin:30px 0 16px; color:var(--fg3);
+  font-family:'Noto Serif SC','Songti SC','Source Han Serif SC',Georgia,serif;
+  font-size:12.5px; letter-spacing:1px;
+}
+#messages.reading .chap:first-child{ margin-top:8px; }
+#messages.reading .chap::before,
+#messages.reading .chap::after{ content:''; flex:1 1 auto; height:1px; background:var(--line); }
+#messages.reading .bub{
+  max-width:100%; padding:0; margin:0 0 16px;
+  background:none; border:0; border-radius:0; color:var(--fg);
+  font-family:'Noto Serif SC','Songti SC','Source Han Serif SC',Georgia,serif;
+  font-size:16px; line-height:1.95; letter-spacing:.2px;
+  white-space:pre-wrap;
+}
+#messages.reading .msg.me .bub{ background:none; border:0; color:#c9bcff; }
+/* 时间 / token / 角标 / 「附」在阅读里全是噪声 */
+#messages.reading .bub .t,
+#messages.reading .bub .more-btn,
+#messages.reading .bub .rep-chip{ display:none; }
+/* 图片别被撑到整屏：保持可见，但按行文比例缩 */
+#messages.reading .bub img.pic{ max-width:100%; border-radius:8px; margin:6px 0; }
+#messages.reading .sys-line{ margin:16px 0; }
+/* 归档条和普通视图一样保留 —— 阅读时更需要知道"前面还有多少" */
+#messages.reading .arch-bar{ margin-bottom:14px; }
+/* ===== 小说层（v0.5.2）：书架 / 阅读页 / 开戏弹窗 / 分镜 ===== */
+
+/* ---- 书架 ---- */
+#shelf-list{ display:flex; flex-direction:column; gap:10px; padding:12px 14px calc(26px + var(--sab)); }
+.shelf-item{
+  display:block; width:100%; text-align:left; font-family:inherit; cursor:pointer;
+  padding:13px 14px; border-radius:14px;
+  background:var(--bg2); border:1px solid var(--line); color:var(--fg);
+  transition:background .15s;
+}
+.shelf-item:active{ background:var(--bg3); }
+.si-top{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.si-top b{ flex:1 1 auto; min-width:0; font-size:15px; font-weight:600;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.si-badge{ flex:0 0 auto; font-size:11px; padding:1px 6px; border-radius:6px;
+  background:rgba(139,124,246,.16); color:var(--pri2); }
+.si-pre{ font-size:13px; line-height:1.6; color:var(--fg3);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.si-meta{ margin-top:7px; font-size:11.5px; color:var(--fg3); }
+.shelf-empty{ text-align:center; color:var(--fg3); font-size:13px; padding:44px 12px; line-height:1.8; }
+.shelf-head{ display:flex; align-items:center; justify-content:space-between;
+  padding:2px 2px 6px; font-size:12.5px; color:var(--fg3); }
+.shelf-trash{ margin-top:4px; align-self:center; }
+
+/* ---- 阅读页 ---- */
+/* 衬线、宽行距、只有正文 —— 和「聊天记录」读起来必须是两种东西。
+   字号走 --rv-size（JS 写进 #view-read 的 style），主题走 data-theme。 */
+#view-read{ --rv-size:17px; }
+#view-read[data-theme="sepia"]{
+  --bg:#f4ecdb; --bg2:#ece2cd; --bg3:#e3d7bd; --line:#d8c9a9;
+  --fg:#3a2e22; --fg2:#6b5a45; --fg3:#9c8a70; --pri:#9a6a3c; --pri2:#b07c46;
+}
+#view-read[data-theme="light"]{
+  --bg:#fbfaf7; --bg2:#f2f0ea; --bg3:#e8e5dd; --line:#dcd8ce;
+  --fg:#24211c; --fg2:#5f5a51; --fg3:#948d80; --pri:#6d5ce0; --pri2:#8b7cf6;
+}
+.rv-top{ display:flex; align-items:center; gap:4px; flex-shrink:0;
+  padding:6px 8px; padding-top:calc(6px + var(--sat)); }
+.rv-top .icon-btn{ width:34px; height:34px; font-size:17px; color:var(--fg3); }
+#rv-title{ flex:1 1 auto; min-width:0; text-align:center; font-size:12px;
+  color:var(--fg3); letter-spacing:.6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rv-progress{ flex-shrink:0; height:2px; background:var(--line); opacity:.5; }
+.rv-progress > i{ display:block; height:100%; width:0; background:var(--pri); transition:width .12s linear; }
+#rv-scroll{ flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;
+  padding:14px 22px calc(96px + var(--sab)); }
+#rv-body{ color:var(--fg); font-size:var(--rv-size); line-height:1.92; letter-spacing:.2px;
+  font-family:'Noto Serif SC','Songti SC','Source Han Serif SC',Georgia,serif; }
+.rv-para{ margin:0 0 1.05em; white-space:pre-wrap; word-break:break-word; }
+.rv-para.rv-user{ color:var(--pri2); }
+.rv-para.rv-empty{ color:var(--fg3); font-size:.86em; }
+.rv-live{ color:var(--fg3); }
+.rv-warn{ margin:22px 0 10px; padding:9px 12px; border-radius:10px; font-size:13px;
+  background:rgba(242,85,90,.1); color:var(--danger); border:1px solid rgba(242,85,90,.25); }
+.rv-row{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.rv-row button, .rv-say button{
+  font-family:inherit; font-size:13px; cursor:pointer;
+  padding:8px 14px; border-radius:10px;
+  background:var(--bg3); color:var(--fg2); border:1px solid var(--line);
+}
+.rv-row button:active, .rv-say button:active{ color:var(--pri); border-color:var(--pri); }
+.rv-fin{ margin:26px 0 10px; text-align:center; color:var(--fg3);
+  font-size:12.5px; letter-spacing:2px; }
+.rv-say{ display:flex; gap:8px; margin:18px 0 6px; }
+.rv-say input{ flex:1 1 auto; min-width:0; font-family:inherit; font-size:14px; padding:9px 12px;
+  border-radius:10px; background:var(--bg2); color:var(--fg); border:1px solid var(--line); outline:none; }
+.rv-say input:focus{ border-color:var(--pri); }
+.rv-say button{ flex:0 0 auto; }
+/* 控制层：点正文中间从底部升起来。.hidden 是全局 display:none!important，
+   这里用同权重的 !important + 更高特异性换成位移 —— 只为了那一下升起，没别的用处。 */
+#rv-ctrl{ position:absolute; left:0; right:0; bottom:0; z-index:6;
+  display:flex; flex-wrap:wrap; gap:8px; justify-content:center;
+  padding:12px 14px calc(12px + var(--sab));
+  background:var(--bg2); border-top:1px solid var(--line);
+  transition:transform .22s ease, opacity .22s ease; }
+#rv-ctrl.hidden{ display:flex !important; transform:translateY(120%); opacity:0; pointer-events:none; }
+#rv-ctrl button{
+  font-family:inherit; font-size:13px; cursor:pointer; min-width:44px;
+  padding:9px 14px; border-radius:10px;
+  background:var(--bg3); color:var(--fg2); border:1px solid var(--line);
+}
+#rv-ctrl button:active{ color:var(--pri); border-color:var(--pri); }
+#rv-ctrl button.danger{ color:var(--danger); }
+/* 右上角浮层菜单（重写这一段 / 改拍 / 断开派生 / 删这场…） */
+.rv-menu{ position:fixed; z-index:120; top:calc(46px + var(--sat)); right:10px;
+  display:flex; flex-direction:column; min-width:150px; padding:6px;
+  background:var(--bg3); border:1px solid var(--line); border-radius:12px;
+  box-shadow:0 10px 30px rgba(0,0,0,.4); }
+.rv-menu button{ font-family:inherit; font-size:13.5px; text-align:left; cursor:pointer;
+  padding:10px 12px; border-radius:8px; background:transparent; border:0; color:var(--fg); }
+.rv-menu button:active{ background:var(--line); }
+/* 删一拍之后的撤销条（12 秒自己收） */
+.rv-undo{ display:flex; align-items:center; justify-content:center; gap:10px;
+  margin:6px 14px 0; padding:8px 12px; border-radius:10px;
+  background:var(--bg3); border:1px solid var(--line);
+  font-size:12.5px; color:var(--fg2); }
+.rv-undo button{ font-family:inherit; font-size:12.5px; padding:5px 12px; cursor:pointer;
+  border-radius:8px; border:1px solid var(--pri); background:transparent; color:var(--pri); }
+.rv-undo button:active{ background:var(--pri); color:#fff; }
+
+/* ---- 开戏弹窗 / 分镜 ---- */
+.scene-box{ max-height:86vh; overflow-y:auto; }
+.sc-temp{ display:flex; align-items:flex-start; gap:8px; margin-bottom:8px;
+  padding:9px 11px; border-radius:11px; background:var(--bg2); border:1px solid var(--line); }
+.st-main{ flex:1 1 auto; min-width:0; }
+.st-main b{ font-size:13.5px; }
+.st-sub{ display:block; margin-top:2px; font-size:11.5px; color:var(--fg3); line-height:1.55; }
+.st-x{ flex:0 0 auto; width:28px; height:28px; border:0; border-radius:8px;
+  background:transparent; color:var(--fg3); font-size:13px; cursor:pointer; }
+.st-x:active{ background:var(--line); color:var(--danger); }
+.beat-row{ margin-bottom:9px; padding:10px 12px; border-radius:12px;
+  background:var(--bg2); border:1px solid var(--line); }
+.beat-row .bh{ font-size:12px; color:var(--fg3); margin-bottom:6px; letter-spacing:.5px; }
+.beat-row .bi{ display:block; width:100%; box-sizing:border-box; margin-top:6px;
+  font-family:inherit; font-size:13.5px; padding:8px 10px; border-radius:9px;
+  background:var(--bg3); color:var(--fg); border:1px solid var(--line); outline:none; }
+.beat-row .bi:focus{ border-color:var(--pri); }

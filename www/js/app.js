@@ -1,4 +1,4 @@
-import { kv, chars, msgs, mem, wb, uid, wipeAll, dbAdmin } from './db.js';
+import { kv, chars, msgs, mem, wb, scenes, uid, wipeAll, dbAdmin } from './db.js';
 import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
 import { buildStablePrompt, buildTurnNote, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR } from './persona.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
@@ -13,12 +13,21 @@ import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entr
 import { autoBackupIfDue, verifyLatestBackup, readLatestBackup, BACKUP_DIRS, KEEP as BACKUP_KEEP, DAY_MS as BACKUP_DAY_MS } from './autobackup.js';
 // 导出 Markdown（v1.21.48）：纯函数，接一组消息吐一个字符串
 import { buildChatMarkdown, markdownFileName } from './exportmd.js';
+import { activePath, pathTo, setLeaf, pickLeaf, seedParents, siblings, deepestIn, leafKey } from './branch.js';
+// 反复读检测（v0.5.5）：4-gram 重合率，阈值从真实备份量出来的，见该文件头。
+import { worstRepeat, REPEAT_WARN, REPEAT_LOOKBACK } from './prose.js';
 import { normalizeArc, arcActive, arcFinished, atLastBeat, beatTurns, emptyArc, ARC_BEATS_MAX, ARC_CONSTRAINTS_MAX } from './storyarc.js';
+// 记忆时间锚（0.5.2）：把「明天/昨天」换算成绝对剧情天数，并保留来源消息。
+import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMemory, memoryDay, memoryGrams, hasRelativeDay, MEMORY_KEYS, activeOnly, MEMORY_STATUS } from './memory.js';
 // 酒馆正则（v0.4.0）：解析 + 应用都在 stregex.js 里，不碰 DOM 也不碰数据库。
 // ⚠️ 红线写在那文件头上：正则只作用于【副本】（提示词 / 屏幕），永不回写存档。
 import { parseStRegexList, applyStRegex, previewOne } from './stregex.js';
 // 酒馆聊天记录（v0.4.0）：.jsonl / .json 的解析是纯函数，见 stchat.js 头部说明。
 import { parseStChat, toMessages } from './stchat.js';
+// 小说层（v0.5.2）：场景卡的数据形状与纯逻辑全在 scene.js，
+// 出正文 / 出分镜 / 出场记在 scenegen.js，两边都不碰 DOM 也不碰数据库。
+import { SCENE_LENGTHS, USER_MODES, USER_MODE_NAME, SCENE_STATUS, GUARDRAILS_MAX, TEMP_CAST_MAX, TRASH_DAYS, emptyScene, emptyBeat, beatCountFor, clampBeats, normalizeScene, sceneNames, countChars, checkQuality, sceneWordCount, sceneFilled, textToBlocks, dialogueToNarration, newSceneId } from './scene.js';
+import { genProse, genBeatPlan, genLog, genTempCast } from './scenegen.js';
 
 // ⚠️ 这里绝对不能 import '@capacitor/xxx'！
 // www/ 会被原样复制进 APK，WebView 里没有 node_modules，
@@ -96,6 +105,10 @@ const DEFAULTS = {
   //    界面上就多出一个印着「0.1」的按钮（用户实测提过）。现在默认值也走档位表。
   kaomojiFreq: 0.15, emojiFreq: 0.15,
   verbosity: 'medium', splitMessages: false, splitMax: 3,
+  // 长篇自动串联（v0.5.5）：只在「回复长度 = 长篇」这一档下生效。
+  // 0 = 写完一段就停（默认）。2–4 = 这一段落完之后，接着自己再往下写几段。
+  // ⚠️ 每一段都是一次完整请求、都是 6K 起的 max_tokens —— 默认必须是 0。
+  epicChain: 0,
   typingDelay: 1.0, showTyping: true, hesitation: true,
   longMemory: false, theme: 'dark', fontSize: 15, showUsage: true,
   // 朗读（v1.21.56）：她说完自动读出来。默认关 —— 不是所有人任何时候都想被念出声。
@@ -119,6 +132,18 @@ const DEFAULTS = {
   //    空库注入的是空字符串，所以开着对没建过条目的人零成本；
   //    真手动关过它的人（kv 里存了 false）不受这次改动影响。
   worldbookOn: true,
+  // —— 称谓层（v0.5.2，小说模式的前置）——
+  // 目的：正文里「她怎么叫你」这件事以前只能散落在我的设定那段散文里，
+  // 模型于是自由发挥（一会儿叫名字、一会儿叫「用户」、一会儿旁白写「他」）。
+  // 下面四项是【结构化】的那一份，只影响措辞，不影响任何行为。
+  // ⚠️ 默认值刻意全是「等于现状」：userName 空 = 就叫「你」、
+  //    userPronoun 'you' = 旁白也用「你」（老版本的行为），所以老用户不受影响。
+  userName: '',
+  // 'you' | 'he' | 'she' | 'ta'（TA）| 'it'（它）| 'name'（只用名字，不用代词）
+  userPronoun: 'you',
+  // 'lead'（主角）| 'side'（在场配角）| 'off'（不在场）
+  userIdentity: 'lead',
+  userAddressDefault: '',
   // 「我的居住环境」：全局一份。他住的地方长什么样。
   // 加它的原因：模型没有环境设定时会自由发挥——凭空编窗外、编房间、编天气，
   // 跟用户实际的情况打架（长期记忆也拦不住，记忆记的是"事件"不是"环境"）。
@@ -203,7 +228,7 @@ const DEFAULTS = {
 // 可被角色单独设置的参数（其余如 API Key / 主题仍是全局的）
 const CHAR_KEYS = [
   'temperature', 'maxTokens', 'topP', 'reasoningEffort', 'contextRounds',
-  'kaomojiFreq', 'emojiFreq', 'verbosity',
+  'kaomojiFreq', 'emojiFreq', 'verbosity', 'epicChain',
   'splitMessages', 'typingDelay', 'hesitation', 'showTyping', 'longMemory',
   // 非对话描写档位（控制括号里写多详细）—— 上限
   'descLevel',
@@ -913,6 +938,30 @@ function refreshEditMineBrief() {
   if (mb) mb.textContent = p ? (p.split('\n').filter(x => x.trim()).length + ' 行') : '未填';
   const hb = $('e-home-brief');
   if (hb) hb.textContent = h ? '已填' : '未填';
+  refreshEditAddrBrief();
+}
+
+/**
+ * 「她怎么看你」那四行的角标（v0.5.2）。
+ *
+ * 为什么单独一个函数：saveCharEdit 之后不会走 refreshEditMineBrief 的其它分支，
+ * 而且这四行是"填了几项"这个语义 —— 全空时角标写「未填」，
+ * 因为空在这里的含义是【她不知道】，不是【没有】。
+ */
+/** 「称呼」折叠块的角标（v0.5.2）：一眼看出她现在怎么叫你 */
+function refreshNameHint() {
+  const b = $('name-hint');
+  if (!b) return;
+  const ad = String((S && S.userAddressDefault) || '').trim();
+  const nm = String((S && S.userName) || '').trim();
+  b.textContent = ad || nm || '就叫「你」';
+}
+
+function refreshEditAddrBrief() {
+  const ids = ['e-useraddr', 'e-userperc', 'e-userknow', 'e-useratt'];
+  const n = ids.filter(id => $(id) && $(id).value.trim()).length;
+  const b = $('e-addr-brief');
+  if (b) b.textContent = n ? (n + ' / 4') : '未填';
 }
 
 // ============ 长文本编辑弹窗（v1.21.58）============
@@ -1426,6 +1475,19 @@ async function selectChar(id) {
   if (!curChar) { await ensureChar(); return; }
   await kv.set('lastCharId', id);   // 记下来，下次打开还回到她这儿
   await loadClock(id);             // 每个角色的剧情时间各走各的
+  // 0.5.2：旧记忆没有 day 字段，进角色时尽量用消息里的 story.day 反推一次。
+  // 放在 loadClock 之后 —— 它要读这个角色的剧情时间；放在 renderMessages 之前，
+  // 这样第一轮生成就能用上修好的记忆。
+  await repairLegacyMemories(id);
+  // 0.5.4：进来的第一件事是把老消息串成链（消息带 parentId 的树）。
+  // 只补缺的那些、补完记一个标记，之后进这个角色是一次 kv 读就返回。
+  // 必须在 renderMessages 之前 —— 渲染要沿 parentId 走活动那一条线。
+  try { await seedParents(id); } catch { /* 串链失败就退回全量顺序，不影响聊天 */ }
+  // 还没有活动叶子的话（老数据 / 新角色），就把叶子钉在最后一条上 ——
+  // 没有它，activePath 每次都退化成「取 ts 最大的那条」，行为一样但每次都要全表比一遍。
+  try {
+    if (!(await kv.get(leafKey(id), ''))) await setLeaf(id, pickLeaf(await msgs.list(id), ''));
+  } catch { /* 钉不上就靠退化路径，聊天不受影响 */ }
   await refreshArcBar();           // v0.5.0：剧情卡也是每个角色一张
   $('chat-name').textContent = curChar.name || '未命名';
   const av = $('chat-avatar');
@@ -1532,6 +1594,11 @@ function msgHtml(m, depth = 0) {
   // （用户明确要的：看不到时间比看到"真实时间"更不误导）
   const st = fmtStory(m.story);
   const time = st ? `<span class="story-time">${st}</span>` : '';
+  // 复读角标（v0.5.5）：这一条跟前面某条的重合率超过阈值时才有。
+  // 只说事实（跟第几条像、重合多少），不评价 —— 有时候她就是在重复一句口头禅，那没错。
+  const repChip = (m.rep && Number(m.rep) >= REPEAT_WARN)
+    ? '<span class="rep-chip" title="' + esc('跟前面某一条的重合率 ' + Math.round(Number(m.rep) * 100) + '%，点这条消息可以重抽') + '">⚠ ' + tt('复读') + '</span>'
+    : '';
   // 旁白（v0.4.1 小说式一幕）：没有说话人，样式上也和"谁说的"区分开 ——
   // 不然一段环境描写会看起来像某个人在说话。
   const narr = m.narration === true && !isMe;
@@ -1548,10 +1615,46 @@ function msgHtml(m, depth = 0) {
   const moreBtn = tags.length
     ? '<button class="more-btn" data-more="1" title="' + esc(tt('附加内容')) + '" aria-label="' + esc(tt('附加内容')) + '">' + tt('附') + '</button>'
     : '';
-  return `<div class="msg ${isMe ? 'me' : 'ai'}${narr ? ' narr' : ''}" data-id="${esc(m.id)}">${av}<div class="bub">${inner}<div class="t${moreBtn ? ' has-more' : ''}">${moreBtn}${tagChips}${time}${tok}</div></div></div>`;
+  return `<div class="msg ${isMe ? 'me' : 'ai'}${narr ? ' narr' : ''}" data-id="${esc(m.id)}">${av}<div class="bub">${inner}<div class="t${moreBtn ? ' has-more' : ''}">${moreBtn}${tagChips}${repChip}${time}${tok}</div></div></div>`;
 }
 
 let _archOpen = false;   // 归档区的展开状态（重绘后要保住）
+// 阅读模式（v0.5.1.5）：把气泡摊成小说段落。不落库 —— 它是"现在怎么看"，
+// 不是"这段对话是什么"，关掉 App 就该回到普通视图。
+let _reading = false;
+
+// ==== 自动串联的刹车（v0.5.1.7 修，外部评审 §二-3）====
+//
+// 群聊「自动续一幕」和长篇「自动串联」都是"这一轮生成完，再排一次请求"，
+// 中间隔 1.2 / 2.5 秒。以前那个 setTimeout 的 id 从来没存下来过 —— 排上就取消不了。
+// 于是它在 2.5 秒后照常开火：你在这 2.5 秒里进阅读模式、拉开抽屉、想先看一眼再决定，
+// 全都不算数，下一段照发、token 照扣。7000 字的一场戏要分 5 段写，
+// 不可能每一段都靠"赶紧在输入框里打个字"来刹车 —— 而那是当时唯一的刹车。
+//
+// ⚠️ 这里不用 AbortController：那一刻根本没有在途请求，要取消的是【还没发出去】的那一次。
+//    在途请求由 btn-stop 的 abortCtl 管，两条路各管各的，别混成一处。
+let _chainTimer = 0;
+let _chainStopped = false;   // 这条串联链被显式叫停：下一次他主动开口才解除
+
+/**
+ * 掐掉已经排在队里的下一段。
+ * @param {string} [why] 真拦下了一段才用这句话提示；队里没东西就什么都不说
+ * @returns {boolean} 是否真的拦下了一段
+ */
+function cancelChain(why) {
+  _chainStopped = true;
+  if (!_chainTimer) return false;
+  clearTimeout(_chainTimer);
+  _chainTimer = 0;
+  if (why) toast(why, 3200);
+  return true;
+}
+
+/** 把下一段排上，并且记住它的 id（以前就是漏了这一步） */
+function scheduleChain(ms, run) {
+  if (_chainTimer) clearTimeout(_chainTimer);
+  _chainTimer = setTimeout(() => { _chainTimer = 0; run(); }, ms);
+}
 
 /** 给刚追加的那条消息打上出场动画标记（全量重绘时不打） */
 function markFresh(el) {
@@ -1568,6 +1671,40 @@ function markFresh(el) {
 // 为什么不直接在 renderMessages() 里判 busy：它有 22 个调用点，其中
 // 「发送失败回滚删消息」(3516)、切角色(1265/1278)、归档后刷新(5923) 等
 // 【必须】重绘，一刀切会把它们一起拦掉。所以只包住纯视觉的那几个。
+/**
+ * 阅读模式开关（v0.5.1.5）。
+ *
+ * 它只改【怎么看】，不改任何数据：不落库、不动消息、不影响提示词。
+ * 所以这里的实现刻意只有两步 —— 给消息区换个 class、把顶部三条操作条收起来。
+ * 分章标题在 renderMessages 里按 story.day 插，重绘一次就到位。
+ *
+ * @param {boolean} on
+ */
+async function setReading(on) {
+  _reading = !!on;
+  const box = $('messages');
+  if (box) box.classList.toggle('reading', _reading);
+  const bar = $('read-bar');
+  if (bar) bar.classList.toggle('hidden', !_reading);
+  // 时间 / 场景 / 剧情三条是"操作"，阅读的时候它们既碍眼又没用
+  const row = document.querySelector('#view-chat .bar-row');
+  if (row) row.classList.toggle('hidden', _reading);
+  // ⚠️ 外壳也要收（v0.5.1.6 修，外部评审 §四）。
+  //
+  // 上一版只收了下发那三条操作条，顶栏（返回、角色名、⚙）、API 横幅、输入栏、
+  // 群聊名单全留着 —— 屏幕最下面就摆着一个输入框，等于每读一段都在提醒
+  // "你还在跟人聊天"。阅读模式的意义是退到外面看她已经说过的话，那就该只剩正文。
+  //
+  // 走一个 class 而不是逐个 toggle('hidden')，是因为隐藏谁属于【排版】，
+  // 交给 CSS 一处说了算；JS 这层只负责"现在是阅读模式"这一个布尔。
+  const shell = $('view-chat');
+  if (shell) shell.classList.toggle('reading-shell', _reading);
+  // 进阅读模式 = 他要把已经写出来的读完再决定下一步（v0.5.1.7）。
+  // 这时候还在自动往下写，等于他一边读、纸一边往后翻页。
+  if (_reading) cancelChain('进阅读模式了，自动续写停在上一段');
+  await renderMessages();
+}
+
 function renderMessagesIfIdle() {
   if (busy) return;   // 生成中：等这轮结束自然会重绘
   return renderMessages();
@@ -1576,7 +1713,16 @@ function renderMessagesIfIdle() {
 async function renderMessages() {
   if (!curCharId) { await showEmptyChat(); return; }
   const box = $('messages');
-  const list = await msgs.list(curCharId);
+  // ⚠️ 每次重绘前先补一次 parentId（v0.5.1.3 修）。
+  //
+  // 起因（e2e-menu 崩在「渲染消息数=1」）：老消息没有 parentId，活动路径只能回溯到
+  // 叶子自己 —— 4 条库里只画 1 条。原来只在 selectChar 里串链，可是 reload 恢复、
+  // 导入、测试直接写库这些路径都不经过 selectChar，屏幕上就只剩最后一条。
+  // seedParents 自己有 brSeeded 标记，跑第二次是空转，放这里没有代价。
+  try { await seedParents(curCharId); } catch {}
+  // 分支（v0.5.1.2）：只画【活动那一条线】。别的分支还在库里（备份照存），
+  // 但屏幕上同一时刻只能有一条路，否则一段对话会同时出现两个版本的后续。
+  const list = await curMsgs(curCharId);
   box.innerHTML = '';
 
   // 开场白只自动补一次。以前只要列表为空就补，导致删掉开场白后下一次
@@ -1658,7 +1804,24 @@ async function renderMessages() {
   }
 
   // 深度从最新那条倒着数：最后一条 depth 0，倒数第二条 1……（酒馆的 minDepth/maxDepth 就按这个）
-  box.innerHTML = archHtml + list.map((m, i) => msgHtml(m, list.length - 1 - i)).join('');
+  //
+  // 阅读模式的「章」（v0.5.1.5）：按【剧情第几天】切。
+  // 为什么不另造一套 chapterId：story.day 每条消息本来就带着，换天又是对话最自然的分界；
+  // 再存一层章表只会多一份要跟消息同步、能不同步的状态。
+  // 没有 story 的老消息不切章 —— 硬塞一个「第 1 天」会让历史读起来像伪造的。
+  let body = '';
+  let lastDay = null;
+  const chapEn = getActiveLang() === 'en';
+  for (let i = 0; i < list.length; i++) {
+    const m = list[i];
+    const d = (m && m.story && typeof m.story.day === 'number' && m.story.day > 0) ? m.story.day : null;
+    if (_reading && d !== null && d !== lastDay) {
+      body += '<div class="chap"><span>' + (chapEn ? 'Day ' + d : '第 ' + d + ' 天') + '</span></div>';
+    }
+    if (d !== null) lastDay = d;
+    body += msgHtml(m, list.length - 1 - i);
+  }
+  box.innerHTML = archHtml + body;
   const tg = $('arch-toggle');
   if (tg) tg.onclick = () => {
     _archOpen = !_archOpen;
@@ -1920,7 +2083,9 @@ async function showMsgMenu(el) {
   closeMsgMenu(false);                             // 先立刻清掉上一个，绝不让菜单堆叠
   const seq = _menuSeq;                            // 记住本次请求的序号
 
-  const all = await msgs.list(curCharId);
+  // 分支（v0.5.1.2）：这四处「对最后一条/某一条动手」的操作只看活动那一条线，
+  // 否则会在别的分支上找到同位置的消息，删/改到看不见的地方去。
+  const all = await curMsgs(curCharId);
   if (seq !== _menuSeq) return;                    // 等待期间又有新请求 → 本次作废
   let m = all.find(x => x.id === id);
   let isArchived = false;
@@ -1938,6 +2103,8 @@ async function showMsgMenu(el) {
   // 当时的场景（v0.4.3）：这条消息发出时临时场景是什么。纯读操作，归档的消息也给 ——
   // 用户 m00744 第 6 点要的就是"事后能查这一段设的是什么"。
   if (m.scene) acts.push({ k: 'scene', t: '当时的场景' });
+  // 这一轮注入了什么（v0.5.1.1）：只有新版本记下的消息才有 inj
+  if (m.inj && !isMe) acts.push({ k: 'inj', t: '这一轮用了什么' });
   if (isArchived) {
     // 归档的消息【不给】编辑重发 / 从这里重聊：那两条的语义是「删掉这条之后的一切」，
     // 而归档不在当前时间线上，算下去会删错一大片。只给安全的两项。
@@ -1998,6 +2165,19 @@ async function showMsgMenu(el) {
     if (!isMe && isLast && !locked) acts.push({ k: 'variant', t: '换一个版本' });
     // 回溯：丢掉这条之后的所有对话，从这里重新聊。记忆不删——她是记得的。
     if (!isMe && !isLast && !locked) acts.push({ k: 'rewind', t: '从这里重聊' });
+    // 分支（v0.5.1.2）：这条还有别的走向（同一父消息下的兄弟）就给一个切换入口。
+    // 没有它，非破坏的「从这里重聊」造出的旧版本就再也回不去了 ——
+    // 一条永远够不着的分支等于还是删掉了，只是删得更隐蔽。
+    if (!locked) {
+      try {
+        // ⚠️ 这里必须读【全量】（v0.5.1.7 修）：旧分支的兄弟经常落在归档里，
+        // 只读未归档的话 siblings 一个都找不到，「切到另一个走向」直接哑掉 ——
+        // 而归档恰恰是长对话里最先发生的事，等于分支功能在真实使用中最先失效。
+        // 切过去之后 switchBranch 会把那条线的归档放回来，看得见。
+        const sibs = siblings(await msgs.list(curCharId, 0, true), m);
+        if (sibs.length) acts.push({ k: 'branch', t: '切到另一个走向（' + (sibs.length + 1) + ' 个）' });
+      } catch { /* 读不出来就少一项，不影响其它操作 */ }
+    }
   }
 
   const menu = document.createElement('div');
@@ -2019,6 +2199,8 @@ async function showMsgMenu(el) {
     closeMsgMenu();   // ⚠️ 先关；点到按钮之间的空隙（k 为空）也必须关掉
     if (!k) return;
     if (k === 'scene') { toast('这一轮的场景：' + m.scene); return; }
+    if (k === 'inj') { await showInj(m.inj); return; }
+    if (k === 'branch') { await switchBranch(m); return; }
     // 她还在生成时不要做这三件事：它们都是「先删消息再调 send()」，
     // 而 send() 在 busy 时会直接返回 —— 结果消息删了、也没重新生成。
     // ⚠️ del 也要挡（v1.21.24 修，审计第 6 条）。
@@ -2121,6 +2303,23 @@ async function showMsgMenu(el) {
         await saveClock();
         renderClock();
       }
+      // ⚠️ 删中间那条要【把后来的接回去】（v0.5.1.5）。
+      //
+      // 消息现在是棵树，屏幕上那条线是从叶子往回走 parentId 走出来的。
+      // 直接删掉中间一条，它的孩子就指向了一个不存在的父亲 —— 回溯到那儿就断了，
+      // 于是「删 1 条」在屏幕上表现为「它后面的一整片也没了」（消息其实还在库里）。
+      // 老线性实现没这个问题（数组直接 splice），这是非破坏分支带来的新副作用。
+      // 两件事要一起做：孩子认它爹当爹；叶子若正指着这条，退回它的父。
+      try {
+        const up = (typeof m.parentId === 'string') ? m.parentId : '';
+        const allFull = await msgs.list(curCharId, 0, true);
+        const kids = allFull.filter(x => x && x.parentId === id);
+        if (kids.length) {
+          for (const kid of kids) kid.parentId = up;
+          await msgs.addMany(kids);
+        }
+        if ((await kv.get(leafKey(curCharId), '')) === id) await setLeaf(curCharId, up);
+      } catch { /* 分支修补失败不该挡住删除本身 */ }
       await msgs.del(id);
       // ⚠️ 删空了就把「已经打过招呼」的标记复位（v1.21.52）。
       // 开场白只在 !greeted 时自动补一次，而全项目【没有任何一处】把它复位 ——
@@ -2188,52 +2387,32 @@ async function showMsgMenu(el) {
         toast('这条后面没有能重聊的内容了 —— 再往前就是开场白。想重来请用「清空聊天记录」', 4600);
         return;
       }
-      if (after.length > 5) {
-        const ok = await confirmBox('从这里重聊',
-          '这条后面还有 <b>' + after.length + ' 条</b>对话，会一起删掉。<br>'
-          + '这段对话里产生的<b>记忆也会一起清掉</b>，她会当成没发生过、重新想。<br>'
-          + '之前就形成的长期记忆不受影响。<br><br>确定吗？', '删掉并重聊');
-        if (!ok) return;
-      }
-      for (const x of after) await msgs.del(x.id);
-      await msgs.del(id);
-      // ⚠️ 滚动摘要一并作废（v1.21.42）：rewind 删的是"这条 + 之后"，
-      // 里面若有曾归档又取消的，摘要里还驮着它。
-      // 退回去的那段，产生的记忆也要一起清掉（2026-09-26 最终版）。
-      // 用户场景：「十句话里我在第五句点了在这重聊，后面几个全删掉，
-      //            不影响她新的思考输出」—— 留着就会污染重新生成的思考。
-      // 清理范围由 dedupeIfNeeded 里的配对判据控制，只删"只能从被删内容得到"的那些。
-      await purgeRemoved(after.concat([m]));
-      // ⚠️ 必须【等它清完】再重聊（v1.21.35 修，P0-3）。
+      // v0.5.1.2：从这里重聊改成【非破坏】—— 不再删掉后面那些对话，
+      // 只把「活动的那一条线」往回挪一步，然后把那条用户消息放回输入框。
       //
-      // 起因：原来是 `tidyNow()` 不 await，紧接着就 regenerate() ——
-      // 她带着"被删掉那段产生的记忆"重新生成 = 用户说的「重思考后反而更偏」。
-      // 本文件 L1167 的注释早就承认了这个后果，但没修。
-      //
-      // 另配套一个强制标记：dedupeIfNeeded 有门槛，队列非空虽能放行，
-      // 但模型抽风时它会 return 0，队列原样留着 —— 那样即使 await 了也白等。
-      await kv.set('memNeedTidy:' + curCharId, true);
-      // 同上（v1.21.54）：先让界面反映这次操作，再等那次可能 90 秒的整理。
-      await renderMessages();
-      await tidyNow();
-      // ⚠️ 剧情时间也要退回这条消息当时的快照（v1.21.24 修，审计第 10 条）。
-      //
-      // 起因：edit（编辑重发）会退回时间，rewind 完全不碰 clockState ——
-      // 两个同族操作行为不一致。用户"十句话里在第五句点重聊"，
-      // 她重新生成时拿到的仍是"现在"的时间，而不是第五句那个时间点。
-      // 实测证据：edit 后 kv clock 第 9 天→第 3 天；rewind 后仍是第 9 天。
-      //
-      // 现实模式下【两者都不该退】（时间跟手机走，退回去没有意义）——
-      // 与 edit 分支的判断保持一致。
+      // 旧的删法有个说不出口的后果：满意的那一版一旦被「从这里重聊」碰一下
+      // 就没了 —— 而"重来一遍"恰恰是最常点的操作。现在旧的那一版整段留在库里，
+      // 只是不在当前这条线上；想切回去长按任意一条消息即可。
+      const backFrom = (typeof m.parentId === 'string' && m.parentId) ? m.parentId : '';
+      const um0 = remain.length ? remain[remain.length - 1] : null;
+      const backTo = backFrom || (um0 ? um0.id : '');
+      if (!backTo) { toast('这条前面没有能接着聊的内容了', 4200); return; }
+      // 剧情时间退回这条之前（与「编辑重发」一致；现实时间模式不退）
       let timeBack2 = '';
-      if (m.story && typeof m.story.day === 'number' && !isRealClock()) {
-        clockState = { ...clockState, ...m.story };
+      if (um0 && um0.story && typeof um0.story.day === 'number' && !isRealClock()) {
+        clockState = { ...clockState, ...um0.story };
         await saveClock();
-        timeBack2 = '，时间退回 ' + fmtStory(m.story);
+        timeBack2 = '，时间退回 ' + fmtStory(um0.story);
       }
+      await setLeaf(curCharId, backTo);
       await renderMessages();
-      regenerate();
-      toast((after.length ? '后面 ' + after.length + ' 条也退了' : '从这条重新聊') + timeBack2);
+      renderClock();
+      toast('往后重走这一段' + timeBack2
+        + (after.length ? '（原来那 ' + after.length + ' 条还在，长按消息可以切回去）' : ''), 5200);
+      // 接着生成这一版：noUserMsg = 不再写一条一模一样的用户消息，
+      // 新回复直接挂在那条消息下面，与刚才那一版并排（兄弟）。
+      // 想改自己那句话再发，用「编辑重发」。
+      send({ noUserMsg: true });
     } else if (k === 'variant') {
       // 换一个版本（v0.4.0）：不删旧的，再要一版并排存着
       const mm = all.find(x => x.id === id);
@@ -2354,10 +2533,21 @@ async function retrySend(msgId) {
   // 图片还在处理时会直接 return —— 那样消息删掉了却发不出去，白丢一条。
   if (busy) { toast('还在生成中，先按停止再重试'); return; }
   if (_pickingImages) { toast('图片还在处理，稍等一下再重试'); return; }
-  const all = await msgs.list(curCharId);
+  // 分支（v0.5.1.2）：这四处「对最后一条/某一条动手」的操作只看活动那一条线，
+  // 否则会在别的分支上找到同位置的消息，删/改到看不见的地方去。
+  const all = await curMsgs(curCharId);
   let m = msgId ? all.find(x => x.id === msgId && x.role === 'user') : null;
-  // 指定了 id 却没找到（比如那条已经被归档了）：直接说清楚，不要退而求其次。
-  // 以前会兜底去拿"最后一条用户消息"——那条完全不相干，还会被删掉重发。
+  // 活动路径上没有它（v0.5.1.5）：老数据里确实可能有这种旁支 ——
+  // 失败那一轮以前不推叶子，用户消息就成了屏幕上看得见、链上走不到的孤儿。
+  // 分两种情况：真归档了（库里有、链上没有）就说清楚；只是旁支就把它那条线接回来再重发。
+  // 绝不退回"最后一条用户消息"（那会删掉一条完全不相干的消息重发）。
+  if (msgId && !m) {
+    const full = await msgs.list(curCharId, 0, true);
+    m = full.find(x => x.id === msgId && x.role === 'user') || null;
+    if (m) {
+      try { await setLeaf(curCharId, typeof m.parentId === 'string' ? m.parentId : ''); } catch { /* 切不过去就按当前活动线重发 */ }
+    }
+  }
   if (msgId && !m) { toast('那条已经归档了，找不到可重试的内容'); return; }
   // ⚠️ v1.21.54：删掉了「没指定 id 就退回最后一条用户消息」那条静默回退。
   //    它看起来像兜底，实际是【删掉一条完全不相干的消息再重发】——
@@ -2415,7 +2605,9 @@ async function setVariant(m, idx) {
 async function regenAsVariant(m) {
   if (busy) { toast('还在生成中，先按停止再换版本'); return; }
   if (_pickingImages) { toast('图片还在处理，稍等一下'); return; }
-  const all = await msgs.list(curCharId);
+  // 分支（v0.5.1.2）：这四处「对最后一条/某一条动手」的操作只看活动那一条线，
+  // 否则会在别的分支上找到同位置的消息，删/改到看不见的地方去。
+  const all = await curMsgs(curCharId);
   const tail = [];
   for (let i = all.length - 1; i >= 0; i--) {
     if (all[i].role === 'user') break;
@@ -2451,12 +2643,87 @@ async function regenAsVariant(m) {
   toast('换好了 —— 这条现在有 ' + merged.length + ' 个版本，在气泡下面左右切', 5600);
 }
 
+/**
+ * 切到另一个走向（v0.5.1.2）。
+ *
+ * 非破坏的「从这里重聊」会在同一条用户消息下留下好几个兄弟回复 ——
+ * 它们在库里并排躺着，但屏幕上同一时刻只能走一条。这一项就是切换器：
+ * 每点一次走到下一个兄弟的末端。不是弹列表，是因为菜单本来就窄，
+ * 而真正需要的是「另一版长什么样」——切过去看一眼比读三个标题快。
+ */
+/**
+ * 切支时「被放回来的归档」记账（v0.5.1.7）。
+ *
+ * unarch:<charId> = 一串消息 id，代表"这些是因为切支才放回来的，收起来时要还原"。
+ * 为什么不直接看 archived 标记：放回去之后它在库里就和"本来就没归档的"完全一样了，
+ * 没有任何字段能区分 —— 不记账就只能二选一：要么永远不收（折叠条废掉），
+ * 要么把用户手动展开的也一起收掉（他刚展开的历史自己缩回去）。
+ *
+ * 手动点「更早」展开的那批【不】进这个集合：那是他的显式意图，切走再切回来该保持展开。
+ */
+async function unarchSet(id) {
+  try {
+    const v = await kv.get('unarch:' + id, null);
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch { return []; }
+}
+async function putUnarchSet(id, arr) {
+  try { await kv.set('unarch:' + id, Array.from(new Set(arr))); }
+  catch { /* 记账失败不该挡住切支本身 */ }
+}
+
+async function switchBranch(m) {
+  // ⚠️ 必须查【全量】（v0.5.1.6 修，外部评审 §二）。
+  // 起因：msgs.list 默认不含归档，而旧版本归档收的是"所有分支按 ts 最老的一批"——
+  // 旧分支的兄弟落在归档里时，这里 siblings 一个都找不到，「切到另一个走向」直接哑掉；
+  // 就算找到一条活着的，deepestIn 也只能在未归档消息里走，切过去停在半截。
+  const all = await msgs.list(curCharId, 0, true);
+  const sibs = siblings(all, m);
+  if (!sibs.length) { toast('这条没有别的走向'); return; }
+  // 候选 = 兄弟 + 自己，按 ts 排 —— 兄弟里也可能有比自己更早的
+  const cand = sibs.concat([m]).sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+  const idx = cand.findIndex(x => x.id === m.id);
+  const nextIdx = (idx + 1) % cand.length;
+  const nxt = cand[nextIdx];
+  // 切到那条的【末端】：分支应该带着它后面整段一起回来，而不是只切这一条
+  const leaf = deepestIn(all, nxt.id) || nxt.id;
+  // ── 先算【离开这条线】时要收回去的（v0.5.1.7 修，外部评审 §二-1）──
+  //
+  // 归档是【消息级】标记，而"这条线折叠到哪儿"是这条线自己的状态。
+  // 切支时把它放回来，意思只是"我现在要看它"，不等于它不再是归档的一部分 ——
+  // 上一版只放不收，于是来回切两次，A 支和 B 支全部变成未归档：
+  //   · 阅读页的「更早」那个折叠条从历史里消失，长对话整段铺开；
+  //   · 归档统计、自动归档的节奏跟着失真。
+  // 现在放回来的 id 记账，离开这条线时一条条收回去（放回去 ≠ 取消归档）。
+  const oldLeaf = await kv.get(leafKey(curCharId), '');
+  const kept = await unarchSet(curCharId);
+  if (kept.length) {
+    const oldIds = new Set((oldLeaf ? pathTo(all, oldLeaf) : []).map(x => x && x.id));
+    const back = kept.filter(id => oldIds.has(id));
+    if (back.length) {
+      try { await msgs.archive(back); } catch { /* 收不回去最多是没收起来，不该挡住切支 */ }
+    }
+    await putUnarchSet(curCharId, kept.filter(id => !back.includes(id)));
+  }
+  // 切过去 = 这条重新成为【当前对话】。而 renderMessages / 上下文都只读未归档的，
+  // 所以这条线上要是还挂着归档标记（0.5.1.6 之前的归档会碰旁支），先把它放回来，
+  // 否则屏幕空白、模型也说"没有历史"—— 看起来就像那条支丢了。
+  const backIds = pathTo(all, leaf).filter(x => x && x.archived).map(x => x.id);
+  for (const id of backIds) { try { await msgs.unarchiveOne(id); } catch { /* 单条失败不影响切支 */ } }
+  if (backIds.length) await putUnarchSet(curCharId, (await unarchSet(curCharId)).concat(backIds));
+  await setLeaf(curCharId, leaf);
+  await renderMessages();
+  toast('切到第 ' + (nextIdx + 1) + ' 个走向（共 ' + cand.length + ' 个）', 3200);
+}
+
 async function regenerate() {
   // 和 retrySend 同理：下面会先删掉那条用户消息再调 send()，
   // 而 send() 在 busy / 图片处理中会直接 return —— 消息就白删了。
   if (busy) { toast('还在生成中，先按停止再重新生成'); return; }
   if (_pickingImages) { toast('图片还在处理，稍等一下再重新生成'); return; }
-  const all = await msgs.list(curCharId);
+  // 分支（v0.5.1.2）：这四处「对最后一条/某一条动手」的操作只看活动那一条线，
+  // 否则会在别的分支上找到同位置的消息，删/改到看不见的地方去。
+  const all = await curMsgs(curCharId);
   let lastUser = null;
   let lastIdx = -1;
   for (let i = all.length - 1; i >= 0; i--) {
@@ -2758,7 +3025,18 @@ async function runArchiveNow(onProgress, insideLock = false, maxPerRun = 0, char
   // 这时绝不能再走 withMemLock —— 那把锁不可重入，会直接返回「忙碌中」，
   // 自动归档就永远跑不起来（实测踩到：_memBusy=true 时调进来必定返回 ok:false）。
   const body = async () => {
-    const before = await msgs.list(myCharId);
+    // ⚠️ 归档只收【活动分支上】未归档的老消息（v0.5.1.6 修，外部评审 §一 / §二）。
+    //
+    // 以前读 msgs.list(myCharId)：所有分支的并集，按 ts 挑最老的一批收走。
+    // 两个后果都是真的：
+    //   ① 被切走的旧分支照样被 summarizeChunk 提炼成长期记忆 ——
+    //      和 summarizeIfNeeded 是同一个病灶，而且这条路走的是"整批无条件进 memSummed"，
+    //      一旦进去永远不会再被总结，也就永远纠正不回来；
+    //   ② 旧分支的尾巴被归档后，switchBranch 又不查归档 → 那条支就"进不去了"，
+    //      承诺的"非破坏分支"实际只是"归档窗口内非破坏"。
+    // 现在只动活动线上未归档的那批：旁支一条不碰，随时能切回去。
+    const pathAll = await curMsgsAll(myCharId);
+    const before = pathAll.filter(m => !m.archived);
     if (before.length <= keep) {
       return { ok: false, msg: `只有 ${before.length} 条，留 ${keep} 条的话没什么可归档的` };
     }
@@ -3450,6 +3728,13 @@ const DRAWER_ITEMS = [
   { k: 'settings',  ico: '⚙', t: 'drawer.global',    s: 'drawer.global.s' },
   { k: 'mine',      ico: '👤', t: 'drawer.mine',      s: 'drawer.mine.s' },
   { sep: true },
+  { k: 'read',      ico: '📜', t: 'drawer.read',      s: 'drawer.read.s' },
+  { sep: true },
+  // 小说层（v0.5.2）：故意不是「小说」这个标签页 —— 只有「开一场戏」和「书架」两个动作，
+  // 因为一场戏是写出来的，不是逛出来的。
+  { k: 'scene',     ico: '✒', t: 'drawer.scene',     s: 'drawer.scene.s' },
+  { k: 'shelf',     ico: '📚', t: 'drawer.shelf',     s: 'drawer.shelf.s' },
+  { sep: true },
   { k: 'about',     ico: 'ⓘ', t: 'drawer.about',     s: 'drawer.about.s' },
 ];
 
@@ -3458,9 +3743,12 @@ function renderDrawerMenu() {
   if (!box) return;
   box.innerHTML = DRAWER_ITEMS.map((it, i) => {
     if (it.sep) return '<div class="drawer-sep"></div>';
+    // 阅读模式那一项要显示【当前状态】（进 / 出），否则点完菜单关掉，
+    // 用户看不出自己刚才切进了什么模式，也不知道再点一次能回去。
+    const label = it.k === 'read' ? t(_reading ? 'drawer.read.off' : 'drawer.read') : t(it.t);
     return '<button class="drawer-item" data-wb-drawer="' + it.k + '">'
       + '<span class="di-ico">' + it.ico + '</span>'
-      + '<span>' + t(it.t) + '</span>'
+      + '<span>' + label + '</span>'
       + (it.s ? '<span class="di-sub">' + t(it.s) + '</span>' : '')
       + '</button>';
   }).join('');
@@ -3474,11 +3762,21 @@ function renderDrawerMenu() {
       // 只是显示哪个 view 不同。
       else if (k === 'mine') { bindSettings(); showView('mine'); }
       else if (k === 'about') { renderAbout(); showView('about'); }
+      // 阅读模式（v0.5.1.5）：同一项进出，菜单上直接写现在是哪个状态
+      else if (k === 'read') { showView('chat'); await setReading(!_reading); }
+      // 小说层（v0.5.2）
+      else if (k === 'scene') { showView('chat'); await openSceneModal(); }
+      else if (k === 'shelf') { await openShelf(); }
     };
   });
 }
 
-function openDrawer() { renderDrawerMenu(); showView('drawer'); }
+function openDrawer() {
+  // 拉抽屉 = 他要去看别的了（v0.5.1.7）：自动串联先停，
+  // 别在他挑设置、翻角色的时候还在后面一段一段地扣 token。
+  cancelChain('自动续写已停');
+  renderDrawerMenu(); showView('drawer');
+}
 
 // ---------- 世界书总览 ----------
 async function renderWorldbook() {
@@ -5088,10 +5386,45 @@ async function putSoloClaimed(nid, rec) {
 // ================= 发送 =================
 async function buildHistory(charId = curCharId, rounds = S.contextRounds) {
   const all = await msgs.list(charId);
+  // 分支（v0.5.1.2）：喂给模型的是【活动那一条线】，不是全表 ——
+  // 全表会把被切走的旧分支也塞进去，她读到的历史里就同时有两套后续。
+  const path = await activePath(charId, all);
   // 以前这里读的是全局 S.contextRounds，角色编辑页那个「上下文轮数」滑条
   // 存进了角色却从来没被用过，拖了没反应。
   const n = (rounds || 20) * 2;
-  return all.slice(-n);
+  return path.slice(-n);
+}
+
+/**
+ * 当前这条分支上的消息（v0.5.1.2）。
+ *
+ * 「当前对话」这个语义在 app.js 里有几十处 —— 但只有一部分该按分支算：
+ * 渲染、上下文、菜单里那几条「对最后一条说的」操作要看分支；
+ * 归档统计、备份导出、记忆整理要看全量（一条被切走的分支不该从备份里消失）。
+ * 所以这里不做成 msgs.list 的默认行为，而是单独一个名字，让每个调用点显式选。
+ */
+async function curMsgs(charId, limit = 0) {
+  const all = await msgs.list(charId);
+  return await activePath(charId, all, limit);
+}
+
+/**
+ * 活动分支上的【全量】消息（含已归档）。v0.5.1.6
+ *
+ * 和 curMsgs 只差一处：带归档。给"要读完整条线"的管线用 ——
+ * 归档总结、长期记忆总结、归档自己（判断该收哪几条）。
+ *
+ * 为什么必须按分支：v0.5.1.5 之前这三条管线读的都是 msgs.list(cid,0,true)，
+ * 也就是【所有分支的并集】。后果不是理论上的 ——
+ * 在第 10 天从 A 线重聊出 B 线，A 线里"她答应过跟你走"照样被提炼成长期记忆，
+ * 之后在 B 线她突然提起一件从未发生的事。分支越多，记忆里的"正史"越乱。
+ *
+ * 为什么还要带归档：归档只是"不进上下文、不参与计数"，原文还在库里、
+ * 还在同一条线上。总结漏掉归档段 = 整段历史记忆断层。
+ */
+async function curMsgsAll(charId) {
+  const all = await msgs.list(charId, 0, true);
+  return await activePath(charId, all);
 }
 
 /**
@@ -5316,6 +5649,9 @@ async function exportChatMarkdown() {
  * @param {string} [opts.sameSpeaker]  群聊专用（v0.4.0 复查）：这一轮必须由这个成员说。
  *                   重新生成 / 换一个版本时由调用方传进来 —— 它们会先删掉旧回复，
  *                   所以必须在【删之前】把"刚才是谁说的"取好，不能等 send() 自己去读。
+ * @param {boolean} [opts.noUserMsg]  "从这里重聊"专用（v0.5.4）：不落用户消息，新回复直接挂在
+ *                   当前活动叶子下面，与旧那一版并排成为兄弟。那句话早就进历史了，再写一条
+ *                   一样的等于把同一句问两遍。
  * @param {boolean} [opts.regen]  这一轮是"重新生成 / 换一个版本"（v0.5.0.4）：不是在往前演，
  *                   是把同一轮重演一遍。剧情卡的轮数计数和自动判定标的 done 都要据此跳过/清掉。
  *
@@ -5325,14 +5661,31 @@ async function exportChatMarkdown() {
  */
 async function send(opts) {
   const cont = !!(opts && opts.cont);
+  // 分支重来（v0.5.1.2）：「从这里重聊」之后接着生成，但【不写新的用户消息】。
+  // 用户已经停在那条消息上，再存一遍同一句会在历史里留下两个一模一样的问句，
+  // 更要紧的是新回复会挂在一条新消息下面 —— 它跟旧回复就不是兄弟了，
+  // 菜单里也就没有了「切到另一个走向」，分支等于白做。
+  const noUser = !!(opts && opts.noUserMsg);
+  // 这一轮到底喂了什么（v0.5.1.1）：快照在下面拼提示词之后才填，落库时挂在第一条
+  // assistant 消息上。声明提到函数顶层 —— 它要在 try 里赋值、在 try 里的落库循环里读。
+  let turnInj = null;
   // 群里重新生成 / 换版本时，由调用方把"刚才说话的那个人"传进来（v0.4.0 复查）。
   // ⚠️ 必须在【删消息之前】取好再传 —— regenerate() 先删掉旧回复再调 send()，
   //    那时候再去读"上一条回复是谁"读到的是更早的那条了。
   const sameSpeaker = (opts && opts.sameSpeaker) || '';
   // 自动续一幕（v0.4.1.4）：这一轮是"她们自己往下演"的第几幕（0 = 不是自动的）
   const autoRun = Number((opts && opts.autoRun) || 0);
+  // 他主动开口 = 重新上弦（v0.5.1.7）。autoRun 只有自动串联那一支才传，
+  // 0 就代表"这一轮是人按的"——停止键 / 阅读模式 / 抽屉设的那道闸到这里才解除；
+  // 顺手掐掉已经排上的下一段，否则他那句发出去之后还会再挤一段自动续写进来。
+  if (!autoRun) {
+    _chainStopped = false;
+    if (_chainTimer) { clearTimeout(_chainTimer); _chainTimer = 0; }
+  }
   // 冷场 / 自动续幕要在 finally 里判断，跨 try 边界 —— 一律在函数顶部 let
   let sceneOk = false, sceneSilent = false;
+  // 长篇自动串联（v0.5.5）：段数要在 finally 里读，跨 try 边界，所以也在顶部 let
+  let epicChainN = 0;
   // ⚠️ 没有角色就别往下走（v1.21.60）。
   // 全新安装进来是空的（不再自动建角色），此时点发送会带着 myCharId = null
   // 一路走到请求组装，回复落库时 charId 也是 null —— 变成一条看不见、导不出、
@@ -5346,7 +5699,8 @@ async function send(opts) {
   const input = $('input');
   const text = input.value.trim();
   // 续写允许空输入 —— 这正是它的用途：你不说话，她也往下写。
-  if (!cont && !text && !pendingImages.length) return;
+  // 分支重来（noUser）也允许空输入：那句用户消息早就在历史里了。
+  if (!cont && !noUser && !text && !pendingImages.length) return;
   if (!S.apiKey) { toast('请先到设置里填写 API Key'); return; }
 
   // 这一轮认准发送时的那张卡：中途切了角色，回复也只落到原来那个角色名下，
@@ -5398,6 +5752,9 @@ async function send(opts) {
 //      b) 轮次永远不推 —— 表现是"她说了话，但下一条消息就没了、而且一直是同一个人"
 //    上面那段"跨 try 边界用到的变量一律在函数顶部 let 声明"的教训，这次自己又踩了一遍。
 let um, apiMsgs, P = null, useVision, umSaved = false, clockSnapshot = null, added = [], speaker = null;
+// 分支（v0.5.1.2）：这一轮之前活动到哪条。新消息挂在它后面 ——
+// 提到这里是因为落库循环（assistant 段）和中断分支都要用它。
+let _parent0 = '';
 // ⚠️ placeholderId 也放这里（v0.4.1.4）：catch 里要读它，而它原来在 try 里 const ——
 //    在它初始化【之前】抛错（用户消息落库失败等），catch 自己会抛
 //    「Cannot access 'placeholderId' before initialization」，把真正的原因盖掉。
@@ -5457,7 +5814,13 @@ let namedInText = false;
     //    这两件事必须一起不动 —— 下面的 `pastRaw = history.filter(m => m.id !== um.id)`
     //    在 um 为 undefined 时天然放行全部历史（正是续写要的），
     //    而失败回滚那段看的是 umSaved，false 就不会去删一条不存在的消息。
-    if (!cont) {
+    if (noUser) {
+      // 这一轮没有新消息，父节点就是当前活动叶子本身
+      try {
+        _parent0 = pickLeaf(await msgs.list(myCharId), await kv.get(leafKey(myCharId), '')) || '';
+      } catch { _parent0 = ''; }
+    }
+    if (!cont && !noUser) {
       // 打了「/搜 xxx」时，聊天记录里只留「xxx」和一个小标记 ——
       // 存「/搜 xxx」原文的话，历史里会一直拖着一串命令，读起来很出戏，
       // 而且下一轮拼上下文时会把它当台词再喂给模型。
@@ -5474,9 +5837,14 @@ let namedInText = false;
       const _sc = _cmds.find(c => c.k === 'search');
       _cmd0 = _sc ? { query: _sc.arg || '' } : null;
       const _tags = _cmds.filter(c => c.k !== 'image').map(c => ({ k: c.k, arg: c.arg }));
+      // 接在当前活动叶子的后面。取不到就退化成空串（当根）——
+      // 宁可让它自成一条线，也不要挂到别的分支尾巴上。
+      try {
+        _parent0 = pickLeaf(await msgs.list(myCharId), await kv.get(leafKey(myCharId), '')) || '';
+      } catch { _parent0 = ''; }
       um = { id: uid(), charId: myCharId, role: 'user', content: visibleText, images, imageNotes,
              ...(_tags.length ? { tags: _tags } : {}), ...sceneSnap(myChar),
-             story: storyStamp(), ts: Date.now() };
+             story: storyStamp(), parentId: _parent0, ts: Date.now() };
       // 发出去就清空挂着的功能（v0.4.4）—— 下一轮不该继承上一轮的命令
       pendingCmds = [];
       renderCmdSlots();
@@ -5516,6 +5884,7 @@ let namedInText = false;
         && Math.random() < 0.1) {
       const am = { id: uid(), charId: myCharId, role: 'assistant', content: '（没人接话）',
                    narration: true, ...sceneSnap(myChar), story: storyStamp(), ts: Date.now() };
+      am.parentId = (um && um.id) || _parent0;   // 分支（v0.5.1.2）：冷场这条也在链上
       await msgs.add(am);
       sceneSilent = true;
       if (curCharId === myCharId) {
@@ -5566,6 +5935,14 @@ let namedInText = false;
 
     // 2) 准备请求（P = 本角色实际生效的参数）
     P = effSettings(myChar, S);
+    // 长篇档（v0.5.5）：平时 2048 够发一条消息，写整场戏会被 max_tokens 拦腰截断
+    // （截断后 history 里留下半句，之后每轮都接着半句往下写）。
+    // 只在这一档下抬，不动他存的设置 —— 切回别的档立刻恢复原值。
+    const epicMode = P.verbosity === 'epic';
+    if (epicMode && !(Number(P.maxTokens) >= 6144)) P.maxTokens = 6144;
+    if (epicMode) P.contextRounds = Math.max(Number(P.contextRounds) || 20, 30);
+    // 长篇自动串联：只有长篇档才认这个值；别的档位上它一律按 0 算
+    epicChainN = epicMode ? Math.max(0, Math.min(4, Number(P.epicChain) || 0)) : 0;
     const history = await buildHistory(myCharId, P.contextRounds);
     // ⚠️ 撞触发词要用【没标时间】的原内容：标记里带着「下午」「晚上」这类词，
     // 会把只该被剧情文本命中的世界书条目误触发（比如天气/时段类条目）。
@@ -5586,7 +5963,9 @@ let namedInText = false;
     // 本轮段不用再说一遍；掷签只在档位开着时才有意义。
     const useEmoji = Number(P.emojiFreq) > 0 ? decideEmoji(Number(P.emojiFreq), past) : null;
 
-    const memories = P.longMemory ? await mem.list(myCharId) : [];   // 只取这个角色自己的记忆
+    // ⚠️ 只取 active（v0.5.1.1）：被取代的旧说法不能再进提示词，
+  //    否则同一件事的两个状态会一起喂给模型。
+  const memories = P.longMemory ? activeOnly(await mem.list(myCharId)) : [];   // 只取这个角色自己的记忆
     // 滚动摘要：更早（已归档）的对话浓缩。和记忆是两回事——
     // 记忆是「关于他的事实」，摘要是「我们之间发生过什么」。两者互补。
     const rolling = P.longMemory ? (await getRolling(myCharId)).text : '';
@@ -5594,7 +5973,8 @@ let namedInText = false;
     // 稳定前缀（人设 + 基础规则）——内容每轮完全一致，才能命中前缀缓存
     // 常驻世界书（v1.21.51）：只有「一直生效」那一档进稳定前缀，
     // 命中式的条目仍然走下面的 worldbookHits → 本轮段。
-    const sysStable = buildStablePrompt(myChar, P, await worldbookConst(myCharId));
+    const wbConst = await worldbookConst(myCharId);   // 常驻条目：进稳定前缀，也要记一笔（见下面的 turnInj）
+    const sysStable = buildStablePrompt(myChar, P, wbConst);
     // 世界书：拿"用户这句 + 最近几条"去撞触发词。
     // 必须用 past（不含刚才那条还没写进去的），再补上本轮 text ——
     // history 里最新一条就是本轮用户消息，重复拼会命中两次（虽然去重后无影响，但没必要）。
@@ -5674,6 +6054,15 @@ let namedInText = false;
         if (m) arcNames[id] = m.name || '';
       }
     }
+    // 上一轮那条的复读率（v0.5.5）：只有被检测出撞车时才有值，用来在本轮段里
+    // 加一句"换个写法"。不去重算 —— 检测在落库那一刻就做完了，这里只读。
+    const lastAiRep = (() => {
+      for (let i = (pastRaw || []).length - 1; i >= 0; i--) {
+        const m = pastRaw[i];
+        if (m && m.role === 'assistant') return Number(m.rep) || 0;
+      }
+      return 0;
+    })();
     const turnNote = buildTurnNote(myChar, P, {
       memories, useKaomoji, useEmoji, worldbook, rolling, topic: memTopic,
       clock: clockFull(clockState), clockLocked: !!clockState.locked,
@@ -5686,6 +6075,8 @@ let namedInText = false;
       plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
       // 「剧情卡」（v0.5.0）：跨轮的方向层（当前拍）。没在跑就是 off，提示词里不出现。
       arc, arcNames,
+      // 复读提醒（v0.5.5）：撞车了才大于 0，见 persona.js 那段
+      rep: lastAiRep,
       // 「上一轮的要求」（v0.4.2.2）：这一轮没再提「本轮更改」时，把上一轮那条继续带一轮。
       // 这一轮又提了就以本轮为准（传空 —— 上一轮那条当场作废，不留长尾）。
       carry: _cmds.some(c => c.k === 'direct' && c.arg) ? [] : (_prevCarry ? [_prevCarry] : []),
@@ -5716,6 +6107,29 @@ let namedInText = false;
       // 她是中途进来的话，把加入时间也带上 —— 她加入之前的群共识不注入（v0.4.1.7）
       memSince: (isGroup(myChar) && speaker) ? (Number(memberCfgOf(myChar, speaker.id).joinedAt) || 0) : 0,
     });
+
+    // —— 这一轮到底喂了什么（v0.5.1.1）——
+    // 纯快照：不发请求、不花 token。挂在这轮第一条 assistant 消息上，
+    // 长按 →「这一轮用了什么」能原样看到当时注入了哪些记忆 / 世界书 / 剧情拍。
+    //
+    // 目的是把"她到底知不知道这件事"从猜变成能查：记忆抽漏了、世界书没命中、
+    // 剧情卡停在上一拍 —— 在这之前全都无处可看，只能凭回复反推。
+    // ⚠️ 只存摘要（前 60 字 / 条目名）。存全文会让每条消息都拖着几 KB，
+    //    而消息表是跟着备份一起进导出文件的。
+    const _cut = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
+    turnInj = {
+      mem: (memories || []).map(x => ({ id: x.id, t: _cut(x.text, 60), key: x.key || '' })),
+      wb: (worldbookAll || []).map(h => _cut(h && h.title, 40)).filter(Boolean),
+      wbC: (wbConst || []).map(h => _cut(h && h.title, 40)).filter(Boolean),
+      arc: (arc && arcActive(arc)) ? {
+        title: _cut(arc.title, 40),
+        i: Number(arc.currentBeat) || 0,
+        n: arc.beats.length,
+        beat: _cut((arc.beats[arc.currentBeat] || {}).t, 40),
+      } : null,
+      plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => _cut(c.arg, 60)),
+      dir: _cmds.filter(c => c.k === 'direct' && c.arg).map(c => _cut(c.arg, 60)),
+    };
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
     // 必须在拼 apiMsgs 之前做：搜索结果要作为这一轮的额外 system 塞进去。
@@ -5759,10 +6173,13 @@ let namedInText = false;
     // 固定段【不参与裁剪】：砍人设 = 她当场失忆，砍世界书 = 设定崩掉，
     // 两者都比"这轮少带几条聊天记录"严重。
     ctxBudget = Math.max(2000, Number(S.contextBudget) || DEFAULTS.contextBudget);
+    // 长篇档的上下文预算（v0.5.5）：一场戏几千字，按平时的 48000 裁，
+    // 前面那几段会被裁掉 —— 表现就是「她忘了上半场发生了什么」。
+    if (epicMode) ctxBudget = Math.max(ctxBudget, 96000);
     // ⚠️ 本轮这条用户消息【必须按消息算，不能只算文字】——
     // 它带的图每张约 1200 token，只算 visibleText 的话一轮三张图就少算 3600：
     // 预算看着没满，发出去照样超长（然后白撞一次降级重发）。
-    const turnTokens = estimateMsgTokens({ content: cont ? CONT_NUDGE : visibleText, images, imageNotes });
+    const turnTokens = estimateMsgTokens({ content: cont ? CONT_NUDGE : (noUser ? '' : visibleText), images, imageNotes });
     const wbDepthTokens = wbDepth.reduce((a, h) => a + estimateTokens(h.content || '') + 12, 0);
     const fixedTokens = estimateTokens(sysStable) + estimateTokens(turnNote)
       + (searchBlock ? estimateTokens(searchBlock) : 0)
@@ -5790,8 +6207,9 @@ let namedInText = false;
         // 但它能让模型明白「现在是我一个人往下写」，而不是「他没说话，我该等他」。
         // 不给这条指令的话，最后一条是 turnNote（system），模型常常回一个短反应就停。
         cont ? { role: 'user', content: CONT_NUDGE }
+             : noUser ? null   // 分支重来：那条用户消息已经在历史里了，不再补一条
              : { role: 'user', content: stRe(visibleText, 'prompt', 0), images, imageNotes }
-      ];
+      ].filter(Boolean);
       // 深度插入（v0.4.2.1）：酒馆 position:4 的条目按 depth 落进历史里
       return wbDepth.length ? withDepthSystems(apiMsgs, wbDepth, fit.kept.length) : apiMsgs;
     };
@@ -5906,6 +6324,7 @@ let namedInText = false;
           histBudget = Math.max(0, Math.floor(histBudget * 0.6));
           apiMsgs = composeApiMsgs(histBudget);
           const droppedNow = ctxFit ? ctxFit.dropped : before;
+
           // ⚠️ 只有【真的少带了历史】才重发（v1.21.54，审计发现）。
           //    固定段自己就吃满预算时 histBudget 本来就是 0，乘 0.6 还是 0 ——
           //    重拼出来的请求与上一次逐字节相同：白花一次调用（服务端"连上不吐数据"时
@@ -6023,9 +6442,21 @@ let namedInText = false;
       if (piece.speakerId) am.speakerId = piece.speakerId;
       else if (piece.narration) am.narration = true;
       if (i === 0 && usage) am.usage = usage;   // 这轮的用量记在第一条上
+      // 这一轮注入了什么（v0.5.1.1）：也记在第一条上，菜单里按消息查
+      if (i === 0 && turnInj) am.inj = turnInj;
+      // 分支（v0.5.1.2）：第一段挂在这次 user 消息后面（续写时没有 um，就挂活动叶子），
+      // 后面几段依次串起来 —— 分段是一条链，不是并排的兄弟。
+      am.parentId = i === 0 ? ((um && um.id) || _parent0) : added[i - 1].id;
       await msgs.add(am);
       added.push(am);
     }
+    // 分支（v0.5.1.2）：这一轮写完，活动叶子推到刚生成的那条。
+    // 不推的话下一次 activePath 还会停在这一轮之前，新回复在库里却看不见 ——
+    // 表现成「发了消息，她的回复一闪就没」。
+    try {
+      const _tail = added.length ? added[added.length - 1].id : (um && um.id);
+      if (_tail) await setLeaf(myCharId, _tail);
+    } catch { /* 推不动就靠 ts 兜底 */ }
     // 到这一步这一轮是真的成了（下面 finally 里"自动续一幕"只看这个标记）
     sceneOk = true;
     // 群聊：这一轮说完了，轮到下一个人（v0.4.0）。
@@ -6045,7 +6476,33 @@ let namedInText = false;
     // v0.5.0.4：只有「他真说了一句、她真回了一轮」才算新的叙事轮。
     // 重新生成 / 换版本 / 续写都是同一轮的重复 —— 抽 4 次不满意 turns 就到 4，
     // 自动判定的「至少 4 轮」这道门就形同虚设。
-    if (!(opts && opts.regen) && !cont) await bumpArcTurns(myCharId);
+    // 反复读检测（v0.5.5）：把这一条和【最近的回复】比一遍，重合率记进消息里。
+    //
+    // ⚠️ 只记不拦。查出来像复读也不自动重写 ——
+    //    重写要再来一次完整请求（长篇档就是 6K tokens），而且模型不知道"该怎么改"
+    //    时经常越改越差。做的是两件更便宜的事：
+    //      ① 气泡上挂一个小小的「复读」角标，他自己决定要不要重抽
+    //      ② 下一轮的提示词里加一句"上一轮跟前面撞得很厉害，换个写法"
+    //    比阈值高的那条才写字段，普通消息一个字节都不多。
+    try {
+      const prevAi = (pastRaw || []).filter(m => m && m.role === 'assistant' && m.content).slice(-REPEAT_LOOKBACK);
+      for (const a of added) {
+        if (!a || a.role !== 'assistant' || !a.content) continue;
+        const w = worstRepeat(a.content, prevAi);
+        if (w.rate >= REPEAT_WARN) {
+          a.rep = Math.round(w.rate * 100) / 100;
+          if (w.id) a.repId = w.id;
+          await msgs.add(a);
+        }
+      }
+    } catch { /* 记不上就记不上，不影响这轮 */ }
+    // ⚠️ 续写也计一轮（v0.5.1.6，外部评审 §五）。
+    // 以前的条件是「!regen && !cont」—— 自动串联 4 段只算 1 轮，
+    // 而提示词里却对模型说"这一拍才演了 1 轮，至少 4 轮才收"。
+    // 这不是措辞问题：模型会照着这个假数字拖节奏，或者把演过的再演一遍。
+    // minTurns 数的是【叙事段】，一次"继续"就是一段，所以 cont 必须计入。
+    // 真正不该计的是 regenerate —— 同一段重写一遍没有推进任何东西。
+    if (!(opts && opts.regen)) await bumpArcTurns(myCharId);
     // 剧情卡自动判定（v0.5.0.2，beta，卡片上勾了才跑）。
     // ⚠️ 只【标记演完】，绝不自动推进：判错会毁掉节奏且没法回滚，推进权留给人。
     // 不 await —— 这一轮已经成了，判定晚几百毫秒回来不该拖慢界面。
@@ -6086,10 +6543,19 @@ let namedInText = false;
       added = [];
     }
 
+    // ⚠️ 这一轮失败了，但用户那条消息【已经落库、也画在屏幕上了】（v0.5.1.5 修）。
+    // 活动叶子必须推给它：否则叶子里那条用户消息就成了一条谁都走不到的旁支 ——
+    // 屏幕上还看得见，点它的「重试一次」却找不到（curMsgs 走的是活动路径），
+    // 下一次发送也会以它的父为父、和它并列成兄弟分支。
+    if (e.name !== 'AbortError' && umSaved && um) {
+      try { await setLeaf(myCharId, um.id); } catch { /* 推不动也不该盖住真正的原因 */ }
+    }
+
     if (e.name === 'AbortError') {
       ph?.remove();
       if (full.trim()) {
         const am = { id: uid(), charId: myCharId, role: 'assistant', content: full.trim() + '（已中断）', ...sceneSnap(myChar), story: storyStamp(), ts: Date.now() };
+        am.parentId = (um && um.id) || _parent0;
         try { await msgs.add(am); } catch { /* 落库失败也不影响显示 */ }
         if (curCharId === myCharId) {
           $('messages').insertAdjacentHTML('beforeend', msgHtml(am));
@@ -6140,15 +6606,42 @@ let namedInText = false;
     // ⚠️ 每一幕都是一次完整请求，【token 成倍】—— 所以默认 0（关），界面上写明代价。
     // 条件：这一轮真出了内容 + 不是用户按了停止 + 群里开了这个开关 + 没到上限
     //      + 输入框是空的（他正在打字就别抢）。
-    if (sceneOk && !sceneSilent && isGroup(myChar)) {
+    // ⚠️ 这两条互斥：群里用 autoScene，单人长篇用 epicChain。
+    //    群聊也能设成长篇档，但"多人各演一段"和"一个人往下写一整场"是两件事，
+    //    同时生效会让一轮里冒出 5×4 段 —— 所以群里只认 autoScene。
+    // ⚠️ 被 max_tokens 截断就【一律不往下串】（v0.5.1.6，外部评审 §五）。
+    // 长篇档最伤连续性的路径正好是它自己打开的：正文被拦腰截断 →
+    // 弹一句"被截断了" → 2.5 秒后照样自动再写一段 → 接着半句话往下编。
+    // 读者看到的是「她说到一半停住，然后若无其事地继续」。
+    const canChain = sceneOk && !sceneSilent && finishReason !== 'length';
+    if (canChain && isGroup(myChar)) {
       const maxN = Math.max(0, Math.min(5, Number(myChar.autoScene) || 0));
       const gidAt = myCharId;
       if (maxN > 0 && autoRun < maxN && !(($('input').value || '').trim())) {
-        setTimeout(() => {
+        scheduleChain(1200, () => {
+          if (_chainStopped) return;                            // 他叫停了（v0.5.1.7）
           if (busy || curCharId !== gidAt) return;              // 已经切走/在生成
           if ((($('input').value || '') || '').trim()) return;  // 他正在打字
           send({ cont: true, autoRun: autoRun + 1 });
-        }, 1200);
+        });
+      }
+    } else if (canChain && !isGroup(myChar) && epicChainN > 0) {
+      // 长篇自动串联（v0.5.5）：一场戏写完常常只到"半声"，他得再点一次继续。
+      // 开着它就把那几次点击省掉 —— 但每一段都是独立请求，所以：
+      //   · 只在他没打字、没切角色、没按停止时接着写
+      //   · 间隔比群聊长一点（2500ms），给「停止」留出按下去的时间
+      const eidAt = myCharId;
+      // ⚠️ 判据是 autoRun < epicChainN - 1，不是 < epicChainN（v0.5.5 实测改）。
+      //    epicChainN 数的是【总段数】：设 2 就是"原文 1 段 + 自动再写 1 段"。
+      //    autoRun 数的是"已经自动写了第几段"（原始那一轮 autoRun = 0）——
+      //    拿 autoRun < 2 去比，2 段会写成 3 段（e2e-epic 抓到的就是这条）。
+      if (autoRun < epicChainN - 1 && !(($('input').value || '').trim())) {
+        scheduleChain(2500, () => {
+          if (_chainStopped) return;                            // 他叫停了（v0.5.1.7）
+          if (busy || curCharId !== eidAt) return;
+          if ((($('input').value || '') || '').trim()) return;
+          send({ cont: true, autoRun: autoRun + 1 });
+        });
       }
     }
 
@@ -6230,6 +6723,9 @@ function parseMemJson(s) {
   return kept.map(x => ({
       text: String(x.text).trim(),
       kind: x.kind === 'event' ? 'event' : 'fact',
+      // 槽位（v0.5.1.1）。只认白名单，模型给了别的就当没给 —— 见 memory.js 的 MEMORY_KEYS。
+      // 不在白名单里时 stripKey 为空，db.add 就不会去取代任何旧记忆。
+      key: MEMORY_KEYS.includes(String(x.key == null ? '' : x.key).trim()) ? String(x.key).trim() : '',
       // 频次：让模型顺手标出来，代码这边判起来才可靠。
       // 模型偶尔漏填时退回正则兜底，双保险。
       // 兜底正则要避开否定句（"你不经常喝咖啡"不该被判成 often）
@@ -6261,6 +6757,56 @@ function parseMemJson(s) {
       untilMinute: (x.kind === 'event' && x.untilMinute !== null && x.untilMinute !== ''
                     && Number.isFinite(Number(x.untilMinute))) ? Number(x.untilMinute) : 0,
   }));
+}
+
+// 旧记忆修复（0.5.2）：迁移只能给老记忆补 legacy=true，补不出「记下那天是第几天」。
+// 这里用二元组在【这个角色的全部消息】里找最像的一条，借它的 story.day 反推；
+// 只有重合度足够高才改，找不到就保持原样、由 memoryLine 加「日期不明」警告。
+// 每个角色每次启动只扫一遍（_legacyMemRepaired），避免每次切角色都翻几千条消息。
+const _legacyMemRepaired = new Set();
+
+async function repairLegacyMemories(charId) {
+  if (!charId || _legacyMemRepaired.has(charId)) return 0;
+  _legacyMemRepaired.add(charId);
+  let list = [];
+  try { list = await mem.list(charId); } catch { return 0; }
+  // 手写记忆（mine）绝不改写：那是用户自己的话，反推等于替他改口。
+  const targets = list.filter(m => m && m.mine !== true && m.legacy === true && !memoryDay(m.day) && hasRelativeDay(m.text));
+  if (!targets.length) return 0;
+  let pool = [];
+  try {
+    // 先把每条消息的二元组算好：几十条旧记忆 × 几千条消息时，
+    // 在双重循环里反复分词会慢到让切角色卡住。
+    pool = (await msgs.list(charId, 0, true))
+      .filter(m => m && m.content && m.story && memoryDay(m.story.day))
+      .map(m => ({ m, g: memoryGrams(m.content) }));
+  } catch { return 0; }
+  if (!pool.length) return 0;
+  let fixed = 0;
+  for (const rec of targets) {
+    const g = memoryGrams(rec.text);
+    if (g.size < 2) continue;             // 一两个字的记忆没有可靠匹配价值
+    const need = Math.max(3, Math.ceil(g.size * 0.6));
+    let best = null, bestHit = 0;
+    for (const cand of pool) {
+      let hit = 0;
+      for (const x of g) if (cand.g.has(x)) hit++;
+      // 用 > 而不是 >=：同样是最高分时保留【更早】那条，
+      // 因为记忆通常是当初那句原话提炼出来的，不是后来越聊越像的那条。
+      if (hit > bestHit) { bestHit = hit; best = cand.m; }
+    }
+    if (!best || bestHit < need) continue;
+    const day = memoryDay(best.story.day);
+    if (!day) continue;
+    const text = absolutizeMemoryText(rec.text, day);
+    if (text === rec.text) continue;      // 没有相对日期可换，别白写一次
+    const sourceMsgIds = [...new Set([...(rec.sourceMsgIds || []), best.id].filter(Boolean))].slice(0, 200);
+    try {
+      await mem.add({ ...rec, text, day, sourceMsgIds, legacy: false, dayInferred: true });
+      fixed++;
+    } catch { /* 单条失败不影响其它记忆 */ }
+  }
+  return fixed;
 }
 
 /** 时效清理：事件型记忆过了失效日就删。纯代码，每轮跑都不花钱 */
@@ -6310,7 +6856,14 @@ async function pruneMemories(charId = null) {
     //    没有提示、没有撤销点，用户只会觉得"她忘了"。
     //    看不懂的限期就当没有限期，和本项目其它地方"读不懂的就不动它"一致。
     if (!(m.untilDay >= 1)) continue;
-    if (nowMin > memExpireMin(m)) await mem.del(m.id);
+    // 过期不再物理删（v0.5.1.1）：标成 expired 留在库里。
+    // 原来的 mem.del 是"静默消失"—— 用户看到记忆少了一条，既不知道为什么，
+    // 也没有任何地方能查到它曾经存在过、本该记到第几天。
+    if (nowMin > memExpireMin(m)) {
+      await mem.add({ ...m, status: MEMORY_STATUS.EXPIRED,
+                      expiredDay: (typeof clockOf?.day === 'number' ? clockOf.day : null),
+                      expiredAt: Date.now() });
+    }
   }
 }
 
@@ -6401,10 +6954,15 @@ async function summarizeIfNeeded(charId = null) {
   // ⚠️ 同 pruneMemories：角色显式传入，别再读实时的 curCharId（审计第 20 条）。
   const cid0 = charId || curCharId;
   if (!cid0) return;
-  // ⚠️ 必须含归档（v1.21.36 修，复审 #8）。
-  // 起因：memSummed 里存的是【含已归档在内】的全部 id（runArchiveNow 的 old 来自 msgs.list(cid,0,true)），
-  // 而这里默认不含归档 → 两边口径不一致，"待总结"会被算大，触发时机也跟着偏。
-  const all = await msgs.list(cid0, 0, true);
+  // ⚠️ 含归档 + 【只取活动分支】（v0.5.1.6 修，外部评审 §一）。
+  //
+  // 两件事叠在一起：
+  //   · 含归档：memSummed 里存的是含已归档在内的全部 id（v1.21.36 起口径如此），
+  //     这里不含归档的话两边对不上，"待总结"被算大、触发时机跟着偏。
+  //   · 只取活动分支：以前读的是【所有分支的并集】。被切走的 A 线照样被提炼成
+  //     长期记忆，之后在 B 线她提起一件从未发生的事 —— 越用越脏，且不可逆
+  //     （memSummed 是单向门，进过一次就永远不再总结）。
+  const all = await curMsgsAll(cid0);
   // 内容按角色（只看自己的），节奏参数用全局的。
   //
   // ⚠️ 节奏改成数【还没总结过的消息条数】，不再用 msgSeq 的差值。
@@ -6536,8 +7094,9 @@ async function summarizeIfNeeded(charId = null) {
     // ⚠️ mine 单独分区（v1.21.37 修，复审 3.5）——
     // 它的人称【不统一】（用户自己写的可能用第三人称），而 AI 记忆强制用「我/你」。
     // 混在一起当示范会让模型模仿坏人称。
-    const knownAI = existing.filter(m => !m.mine).map(m => '- ' + m.text).join('\n');
-    const knownMine = existing.filter(m => m.mine).map(m => '- ' + m.text).join('\n');
+    // ⚠️ 旧记忆没有 day 前缀，memoryLine 会原样返回；不要把用户手写内容改写。
+    const knownAI = existing.filter(m => !m.mine).map(m => '- ' + memoryLine(m)).join('\n');
+    const knownMine = existing.filter(m => m.mine).map(m => '- ' + memoryLine(m)).join('\n');
     const known = (knownAI ? knownAI : '（还没有）')
       + (knownMine ? '\n\n【以下是他自己手写的，人称仅供参考、\u26a0\ufe0f不要模仿】\n' + knownMine : '');
     // 剧情天数同 summarizeChunk：一律取【目标角色自己】的那份。
@@ -6571,16 +7130,22 @@ async function summarizeIfNeeded(charId = null) {
           + `· event = 有时限的事（假期、约定、某段时间的状态），要给出失效的那一天。\n\n`
           + `【失效日】现在是剧情第 ${day} 天。他提到有时限的事（假期、约定、某段状态）时，`
           + `算出它到哪一天为止还算数，填进 untilDay；拿不准就填 null。\n\n`
+          + memoryTimeRule(day)
           + MEM_DONT_REMEMBER
           + `【频次】留意这件事他提到过几回：\n`
           + `· 反复出现、或他说过"经常/总是/每天"的 → freq 填 "often"，措辞也带上"经常"。\n`
           + `· 提过两三次的 → freq 填 "normal"。\n`
           + `· 只提过一次的 → freq 填 "once"。\n`
           + `· 他明确说过"记住这个""别忘"的 → freq 填 "pinned"，并且要写得具体。\n\n`
+          + `【槽位】下面这些是【会变的事】。要是这一条说的就是它们，填 key（只能填这十个词之一，别自己造）：\n`
+          + `  职业 / 住处 / 关系 / 称呼 / 年龄 / 身体 / 宠物 / 爱好 / 计划 / 物品\n`
+          + `  例：他在做程序员 → key="职业"；他搬去了城西 → key="住处"；他被裁员了 → key="职业"。\n`
+          + `  ⚠️ key 只在【和以前记的是同一件事、只是变了】时才填。情绪、喜好细节、一次性的事、\n`
+          + `     拿不准的，一律留空 —— 留空是安全的；乱填会让他以前的记忆被顶掉。\n\n`
           + `【去重】下面给你已经记得的。只写新的；意思重复的不要写。\n\n`
           + memQualityGuards(5)
           + `【输出】只输出 JSON 数组，不要别的话。最多 5 条（通常更少）；没有值得记的就输出 []。\n`
-          + `格式：[{"text":"...","kind":"fact","untilDay":null,"untilHour":null,"untilMinute":null,"freq":"often"}]\n`
+          + `格式：[{"text":"...","kind":"fact","key":null,"untilDay":null,"untilHour":null,"untilMinute":null,"freq":"often"}]\n`
           // ⚠️ 小时/分钟要写进格式里（v1.21.29 修，复审 新4）——
           // 只有 kind="event" 且你知道【具体钟点】时才填，否则留 null。
           // 不写出来的话模型根本不知道能填，parseMemJson 那边加了字段也只收到 null。
@@ -6590,6 +7155,7 @@ async function summarizeIfNeeded(charId = null) {
       ]
     });
     const items = trimByFreq(parseMemJson(out), 5);
+    const sourceIds = chunk.map(m => m.id).filter(Boolean);
     for (const it of items) {
       // ⚠️ 用 cid0（本函数的形参 charId，没传就回落到当前角色）。
       // 这个函数 v1.21.25 起【有参数了】—— 下面这段历史说明保留，但结论已过时：
@@ -6608,12 +7174,29 @@ async function summarizeIfNeeded(charId = null) {
       // 两层叠在一起 = 记忆功能整体失效，且完全静默。
       // ⚠️ untilHour/untilMinute 一起写（v1.21.25 修，复审 ★4 的同类遗漏 ——
       // 报告只点了 3 处，全库扫下来还有 2 处，这是其中一处）。
-      await mem.add({ id: uid(), charId: cid0, text: it.text, kind: it.kind,
-                      who: isGroup(charT) ? attributeWho(it.text, chunk) : '',
+      // 正文在写入时就绝对化：「他明天休息」→「他第 3 天休息」。
+      // 这样即使注入层忘了带时间锚，模型也不会把「明天」按今天重新解释。
+      const absText = absolutizeMemoryText(it.text, day);
+      // 两条抽取路（实时总结 / 归档总结）看到的是同一段对话时，模型会给出同一条。
+      // 以前会原样写两遍，占两个名额；这里先挡掉，并把来源合并到已有那条上。
+      const curList = await mem.list(cid0);
+      const dup = curList.find(x => x.status !== 'superseded'
+        && sameMemory(x, { text: absText, kind: it.kind, untilDay: it.untilDay }));
+      if (dup) {
+        await mem.add({ ...dup,
+          day: dup.day || day,
+          sourceMsgIds: [...new Set([...(dup.sourceMsgIds || []), ...sourceIds])],
+          status: 'active' });
+        continue;
+      }
+      await mem.add({ id: uid(), charId: cid0, text: absText, kind: it.kind, key: it.key,
+                      who: isGroup(charT) ? attributeWho(absText, chunk) : '',
                       untilDay: it.untilDay,
                       untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                       untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
-                      freq: it.freq, ts: Date.now() });
+                      freq: it.freq, ts: Date.now(),
+                      day, sourceMsgIds: sourceIds,
+                      status: 'active', legacy: false });
     }
     // ⚠️ 【单向门】还有第二处（v1.21.35 修）。
     //
@@ -6853,6 +7436,8 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
       // 只有【整理这条】漏了 —— 属于同一处的疏忽，不是全局缺陷。
       untilHour: m.untilHour ?? null,
       untilMinute: m.untilMinute ?? null,
+      // 整理时也要带上「记于第几天」，否则模型会把绝对天数改回相对说法。
+      day: m.day ?? null,
       freq: m.freq || 'normal',
       ...(m.ts > freshCut ? { isNew: true } : {}),
     })));
@@ -6937,6 +7522,8 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
           // ⚠️ v1.21.39 修（复审第二轮 #5）：白名单从四个字段扩到六个，加上钟点。
           + `  · kind 和 untilDay 照原样保留；合并条目时取更晚的那个 untilDay。\n`
           + `  · untilHour / untilMinute 照原样保留；合并时取更晚的那个时刻。\n`
+          + `  · 输入里的 day 是「记下这条时的剧情天数」；正文里的「第 N 天」是绝对天数，\n`
+          + `    不要改回「今天/明天/昨天」。合并时 day 取更早的那个。\n`
           + `  · freq 保留原样；合并时取优先级更高的那个（pinned > often > normal > once）。\n`
           + `  · 【字段只有这六个】text / kind / untilDay / untilHour / untilMinute / freq。\n`
           + `    不要加 isNew、id、reason、note 之类的额外字段 —— 没用，还占输出长度。\n`
@@ -7219,6 +7806,10 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
           items: listAll.map(m => ({ id: m.id, text: m.text, kind: m.kind, untilDay: m.untilDay,
                                     untilHour: m.untilHour, untilMinute: m.untilMinute,
                                     who: m.who || '',
+                                    day: m.day ?? null, sourceMsgIds: m.sourceMsgIds || [],
+                                    status: m.status || 'active', legacy: m.legacy === true,
+                                    key: m.key || '', supersededBy: m.supersededBy || null,
+                                    supersededDay: m.supersededDay ?? null, supersededAt: m.supersededAt || 0,
                                     freq: m.freq, mine: !!m.mine })),
         });
         }
@@ -7229,12 +7820,19 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
         // 丢了的话「第 5 天 15:30 前有效」会退化成「第 5 天 23:59」——
         // 到期时刻推迟 8 小时 29 分，她会在本该忘记之后还记得大半天。
         // （上面那个备份特意带了这个字段，这里却漏了，属于同一处的疏忽。）
-        await mem.add({ id: uid(), charId: cidFor, text: it.text, kind: it.kind,
+        // 整理后模型不会带回 day/sourceMsgIds，用二元组相似度从旧条目里找回来源。
+        // 找不到就标 legacy，不伪造一个天数。
+        const prov = provenanceFor(it.text, list);
+        // 模型偶尔会把绝对天数改回「明天」；provenance 给了 day 就再兜一次。
+        const absText = absolutizeMemoryText(it.text, prov.day);
+        await mem.add({ id: uid(), charId: cidFor, text: absText, kind: it.kind, key: it.key,
                         who: whoOfNearest(it.text, list),
                         untilDay: it.untilDay,
                         untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                         untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
-                        freq: it.freq, ts: Date.now() });
+                        freq: it.freq, ts: Date.now(),
+                        day: prov.day, sourceMsgIds: prov.sourceMsgIds,
+                        status: 'active', legacy: prov.legacy });
       }
       // 只删【参与了整理】的那些。受保护的自定义记忆压根没进 list，所以不会被动。
       for (const m of list) await mem.del(m.id);
@@ -7452,15 +8050,16 @@ async function summarizeChunk(charId, chunk) {
   const who = char?.name || '她';
   // 日期要取这个角色自己的剧情时间。读全局 clockState 的话，
   // 归档跑到一半切了角色，后半批就会拿新角色的天数去算失效日。
+  // ⚠️ 无条件读 clock:<charId>（v0.5.2 修）。
+  // 原来只在 charId !== curCharId 时读；同一角色下如果生成期间切过角色，
+  // 全局 clockState 可能已经是别人的天数，这时 day 会算错。
   let day = clockState.day;
-  if (charId !== curCharId) {
-    try {
-      const cl = await kv.get('clock:' + charId, null);
-      if (cl && typeof cl.day === 'number') day = cl.day;
-    } catch { /* 读不到就用全局的，总比崩了强 */ }
-  }
+  try {
+    const cl = await kv.get('clock:' + charId, null);
+    if (cl && typeof cl.day === 'number') day = cl.day;
+  } catch { /* 读不到就用全局的，总比崩了强 */ }
   const existing = await mem.list(charId);
-  const known = existing.length ? existing.map(m => '- ' + m.text).join('\n') : '（还没有）';
+  const known = existing.length ? existing.map(m => '- ' + memoryLine(m)).join('\n') : '（还没有）';
   // ⚠️ 说话人必须标【名字】，不能标「我：」（v1.20.20 修，和 summarizeIfNeeded 对齐）。
   // 起因：summarizeIfNeeded 那条路早就改成用名字了（见那边的长注释），
   // 归档这条路漏了 —— 模型看到一串「我：xxx」，会理解成一段第一人称文本，
@@ -7478,13 +8077,19 @@ async function summarizeChunk(charId, chunk) {
         + `· event = 有时限的事（假期、约定、某段时间的状态），要给出失效的那一天。\n\n`
         + `【失效日】现在是剧情第 ${day} 天。他提到有时限的事时，算出它到哪一天为止还算数，`
         + `填进 untilDay；拿不准就填 null。\n\n`
+        + memoryTimeRule(day)
         + MEM_DONT_REMEMBER
         + `【频次】反复出现或他说过"经常/总是/每天"的填 "often"；提过两三次填 "normal"；`
         + `只提过一次填 "once"；他明确说过"记住这个"的填 "pinned" 并写具体。\n\n`
+        + `【槽位】下面这些是【会变的事】。要是这一条说的就是它们，填 key（只能填这十个词之一，别自己造）：\n`
+        + `  职业 / 住处 / 关系 / 称呼 / 年龄 / 身体 / 宠物 / 爱好 / 计划 / 物品\n`
+        + `  例：他在做程序员 → key="职业"；他搬去了城西 → key="住处"；他被裁员了 → key="职业"。\n`
+        + `  ⚠️ key 只在【和以前记的是同一件事、只是变了】时才填。情绪、喜好细节、一次性的事、\n`
+        + `     拿不准的，一律留空 —— 留空是安全的；乱填会让他以前的记忆被顶掉。\n\n`
         + `【去重】下面给你已经记得的。只写新的；意思重复的不要写。\n\n`
         + memQualityGuards(12)
         + `【输出】只输出 JSON 数组，最多 12 条；没有新的就输出 []。\n`
-        + `格式：[{"text":"...","kind":"fact","untilDay":null,"freq":"often"}]\n\n`
+        + `格式：[{"text":"...","kind":"fact","key":null,"untilDay":null,"freq":"often"}]\n\n`
         + `已经记得的：\n${known}` },
       { role: 'user', content: txt }
     ]
@@ -7566,14 +8171,29 @@ async function summarizeChunk(charId, chunk) {
   // 只提炼 5 条等于把大部分内容丢掉。改成 12。
   // 上限仍受 room（剩余名额）约束，不会冲穿 memLimit。
   const items = trimByFreq(parseMemJson(out), Math.min(12, room));
+  const sourceIds = chunk.map(m => m.id).filter(Boolean);
   for (const it of items) {
     // ⚠️ 同上（v1.21.25 修）——这是【最常走】的一条写回路径。
-    await mem.add({ id: uid(), charId, text: it.text, kind: it.kind,
-                    who: isGroup(char) ? attributeWho(it.text, chunk) : '',
+    const absText = absolutizeMemoryText(it.text, day);
+    // 与实时总结路径同一条规则：同一件事只留一条，来源合并。
+    const curList = await mem.list(charId);
+    const dup = curList.find(x => x.status !== 'superseded'
+      && sameMemory(x, { text: absText, kind: it.kind, untilDay: it.untilDay }));
+    if (dup) {
+      await mem.add({ ...dup,
+        day: dup.day || day,
+        sourceMsgIds: [...new Set([...(dup.sourceMsgIds || []), ...sourceIds])],
+        status: 'active' });
+      continue;
+    }
+    await mem.add({ id: uid(), charId, text: absText, kind: it.kind, key: it.key,
+                    who: isGroup(char) ? attributeWho(absText, chunk) : '',
                     untilDay: it.untilDay,
                     untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                     untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
-                    freq: it.freq, ts: Date.now() });
+                    freq: it.freq, ts: Date.now(),
+                    day, sourceMsgIds: sourceIds,
+                    status: 'active', legacy: false });
   }
   return items.length;
 }
@@ -7869,6 +8489,37 @@ function infoBox(title, html) {
   });
 }
 
+/**
+ * 「这一轮用了什么」（v0.5.1.1）：把当时的注入快照摊开。
+ *
+ * 纯展示，不发请求、不花 token。能回答的问题：她这一轮到底知不知道自己搬过家、
+ * 那条世界书命中没有、剧情卡停在哪一拍。在这之前这些都只能靠回复反推。
+ */
+async function showInj(inj) {
+  if (!inj) return;
+  const secs = [];
+  const sec = (title, rows) => {
+    if (!rows || !rows.length) return;
+    secs.push('<h4 class="inj-h">' + esc(title) + '（' + rows.length + '）</h4>'
+      + rows.map(t => '<div class="inj-row">' + esc(t) + '</div>').join(''));
+  };
+  if (inj.arc) {
+    secs.push('<h4 class="inj-h">剧情卡</h4><div class="inj-row">'
+      + esc((inj.arc.title ? inj.arc.title + ' · ' : '')
+        + '第 ' + ((Number(inj.arc.i) || 0) + 1) + '/' + (Number(inj.arc.n) || 1) + ' 拍'
+        + (inj.arc.beat ? '（' + inj.arc.beat + '）' : ''))
+      + '</div>');
+  }
+  sec('长期记忆', (inj.mem || []).map(x => (x.key ? '[' + x.key + '] ' : '') + x.t));
+  sec('剧情方向', inj.plot);
+  sec('本轮更改', inj.dir);
+  sec('世界书 · 命中', inj.wb);
+  sec('世界书 · 常驻', inj.wbC);
+  const html = (secs.length ? secs.join('') : '<p class="hint-text">这一轮除了人设和聊天记录，什么附加内容都没注入。</p>')
+    + '<p class="hint-text">人设、聊天记录、滚动摘要每轮都在，这里不逐条列。</p>';
+  await infoBox('这一轮用了什么', html);
+}
+
 /** 选图（v0.4.4：从输入行挪进「＋」抽屉，逻辑与原来一致） */
 async function pickImages() {
   const f = document.createElement('input');
@@ -8020,6 +8671,7 @@ async function openCharEdit(id, presetKey) {
   $('e-delay').value = P.typingDelay;
   $('e-v-delay').textContent = Number(P.typingDelay).toFixed(1) + 'x';
   $('e-verbosity').value = P.verbosity;
+  if ($('e-epic-chain')) $('e-epic-chain').value = String(Number(P.epicChain) || 0);
   $('e-split').checked = !!P.splitMessages;
   $('e-hesit').checked = !!P.hesitation;
   $('e-showtyping').checked = P.showTyping !== false;   // 老角色没这个键，按默认开着算
@@ -8034,7 +8686,14 @@ async function openCharEdit(id, presetKey) {
   // 不给她看空框（真生效的是 persona.js 里 char.myProfile ?? s.myProfile）。
   $('e-mine').value = (c && c.myProfile !== undefined) ? c.myProfile : (S.myProfile || '');
   $('e-home').value = (c && c.myEnv !== undefined) ? c.myEnv : (S.myEnv || '');
+  // 「她怎么看你」（v0.5.2）：她那一侧的认知。和上面两份不同 —— 这里【不回落全局】，
+  // 空就是空（= 她不知道），因为全局那份是"我的自我描述"的模板，不是"她怎么看我"。
+  $('e-useraddr').value = (c && c.userAddress) || '';
+  $('e-userperc').value = (c && c.userPerception) || '';
+  $('e-userknow').value = (c && c.userKnowledge) || '';
+  $('e-useratt').value = (c && c.userAttitude) || '';
   refreshEditMineBrief();
+  refreshEditAddrBrief();
   // 人设 / 开场白现在也是入口行（v1.21.58），角标同样要跟着刚填进去的值走
   refreshCharTextBriefs();
 
@@ -8209,6 +8868,7 @@ async function saveCharEdit() {
     kaomojiFreq: Number($('e-kao-freq').dataset.v ?? S.kaomojiFreq),
     emojiFreq: Number($('e-emoji').dataset.v ?? S.emojiFreq),
     verbosity: $('e-verbosity').value,
+    epicChain: Number($('e-epic-chain').value) || 0,
     splitMessages: $('e-split').checked,
     // ⚠️ 三态（v1.21.36 修，复审 #3）：选「跟随全局」就【不写这个键】，
     // 让 effSettings 回落到全局值。与 detailDrive 同构。
@@ -8230,6 +8890,11 @@ async function saveCharEdit() {
     // 「他的设定 / 他的居处」（v1.21.47）：从全局搬到角色级，随角色一起存
     myProfile: $('e-mine').value,
     myEnv: $('e-home').value,
+    // 「她怎么看你」（v0.5.2）：空串照存（不写 undefined），这样"清空"能真的存进去
+    userAddress: $('e-useraddr').value.trim(),
+    userPerception: $('e-userperc').value.trim(),
+    userKnowledge: $('e-userknow').value.trim(),
+    userAttitude: $('e-useratt').value.trim(),
     typingDelay: num('e-delay', S.typingDelay),
     hesitation: $('e-hesit').checked,
     showTyping: $('e-showtyping').checked,
@@ -8738,8 +9403,20 @@ function splitBySpeaker(text, members, primary, allowNarr) {
  * @param {any} m      消息（这个字段集合在一条 msg 上是开放的，写 object 只会招来类型噪音）
  * @param {string} who 这条记录的显示名（单聊时就是角色名）
  */
+/**
+ * 转录里「用户」那一行用哪个标签（v0.5.2）。
+ *
+ * 原来写死「他：」—— 那是把用户当第三人称，而正文和记忆输出都要求用「你」指他。
+ * 两套人称同时存在，模型就有机会把「他：」照抄进记忆（用户实测反馈过）。
+ * 现在：设了名字就用名字，没设就用「你：」，与 memPersonaHead 的输出规则一致。
+ */
+function memUserTag() {
+  const n = String((S && S.userName) || '').trim();
+  return n ? n + '：' : '你：';
+}
+
 function memLabel(m, who) {
-  if (m && m.role === 'user') return '他：';
+  if (m && m.role === 'user') return memUserTag();
   const c = (m && m.speakerId) ? allChars.find(x => x.id === m.speakerId) : null;
   if (c && c.name) return c.name + '：';
   // 旁白没有说话人。硬塞一个名字会让人以为是她说的
@@ -8766,7 +9443,7 @@ function memPersonaHead(who, isGrp) {
       + '【谁是谁 —— 最重要，写错整条记忆就废了】\n'
       + '  · 下面每行开头是**说话人的名字**，他们【是不同的人】，别混成同一个人。\n'
       + '  · ' + who + ' 是这个群的名字，【不是任何一个人的名字】，别拿它当说话人。\n'
-      + '  · 下面【他：】开头的是他（用户）说的。\n'
+      + '  · 下面【' + memUserTag() + '】开头的是他（用户）说的。\n'
       + '  · 【不要用「我」】—— 这个群里「我」指谁不清楚。提到具体的人一律用名字：\n'
       + '    错误示范："我不太想去"（谁不想去？）　正确："乙不太想去"。\n'
       + '  · 他仍然用「你」：✓"你不喜欢下雨"。\n'
@@ -8779,7 +9456,7 @@ function memPersonaHead(who, isGrp) {
     // 而且带自称的角色（角色O自称妾身）会让指代更乱。
     + '【人称 —— 最重要，写错整条记忆就废了】\n'
     + '  · 下面【' + who + '：】开头的是你自己说的话 → 输出时换成「我」。\n'
-    + '  · 下面【他：】开头的是他说的 → 输出时换成「你」。\n'
+    + '  · 下面【' + memUserTag() + '】开头的是他说的 → 输出时换成「你」。\n'
     + '  · 一律用「我」指你自己，用「你」指他，【不要用第三人称】，也不要写名字。\n'
     + '  例：✓「你喜欢坐在窗边发呆」　✗「他喜欢坐在窗边发呆」　✗「' + who + '喜欢…」\n'
     + '  · 括号里的动作，主语多半是【他】、承受方是你 —— 方向别记反。\n'
@@ -9912,6 +10589,23 @@ function openGroupChatCreator() {
  */
 async function purgeCharEverywhere(id) {
   if (!id) return;
+  // 小说层（v0.5.2）：规格 §12 硬规则 —— 删角色要问保留作品还是一起删，默认保留。
+  // 保留 = 把 charId 解绑、记下她的名字，书架里还能显示这是谁的戏。
+  // 必须放在 chars.del 之前：删完就读不到名字了。
+  try {
+    const scN = (await scenes.byChar(id)).length;
+    if (scN) {
+      let nm = "";
+      try { const c0 = await chars.get(id); nm = (c0 && c0.name) || ""; } catch (e) { nm = ""; }
+      const delToo = await confirmBox(
+        "她还有 " + scN + " 场戏",
+        "角色删掉之后，这些戏还能留着看（书架里会显示她的名字）。<br><b>要一起删掉吗？</b>",
+        "一起删掉"
+      );
+      if (delToo) await scenes.delByChar(id);
+      else await scenes.detachChar(id, nm);
+    }
+  } catch (e) { /* 场景处理失败不该挡住删角色本身 */ }
   try { await wb.purgeChar(id); } catch { /* 清不掉也不影响删除本身 */ }
   await chars.del(id);
   // ⚠️ 不再靠人工维护前缀表：任何以 ':<id>结尾' 的键都清掉。
@@ -10190,6 +10884,21 @@ const CLOCK_POLICY_PRESETS = [
 ];
 
 // 实测：API 不认 "off"（会报错），关闭思考必须传 "none"
+// 称谓档位（v0.5.2）。值和 persona.js 里的读音表一一对应，改这里要一起改。
+const USER_PRONOUN_PRESETS = [
+  { label: '你', value: 'you' },
+  { label: '他', value: 'he' },
+  { label: '她', value: 'she' },
+  { label: 'TA', value: 'ta' },
+  { label: '它', value: 'it' },
+  { label: '只用名字', value: 'name' }
+];
+const USER_IDENTITY_PRESETS = [
+  { label: '主角', value: 'lead' },
+  { label: '在场配角', value: 'side' },
+  { label: '不在场', value: 'off' }
+];
+
 const REASONING_PRESETS = [
   { label: 'off', value: 'none' },
   { label: 'low', value: 'low' },
@@ -10605,6 +11314,928 @@ let _arcInline = null;
 let _arcInlineTimer = 0;
 
 const arcKey = (id) => 'arc:' + id;
+
+// ================= 小说层（v0.5.2）=================
+// 产品裁决（写在最上面，因为它决定了下面所有取舍）：
+//   聊天是发生，小说是成篇，阅读是回看；三者共用同一场戏。
+// 三条硬规则，违反任何一条都算 bug：
+//   1. 小说删除永远不碰聊天；清空聊天也不碰 scenes。
+//   2. 正文只存在 scenes.blocks 里，绝不写回 messages。
+//   3. 正文不用【名字】协议：旁白第三人称「她」，台词第一人称「我」。
+// 为什么单独一层而不是复用剧情卡：剧情卡管「聊天里往哪走」，
+// 一场戏管「这一篇怎么写」—— 前者会影响每一轮回复，后者只影响这一篇。
+
+let _scTrash = false;   // 书架当前看的是不是回收站
+let _scDraft = null;    // 开戏弹窗里正在编的场景卡
+let _scTemps = [];      // 开戏弹窗里的临时人物草稿
+let _scBeats = null;    // 分镜确认弹窗里的拍
+let _scNow = null;      // 阅读页正在看的那一场
+let _scBusy = false;    // 生成中（防重入）
+let _scStarting = false; // 正从「开一场戏」走到分镜/开演之间（分镜关掉时凭它判断该开新戏还是改旧场）
+let _scAbort = null;    // 生成中断用
+
+/** 生成用的接口配置。温度固定 0.9：写小说比聊天需要的变化量，但不该高到跑飞。 */
+function sceneCfg() {
+  return {
+    apiKey: S.apiKey || '',
+    baseUrl: S.baseUrl || '',
+    model: S.model || '',
+    provider: S.provider || '',
+    temperature: 0.9
+  };
+}
+
+async function sceneCharMap() {
+  const map = {};
+  try { for (const c of await chars.all()) map[c.id] = c.name || '（无名）'; } catch (e) { /* 角色读不出来不该让书架崩 */ }
+  return map;
+}
+
+/** 书架上那一行标题：优先用户填的，否则「地点 · 角色」 */
+function sceneHeadline(s, map) {
+  const t0 = String((s && s.title) || '').trim();
+  if (t0) return t0;
+  const who = (s && s.charId && map && map[s.charId]) || (s && s.detachedName) || '';
+  const where = String((s && s.setting && s.setting.place) || '').trim();
+  return (where || '一段戏') + (who ? ' · ' + who : '');
+}
+
+function scenePreview(s) {
+  const blocks = (s && s.blocks) || [];
+  const txt = blocks.map(b => b && b.text).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  return txt.length > 46 ? txt.slice(0, 46) + '…' : (txt || '还没写');
+}
+
+/** 回收站里超过 30 天的，顺手清掉（规格 §12：整篇进回收站 30 天） */
+async function sweepSceneTrash() {
+  try {
+    const dead = (await scenes.trash()).filter(s => s && s.trashedAt && (Date.now() - s.trashedAt) > TRASH_DAYS * 86400000);
+    for (const s of dead) await scenes.del(s.id);
+  } catch (e) { /* 清理失败不影响看书架 */ }
+}
+
+// ---------- 开一场戏 ----------
+// 三种在场方式（规格 §10）在界面上的说明。真正的约束在 scene.js 的 MODE_NOTE 里。
+const SC_MODE_NOTE = {
+  actor: '你在场：你自己那句由你写，她、旁白、临时人物由模型写。模型不替你说话。',
+  director: '你不在场：你输入的是导演指令（不进正文、不进记忆），正文里不出现「你」。',
+  audience: '你在场，模型可以先替你说；你一开口就接手。'
+};
+let _scCharId = '';    // 开戏弹窗当前选中的角色
+let _scSrc = 'blank';  // 从哪儿起：blank（空白开戏）/ chat（从聊天成章）
+let _scChat = null;    // 「从聊天成章」的前情快照 { msgIds, excerpt }，切换角色时清掉重抓
+let _scLen = 'short';
+let _scMode = 'actor';
+let _scCharName = '';
+
+/**
+ * 「从聊天成章」的前情快照（规格 §2「从聊天派生但快照隔离」）。
+ * 取活动路径最后 30 条、拼成几行存进场景卡 —— 之后聊天被删被改被切支，这场戏读到的还是当初那段。
+ * 只有 chat 模式才用；空白开戏一个字都不读。
+ */
+async function scChatSnapshot(charId) {
+  try {
+    const list = await curMsgsAll(charId);
+    const tail = list.filter(m => m && m.content && !m.archived).slice(-30);
+    const allChars = await chars.all();
+    const me = String((S && S.userName) || '').trim() || '你';
+    const nameOf = (m) => {
+      if (m.role === 'user') return me;
+      if (m.speakerId) {
+        const c = allChars.find(x => x.id === m.speakerId);
+        if (c && c.name) return c.name;
+      }
+      return _scCharName || '她';
+    };
+    let txt = tail.map(m => nameOf(m) + '：' + String(m.content).replace(/\s+/g, ' ').trim()).join('\n');
+    if (txt.length > 1800) txt = '…' + txt.slice(-1800);
+    return { msgIds: tail.map(m => m.id), excerpt: txt };
+  } catch { return { msgIds: [], excerpt: '' }; }
+}
+
+/** 弹窗里填的东西 → 一张场景卡（不落库）。char 读不到时也要能返回一张能用的空卡。 */
+function scDraftScene() {
+  if (!_scCharId) return null;
+  const base = emptyScene(_scCharId);
+  const beats = clampBeats([], _scLen);
+  if (_scBeats && _scBeats.length) {
+    for (let i = 0; i < beats.length && i < _scBeats.length; i++) {
+      beats[i] = { ...beats[i], ..._scBeats[i], guardrails: (_scBeats[i].guardrails || []).slice(0, GUARDRAILS_MAX) };
+    }
+  }
+  const guard = String($('sc-guard') ? $('sc-guard').value : '')
+    .split('\n').map(x => x.trim()).filter(Boolean).slice(0, GUARDRAILS_MAX);
+  const change = String($('sc-change') ? $('sc-change').value : '').trim();
+  if (change && beats[0]) beats[0] = { ...beats[0], change: beats[0].change || change };
+  if (guard.length && beats[0]) {
+    beats[0] = { ...beats[0], guardrails: Array.from(new Set([...(beats[0].guardrails || []), ...guard])).slice(0, GUARDRAILS_MAX) };
+  }
+  const src = (_scSrc === 'chat' && _scChat && _scChat.excerpt)
+    ? { kind: 'chat', chatCharId: _scCharId, msgIds: _scChat.msgIds, excerpt: _scChat.excerpt }
+    : { kind: 'blank', chatCharId: '', msgIds: [], excerpt: '' };
+  return normalizeScene({
+    ...base,
+    charId: _scCharId,
+    source: src,
+    title: String($('sc-title') ? $('sc-title').value : '').trim(),
+    length: _scLen,
+    userMode: _scMode,
+    setting: {
+      place: String($('sc-place') ? $('sc-place').value : '').trim(),
+      time: String($('sc-time') ? $('sc-time').value : '').trim(),
+      weather: String($('sc-weather') ? $('sc-weather').value : '').trim()
+    },
+    cast: [
+      { role: 'main', name: _scCharName || '她', charId: _scCharId },
+      ...(_scMode === 'director' ? [] : [{ role: 'user', name: String((S && S.userName) || '').trim() || '你' }]),
+      ..._scTemps.map(c => ({ role: 'temp', name: c.name, card: { identity: c.identity, look: c.look, want: c.want, secret: c.secret }, ephemeral: true }))
+    ],
+    beats
+  });
+}
+
+function renderScTemps() {
+  const box = $('sc-temp-list');
+  if (!box) return;
+  if ($('sc-temp-cnt')) $('sc-temp-cnt').textContent = _scTemps.length + ' / ' + TEMP_CAST_MAX;
+  box.innerHTML = _scTemps.map((c, i) =>
+    '<div class="sc-temp"><div class="st-main"><b>' + esc(c.name) + '</b>'
+    + '<span class="st-sub">' + esc([c.identity, c.look].filter(Boolean).join('；')) + '</span></div>'
+    + '<button class="st-x" data-i="' + i + '" title="去掉">✕</button></div>').join('');
+  box.querySelectorAll('.st-x').forEach(b => {
+    b.onclick = () => { _scTemps.splice(Number(b.dataset.i), 1); renderScTemps(); };
+  });
+}
+
+const SC_SRC_NOTE = {
+  blank: '从头起：只按下面填的地方、时间、人物写，不读聊天记录。',
+  chat: '从这段聊起来：把你们最近的聊天截一段当背景（只截文字，之后就独立了）—— 这场戏不会改动聊天，聊天变了也不影响它。'
+};
+
+function refreshSceneNote() {
+  const n = $('sc-mode-note');
+  if (n) n.textContent = SC_MODE_NOTE[_scMode] || '';
+  const s = $('sc-src-note');
+  if (s) s.textContent = SC_SRC_NOTE[_scSrc] || '';
+}
+
+async function openSceneModal() {
+  const list = await chars.all();
+  if (!list.length) { toast('先建一个角色，再来开戏'); return; }
+  const pick = (curCharId && list.some(c => c.id === curCharId)) ? curCharId : list[0].id;
+  _scCharId = pick;
+  _scCharName = (list.find(c => c.id === pick) || {}).name || '';
+  _scLen = 'short';
+  _scMode = 'actor';
+  _scSrc = 'blank';
+  _scChat = null;
+  _scTemps = [];
+  _scBeats = null;
+
+  const sel = $('sc-char');
+  if (sel) {
+    sel.innerHTML = list.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name || '（无名）') + '</option>').join('');
+    sel.value = pick;
+    sel.onchange = () => {
+      _scCharId = sel.value;
+      _scCharName = (list.find(c => c.id === sel.value) || {}).name || '';
+      _scChat = null;   // 换了角色，前情也得重截
+    };
+  }
+  renderSeg('sc-src', [
+    { label: '空白开戏', value: 'blank' },
+    { label: '从这段聊起来', value: 'chat' }
+  ], _scSrc, v => { _scSrc = String(v); refreshSceneNote(); });
+  renderSeg('sc-len', [
+    { label: '短 · 300–600 字', value: 'short' },
+    { label: '中 · 600–1200 字', value: 'medium' }
+  ], _scLen, v => { _scLen = String(v); });
+  renderSeg('sc-mode', USER_MODES.map(m => ({ label: USER_MODE_NAME[m], value: m })), _scMode, v => {
+    _scMode = String(v);
+    refreshSceneNote();
+  });
+  refreshSceneNote();
+
+  // 地点/时间/天气每次都清空：自动带上一场的值会让他没注意就把上一场的地点又用了一遍。
+  if ($('sc-place')) $('sc-place').value = '';
+  if ($('sc-time')) $('sc-time').value = '';
+  if ($('sc-weather')) $('sc-weather').value = '';
+  if ($('sc-change')) $('sc-change').value = '';
+  if ($('sc-guard')) $('sc-guard').value = '';
+  if ($('sc-title')) $('sc-title').value = '';
+
+  renderScTemps();
+  $('scn-modal').classList.remove('hidden');
+}
+
+// 临时人物（规格 §6）：名字由模型给，风格跟着这个故事走，不进角色列表、不进长期记忆。
+// ---------- 阅读页 ----------
+// 规格 §11：全屏上下滚动，默认只有正文和一条极细进度线；点屏幕中间呼出控制层。
+// 没有气泡、没有头像、没有时间戳、没有 token —— 那一层是聊天，不是小说。
+
+function readParaHTML(b, i) {
+  const cls = b.kind === 'user' ? 'rv-para rv-user'
+    : (b.kind === 'dialogue' ? 'rv-para rv-dlg' : 'rv-para');
+  return '<p class="' + cls + '" data-bi="' + i + '">' + esc(b.text) + '</p>';
+}
+
+function renderReadBody(sc) {
+  const box = $('rv-body');
+  if (!box) return;
+  const blocks = (sc && sc.blocks) || [];
+  box.innerHTML = blocks.length
+    ? blocks.map((b, i) => readParaHTML(b, i)).join('')
+    : '<p class="rv-para rv-empty">还没写。</p>';
+  const live = document.createElement('div');
+  live.id = 'rv-live';
+  live.className = 'rv-para rv-live';
+  box.appendChild(live);
+}
+
+function rvScrollBottom() {
+  const s = $('rv-scroll');
+  if (s) s.scrollTop = s.scrollHeight;
+}
+
+function showReadLive(txt) {
+  const el = $('rv-live');
+  if (el) el.textContent = txt || '';
+  rvScrollBottom();
+}
+function hideReadLive() { showReadLive(''); }
+
+function readProgress() {
+  const s = $('rv-scroll');
+  const bar = $('rv-progress-bar');
+  if (!s || !bar) return;
+  const max = s.scrollHeight - s.clientHeight;
+  const p = max > 4 ? Math.min(100, Math.max(0, (s.scrollTop / max) * 100)) : 100;
+  bar.style.width = p + '%';
+}
+
+// 记住上次读到哪（规格 §11）。写库要防抖：滚动一次能触发几十回，每回都 put 会把库写烂。
+let _rvSaveTimer = 0;
+function rvRememberScroll() {
+  const s = $('rv-scroll');
+  if (!s || !_scNow || !_scNow.id) return;
+  const max = s.scrollHeight - s.clientHeight;
+  _scNow.readAt = max > 4 ? Math.min(1, Math.max(0, Math.round((s.scrollTop / max) * 1000) / 1000)) : 1;
+  clearTimeout(_rvSaveTimer);
+  _rvSaveTimer = setTimeout(() => {
+    const sc = _scNow;
+    if (!sc || !sc.id) return;
+    scenes.get(sc.id).then(fresh => {
+      if (!fresh) return null;
+      fresh.readAt = Number(sc.readAt) || 0;
+      return scenes.put(fresh);
+    }).catch(() => { /* 记个读到哪失败不该打断阅读 */ });
+  }, 900);
+}
+
+/** 阅读页当前这一场，按 id 从库里重读一遍（避免界面上拿着一份过期的引用） */
+async function reloadScene() {
+  if (!_scNow || !_scNow.id) return null;
+  const fresh = await scenes.get(_scNow.id);
+  if (fresh) _scNow = fresh;
+  return _scNow;
+}
+
+async function openRead(sc) {
+  if (!sc || !sc.id) return;
+  _scNow = sc;
+  const map = await sceneCharMap();
+  if ($('rv-title')) $('rv-title').textContent = sceneHeadline(sc, map);
+  renderReadBody(sc);
+  renderReadEnd(sc);
+  showView('read');
+  const pct = Number(sc.readAt) || 0;
+  if (pct > 0 && pct < 1) {
+    // 顺着上次的位置打开；读完了（readAt=1）才回到底部。
+    requestAnimationFrame(() => {
+      const el = $('rv-scroll');
+      if (el) el.scrollTop = (el.scrollHeight - el.clientHeight) * pct;
+      readProgress();
+    });
+  } else {
+    rvScrollBottom();
+  }
+  readProgress();
+}
+
+function renderReadEnd(sc) {
+  const end = $('rv-end');
+  if (!end) return;
+  const done = sc.status === 'done';
+  const truncated = sc.status === 'generating' && (sc.blocks || []).length > 0;
+  let h = '';
+  if (truncated) {
+    h += '<div class="rv-warn">这一段没写完。</div>'
+      + '<div class="rv-row">'
+      + '<button id="rv-fix-continue">继续这一段</button>'
+      + '<button id="rv-fix-rewrite">重写这一段</button>'
+      + '<button id="rv-fix-accept">就这样</button>'
+      + '</div>';
+  } else if (done) {
+    h += '<div class="rv-fin">本场完</div>';
+  }
+  if (sc.userMode === 'actor') {
+    h += '<div class="rv-say"><input id="rv-say" placeholder="你这一句 / 你的动作" autocomplete="off">'
+      + '<button id="rv-say-go">说</button></div>';
+  } else if (sc.userMode === 'director') {
+    h += '<div class="rv-say"><input id="rv-say" placeholder="导演指令：让谁做什么（不进正文）" autocomplete="off">'
+      + '<button id="rv-say-go">导</button></div>';
+  }
+  end.innerHTML = h;
+  const say = $('rv-say');
+  if (say) {
+    say.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); onReadSay(); } };
+    $('rv-say-go').onclick = onReadSay;
+  }
+  if ($('rv-fix-continue')) $('rv-fix-continue').onclick = () => continueScene('继续这一段，别重复已经写过的');
+  if ($('rv-fix-rewrite')) $('rv-fix-rewrite').onclick = () => rewriteLastBeat();
+  if ($('rv-fix-accept')) $('rv-fix-accept').onclick = async () => {
+    const s = await reloadScene();
+    if (!s) return;
+    s.status = s.status === 'generating' ? 'done' : s.status;
+    s.updatedAt = Date.now();
+    await scenes.put(s);
+    _scNow = s;
+    renderReadEnd(s);
+  };
+}
+
+// ---------- 生成编排（规格 §8）----------
+
+/** 写正文。from 之后每一拍都写一遍；截断就停在那儿，不自动续写。 */
+async function writeScene(sc, opts = {}) {
+  if (_scBusy) { toast('还在写上一段'); return; }
+  if (!S.apiKey) { toast('还没填 API Key'); return; }
+  _scBusy = true;
+  const cfg = sceneCfg();
+  const from = Math.max(0, Math.min(sc.beats.length - 1,
+    opts.beatIdx != null ? Number(opts.beatIdx) : (Number(sc.currentBeat) || 0)));
+  let stopMsg = '';
+  try {
+    sc.status = 'generating';
+    await scenes.put(sc);
+    for (let i = from; i < sc.beats.length; i++) {
+      const prevText = (sc.blocks || []).filter(b => b && b.kind !== 'user').map(b => b.text).join('\n');
+      let got = false;
+      let fixup = '';
+      for (let attempt = 0; attempt < 2 && !got; attempt++) {
+        showReadLive('（正在写第 ' + (i + 1) + ' 拍…）');
+        let r;
+        try {
+          r = await genProse({
+            scene: sc, cfg, beatIdx: i, prevText,
+            userLine: attempt === 0 ? (opts.userLine || '') : '',
+            directive: opts.directive || '',
+            fixup,
+            onDelta: txt => showReadLive(txt)
+          });
+        } catch (e) {
+          hideReadLive();
+          stopMsg = (e && e.message) ? e.message : '请求失败';
+          break;
+        }
+        if (!r || !r.text) { hideReadLive(); stopMsg = '模型这次一个字都没给'; break; }
+        // 质量闸门不过：只自动重试一次，第二次不管怎样都收下（规格 §8）
+        if (r.quality && r.quality.ok === false && attempt === 0) {
+          // 不能用 opts.directive：那是「导演指令」，只有导演模式才进提示词，
+          // 演员/观众模式下改它等于什么都没改，重试会原样再发一遍。
+          fixup = '上一次这些地方不合格，重写：' + (r.quality.reasons || []).join('；');
+          continue;
+        }
+        hideReadLive();
+        const blocks = textToBlocks(r.text, i);
+        sc.blocks = (sc.blocks || []).concat(blocks);
+        sc.log = sc.log || { events: [], cast: [], change: '', openThreads: [], keyLines: [] };
+        sc.quality = (r.quality && r.quality.ok === false) ? 'warn' : 'ok';
+        sc.updatedAt = Date.now();
+        got = true;
+        renderReadBody(sc);
+        rvScrollBottom();
+        if (r.truncated) { stopMsg = '这一段没写完（被长度截断）'; }
+        else if (i < sc.beats.length - 1) { sc.currentBeat = i + 1; }
+      }
+      if (stopMsg) break;
+      if (!got) break;
+      await scenes.put(sc);
+    }
+    if (!stopMsg) {
+      // 全部写完 → 场记（§9.2）：失败不影响正文，只是没场记
+      if ((sc.blocks || []).length) {
+        showReadLive('（在整理场记…）');
+        try {
+          const lg = await genLog({ text: sc.blocks.map(b => b.text).join('\n'), cfg });
+          if (lg && lg.ok && lg.log) sc.log = lg.log;
+        } catch (e) { /* 场记失败不挡正文 */ }
+        hideReadLive();
+      }
+      sc.status = 'done';
+      sc.currentBeat = Math.min(sc.currentBeat || 0, sc.beats.length - 1);
+    } else {
+      sc.status = 'generating';
+    }
+  } finally {
+    _scBusy = false;
+    sc.updatedAt = Date.now();
+    try { await scenes.put(sc); } catch (e) { /* 存不下去也要把界面收回来 */ }
+    _scNow = sc;
+    hideReadLive();
+    renderReadBody(sc);
+    renderReadEnd(sc);
+    rvScrollBottom();
+    if (stopMsg) toast(stopMsg, 3600);
+  }
+}
+
+/** 章末那一句：演员模式进正文，导演模式当指令（都不进聊天记录） */
+async function onReadSay() {
+  const inp = $('rv-say');
+  if (!inp) return;
+  const txt = String(inp.value || '').trim();
+  if (!txt) return;
+  const s = await reloadScene();
+  if (!s) return;
+  inp.value = '';
+  if (s.userMode === 'director') {
+    await continueScene(txt, true);
+    return;
+  }
+  s.blocks = (s.blocks || []).concat([{ kind: 'user', text: txt, speaker: 'user', beat: s.currentBeat || 0 }]);
+  s.updatedAt = Date.now();
+  await scenes.put(s);
+  _scNow = s;
+  renderReadBody(s);
+  rvScrollBottom();
+  await writeScene(s, { userLine: txt, beatIdx: s.currentBeat || 0 });
+}
+
+/** 继续 / 导演指令：从当前拍接着写。director 传 true 表示这句话是指令不是台词。 */
+async function continueScene(text, isDirective) {
+  const s = await reloadScene();
+  if (!s) return;
+  await writeScene(s, {
+    beatIdx: s.currentBeat || 0,
+    directive: isDirective ? text : '',
+    userLine: isDirective ? '' : ''
+  });
+}
+
+/** 重写最后一拍：把这一拍写出来的 blocks 全部撤掉再写一遍（规格 §8 的「重写这一段」） */
+async function rewriteLastBeat() {
+  const s = await reloadScene();
+  if (!s) return;
+  const bi = Number(s.currentBeat) || 0;
+  const keep = (s.blocks || []).filter(b => Number(b.beat || 0) < bi);
+  s.blocks = keep;
+  s.status = 'generating';
+  s.updatedAt = Date.now();
+  await scenes.put(s);
+  _scNow = s;
+  renderReadBody(s);
+  await writeScene(s, { beatIdx: bi });
+}
+
+// ---------- 阅读页的操作菜单 ----------
+function closeReadMenu() {
+  const m = $('rv-menu');
+  if (m) m.remove();
+}
+
+function showReadMenu(items) {
+  closeReadMenu();
+  const box = document.createElement('div');
+  box.id = 'rv-menu';
+  box.className = 'rv-menu';
+  box.innerHTML = items.map((it, i) => '<button data-i="' + i + '">' + esc(it.label) + '</button>').join('');
+  document.body.appendChild(box);
+  box.querySelectorAll('button').forEach(b => {
+    b.onclick = () => { closeReadMenu(); const it = items[Number(b.dataset.i)]; if (it && it.fn) it.fn(); };
+  });
+  setTimeout(() => {
+    document.addEventListener('click', function once(ev) {
+      const el = /** @type {any} */ (ev.target);
+      if (!box.contains(el)) { closeReadMenu(); document.removeEventListener('click', once); }
+    });
+  }, 0);
+}
+
+function bindSceneTempAdd() {
+  const btn = $('sc-temp-add');
+  if (!btn || btn._bound) return;
+  btn._bound = true;
+  btn.onclick = async () => {
+    if (_scTemps.length >= TEMP_CAST_MAX) { toast('最多 ' + TEMP_CAST_MAX + ' 个临时人物'); return; }
+    if (btn.disabled) return;
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '想名字中…';
+    try {
+      const sc = scDraftScene() || emptyScene(_scCharId);
+      const used = _scTemps.map(c => c.name);
+      const r = await genTempCast({ scene: sc, used, cfg: sceneCfg() });
+      if (r.ok && r.card) { _scTemps.push(r.card); renderScTemps(); }
+      else toast('没想出来，再点一次试试');
+    } catch (e) {
+      toast('生成失败：' + (e && e.message ? e.message : e));
+    }
+    btn.disabled = false;
+    btn.textContent = old;
+  };
+}
+
+// ---------- 分镜确认（中场）----------
+function renderBeatDraft() {
+  const box = $('beat-list');
+  if (!box || !_scBeats) return;
+  box.innerHTML = _scBeats.map((b, i) =>
+    '<div class="beat-row" data-i="' + i + '">'
+    + '<div class="bh">第 ' + (i + 1) + ' 拍</div>'
+    + '<input class="bi" data-f="start" placeholder="从哪儿开始" value="' + esc(b.start || '') + '">'
+    + '<input class="bi" data-f="change" placeholder="这一拍改变了什么" value="' + esc(b.change || '') + '">'
+    + '<input class="bi" data-f="stop" placeholder="停在哪儿" value="' + esc(b.stop || '') + '">'
+    + '</div>').join('');
+}
+
+function collectBeatDraft() {
+  const box = $('beat-list');
+  if (!box || !_scBeats) return _scBeats;
+  box.querySelectorAll('.beat-row').forEach(row => {
+    const i = Number(row.dataset.i);
+    if (!_scBeats[i]) return;
+    row.querySelectorAll('.bi').forEach(inp => {
+      _scBeats[i][inp.dataset.f] = String(inp.value || '').trim();
+    });
+  });
+  return _scBeats;
+}
+
+function openBeatModal(sc) {
+  renderBeatDraft();
+  $('beat-modal').classList.remove('hidden');
+}
+
+/**
+ * 开演：短场直接写；中场先让模型分拍、他改完再写（规格 §8）。
+ * 分拍失败不让流程卡死 —— 退化成「一拍」照常开演，总比什么都不发生好。
+ */
+async function startScene() {
+  // 「从聊天成章」要读库，放到点下去这一刻再抓：弹窗里选一下不该就为了它去翻 200 条消息。
+  if (_scSrc === 'chat' && !_scChat) _scChat = await scChatSnapshot(_scCharId);
+  const sc = scDraftScene();
+  if (!sc) { toast('先选一个角色'); return; }
+  if (_scSrc === 'chat' && !(sc.source && sc.source.excerpt)) toast('这段聊天还没什么内容，按空白开戏写', 3500);
+  $('scn-modal').classList.add('hidden');
+  _scStarting = true;
+  if (!S.apiKey) { toast('还没填 API Key'); return; }
+  if (sc.length === 'medium') {
+    toast('在分拍…', 4000);
+    let r = null;
+    try { r = await genBeatPlan({ scene: sc, cfg: sceneCfg() }); } catch (e) { r = null; }
+    if (r && r.ok && r.beats.length) {
+      const arr = r.beats.slice(0, beatCountFor('medium')).map(b => ({
+        start: String((b && b.start) || '').slice(0, 300),
+        change: String((b && b.change) || '').slice(0, 300),
+        stop: String((b && b.stop) || '').slice(0, 300),
+        guardrails: (Array.isArray(b && b.guardrails) ? b.guardrails : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, GUARDRAILS_MAX),
+        turns: 0, done: false, doneBy: '', result: ''
+      }));
+      _scBeats = clampBeats(arr, 'medium');
+      sc.beats = _scBeats;
+      openBeatModal(sc);
+      return;
+    }
+    toast('分拍没成，先按一拍写', 3000);
+    sc.beats = clampBeats([], 'short');
+  }
+  await beginScene(sc);
+}
+
+async function beginScene(sc) {
+  _scStarting = false;
+  if (!sc.id) sc.id = newSceneId();
+  if (!sc.createdAt) sc.createdAt = Date.now();
+  sc.updatedAt = Date.now();
+  sc.status = 'generating';
+  if (!sc.title) {
+    const all = await scenes.all();
+    const n = all.filter(s => s && s.charId === sc.charId).length + 1;
+    sc.title = '第 ' + n + ' 夜' + (sc.setting.place ? ' · ' + sc.setting.place : '');
+  }
+  await scenes.put(sc);
+  _scNow = sc;
+  await openRead(sc);
+  await writeScene(sc, { beatIdx: 0 });
+}
+
+// ---------- 删除（规格 §12 的四种）----------
+// 硬规则：小说删除永远不碰聊天。所以这里没有任何一句会碰 msgs。
+
+async function trashScene(s) {
+  const ok = await confirmBox('删除这一场', '它会进回收站，30 天内还能找回。<br><b>聊天记录一个字都不会动。</b>', '删除');
+  if (!ok) return;
+  s.status = 'trashed';
+  s.trashedAt = Date.now();
+  s.updatedAt = Date.now();
+  await scenes.put(s);
+  _scNow = null;
+  _scTrash = false;
+  await renderShelf();
+  showView('shelf');
+}
+
+/** 从回收站拿回来。原来回收站只能看不能捞，「30 天内还能找回」就成了空话。 */
+async function restoreScene(s) {
+  s.status = (s.blocks || []).length ? 'done' : 'draft';
+  delete s.trashedAt;
+  s.updatedAt = Date.now();
+  await scenes.put(s);
+  _scNow = s;
+  toast('找回这一场了');
+  renderReadEnd(s);
+}
+
+// 删一拍可撤销（规格 §12）。快照整张卡，撤销就是原样写回去 —— 不做「反向操作」，
+// 因为删一拍要连着删正文段落、还要把后面拍的序号减一，反过来推比存快照更容易错。
+let _scUndo = null;
+let _scUndoTimer = 0;
+
+function hideUndoBar() {
+  const el = $('rv-undo');
+  if (el) el.classList.add('hidden');
+}
+
+function showUndoBar(txt) {
+  const el = $('rv-undo');
+  const lab = $('rv-undo-txt');
+  if (!el || !lab) return;
+  lab.textContent = txt || '';
+  el.classList.remove('hidden');
+  clearTimeout(_scUndoTimer);
+  // 12 秒：够反应过来，又不长期占着屏幕。超时就当用户认了这个删除。
+  _scUndoTimer = setTimeout(hideUndoBar, 12000);
+}
+
+async function deleteBeatAt(s, i) {
+  let fresh = null;
+  try { fresh = await scenes.get(s.id); } catch { fresh = null; }
+  if (!fresh) { toast('这一场已经不在了'); return; }
+  const beats = (fresh.beats || []).map(b => ({ ...b }));
+  if (beats.length <= 1) { toast('只剩一拍，删了就没得写了'); return; }
+  const ok = await confirmBox('删掉第 ' + (i + 1) + ' 拍',
+    '这一拍写出来的正文也会一起删掉。<br>删错了可以点下面的「撤销」。', '删掉');
+  if (!ok) return;
+  _scUndo = { scene: JSON.parse(JSON.stringify(fresh)) };
+  beats.splice(i, 1);
+  fresh.beats = beats;
+  fresh.blocks = (fresh.blocks || [])
+    .filter(b => Number(b.beat || 0) !== i)
+    .map(b => { const bi = Number(b.beat || 0); return bi > i ? { ...b, beat: bi - 1 } : b; });
+  fresh.currentBeat = Math.max(0, Math.min(beats.length - 1, Number(fresh.currentBeat) || 0));
+  fresh.updatedAt = Date.now();
+  const clean = normalizeScene(fresh);
+  await scenes.put(clean);
+  _scNow = clean;
+  renderReadBody(clean);
+  renderReadEnd(clean);
+  readProgress();
+  showUndoBar('删掉了第 ' + (i + 1) + ' 拍');
+}
+
+async function undoSceneBeat() {
+  if (!_scUndo || !_scUndo.scene) { hideUndoBar(); return; }
+  const back = _scUndo.scene;
+  _scUndo = null;
+  hideUndoBar();
+  const clean = normalizeScene(back);
+  await scenes.put(clean);
+  toast('撤销了');
+  if (_scNow && _scNow.id === clean.id) {
+    _scNow = clean;
+    renderReadBody(clean);
+    renderReadEnd(clean);
+    readProgress();
+  }
+}
+
+async function detachSource(s) {
+  s.source = { kind: 'blank', chatCharId: '', msgIds: [] };
+  s.updatedAt = Date.now();
+  await scenes.put(s);
+  _scNow = s;
+  toast('已经和那段聊天断开了，正文还在');
+  renderReadEnd(s);
+}
+
+async function removeCastFlow(s) {
+  const temps = (s.cast || []).filter(c => c.role === 'temp');
+  if (!temps.length) { toast('这一场没有临时人物'); return; }
+  showReadMenu(temps.map(c => ({
+    label: '去掉 ' + c.name,
+    fn: async () => {
+      const delLines = await confirmBox(
+        '去掉「' + c.name + '」',
+        '他在这场的台词会改成旁白（引号去掉、正文保留）。<br>要连他说的话一起删掉吗？',
+        '连台词一起删'
+      );
+      s.cast = (s.cast || []).filter(x => x.name !== c.name);
+      const out = [];
+      for (const b of (s.blocks || [])) {
+        if (b.kind === 'dialogue') {
+          const nv = dialogueToNarration(b.text);
+          // 剥完引号什么都不剩 = 这一段几乎全是台词。这时候「不删台词」就该原样留成旁白，
+          // 而不是也跟着丢掉 —— 原来的两个分支都写 continue，等于永远走删除。
+          if (!nv) { if (!delLines) out.push({ ...b, kind: 'narration', text: b.text }); continue; }
+          out.push({ ...b, kind: 'narration', text: nv });
+        } else out.push(b);
+      }
+      s.blocks = out;
+      s.updatedAt = Date.now();
+      await scenes.put(s);
+      _scNow = s;
+      renderReadBody(s);
+      renderReadEnd(s);
+      toast('已去掉 ' + c.name);
+    }
+  })));
+}
+
+// ---------- 阅读页与开戏弹窗的绑定 ----------
+const RV_THEMES = ['dark', 'sepia', 'light'];
+let _rvSize = 17;
+let _rvTheme = 'dark';
+
+function applyRvPref() {
+  const v = $('view-read');
+  if (!v) return;
+  v.dataset.theme = _rvTheme;
+  v.style.setProperty('--rv-size', _rvSize + 'px');
+}
+
+let _scUiBound = false;   // 幂等：init() 里只会调一次，防重复挂监听
+function bindSceneUI() {
+  if (_scUiBound) return;
+  _scUiBound = true;
+
+  // 开戏弹窗
+  $('sc-cancel').onclick = () => { $('scn-modal').classList.add('hidden'); };
+  $('sc-go').onclick = () => { startScene(); };
+
+  // 分镜确认
+  $('beat-cancel').onclick = () => { _scStarting = false; $('beat-modal').classList.add('hidden'); };
+  $('beat-ok').onclick = async () => {
+    const editing = !_scStarting && _scNow && _scNow.id;
+    const sc = editing ? _scNow : scDraftScene();
+    if (!sc) { $('beat-modal').classList.add('hidden'); return; }
+    const drawn = collectBeatDraft();
+    sc.beats = clampBeats(drawn, sc.length);
+    $('beat-modal').classList.add('hidden');
+    if (editing) {
+      // 「改这一场的拍」：原地换拍，从第 1 拍重写
+      _scNow.beats = sc.beats;
+      _scNow.currentBeat = 0;
+      _scNow.blocks = [];
+      _scNow.status = 'generating';
+      _scNow.updatedAt = Date.now();
+      await scenes.put(_scNow);
+      renderReadBody(_scNow);
+      await writeScene(_scNow, { beatIdx: 0 });
+    } else {
+      await beginScene(sc);
+    }
+  };
+  $('beat-replan').onclick = async () => {
+    const sc = (!_scStarting && _scNow) ? _scNow : scDraftScene();
+    if (!sc) return;
+    toast('在重新分拍…', 4000);
+    let r = null;
+    try { r = await genBeatPlan({ scene: sc, cfg: sceneCfg() }); } catch (e) { r = null; }
+    if (!r || !r.ok || !r.beats.length) { toast('还是没分好'); return; }
+    _scBeats = clampBeats(r.beats.map(b => ({
+      start: String((b && b.start) || '').slice(0, 300),
+      change: String((b && b.change) || '').slice(0, 300),
+      stop: String((b && b.stop) || '').slice(0, 300),
+      guardrails: (Array.isArray(b && b.guardrails) ? b.guardrails : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, GUARDRAILS_MAX),
+      turns: 0, done: false, doneBy: '', result: ''
+    })), sc.length);
+    renderBeatDraft();
+  };
+
+  // 书架
+  $('btn-shelf-back').onclick = () => { showView('chat'); };
+  $('btn-shelf-new').onclick = () => { openSceneModal(); };
+
+  // 阅读页
+  $('rv-back').onclick = async () => {
+    if (_scBusy) { toast('还在写，写完再走'); return; }
+    _scNow = null;
+    await renderShelf();
+    showView('shelf');
+  };
+  $('rv-exit').onclick = () => { $('rv-ctrl').classList.add('hidden'); $('rv-back').onclick(); };
+  $('rv-theme').onclick = () => {
+    _rvTheme = RV_THEMES[(RV_THEMES.indexOf(_rvTheme) + 1) % RV_THEMES.length];
+    applyRvPref();
+  };
+  $('rv-font-up').onclick = () => { _rvSize = Math.min(22, _rvSize + 1); applyRvPref(); rvScrollBottom(); };
+  $('rv-font-down').onclick = () => { _rvSize = Math.max(15, _rvSize - 1); applyRvPref(); rvScrollBottom(); };
+  $('rv-del').onclick = () => { if (_scNow) trashScene(_scNow); };
+  $('rv-undo-btn').onclick = () => { undoSceneBeat(); };
+  $('rv-continue').onclick = () => { if (_scNow) continueScene('接着往下写，别重复已经写过的'); };
+  $('rv-rewrite').onclick = () => { if (_scNow) rewriteLastBeat(); };
+  $('rv-more').onclick = () => {
+    const s = _scNow;
+    if (!s) return;
+    const items = [];
+    items.push({ label: '改这一场的拍', fn: () => { _scStarting = false; _scBeats = JSON.parse(JSON.stringify(s.beats || [])); openBeatModal(s); } });
+    const beatsNow = s.beats || [];
+    if (beatsNow.length > 1) {
+      beatsNow.forEach((b, i) => {
+        items.push({ label: '删掉第 ' + (i + 1) + ' 拍', fn: () => { deleteBeatAt(s, i); } });
+      });
+    }
+    if ((s.cast || []).some(c => c.role === 'temp')) items.push({ label: '去掉这场里的人物…', fn: () => removeCastFlow(s) });
+    if (s.source && s.source.kind === 'chat') items.push({ label: '断开与聊天的关联', fn: () => detachSource(s) });
+    if (s.status === 'trashed') items.push({ label: '恢复这一场', fn: () => restoreScene(s) });
+    else items.push({ label: '删除这一场（进回收站）', fn: () => trashScene(s) });
+    showReadMenu(items);
+  };
+
+  // 点屏幕中间呼出控制层（规格 §11）
+  $('rv-scroll').addEventListener('click', e => {
+    if (e.target && e.target.closest && e.target.closest('input,button')) return;
+    if (e.target && e.target.closest && e.target.closest('.rv-ctrl')) return;
+    $('rv-ctrl').classList.toggle('hidden');
+  });
+  $('rv-scroll').addEventListener('scroll', () => { readProgress(); rvRememberScroll(); }, { passive: true });
+
+  bindSceneTempAdd();
+  applyRvPref();
+}
+
+async function renderShelf() {
+  const box = $('shelf-list');
+  if (!box) return;
+  await sweepSceneTrash();
+  const all = await scenes.all();
+  const map = await sceneCharMap();
+  const list = all
+    .filter(s => s && (_scTrash ? s.status === 'trashed' : s.status !== 'trashed'))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const trashed = all.filter(s => s && s.status === 'trashed').length;
+
+  const rows = list.map(s => {
+    const wc = sceneWordCount(s);
+    const L = SCENE_LENGTHS[s.length] || SCENE_LENGTHS.short;
+    const mode = USER_MODE_NAME[s.userMode] || '演员';
+    const when = s.updatedAt ? new Date(s.updatedAt) : null;
+    const date = when ? (when.getMonth() + 1) + '/' + when.getDate() : '';
+    const badge = s.status === 'generating' ? '没写完' : (s.status === 'draft' ? '草稿' : '');
+    return '<button class="shelf-item" data-scene="' + s.id + '">'
+      + '<div class="si-top"><b>' + esc(sceneHeadline(s, map)) + '</b>'
+      + (badge ? '<span class="si-badge">' + badge + '</span>' : '') + '</div>'
+      + '<div class="si-pre">' + esc(scenePreview(s)) + '</div>'
+      + '<div class="si-meta">' + tt(L.label) + ' · ' + tt(mode) + ' · ' + wc + ' ' + tt('字')
+      + (date ? ' · ' + date : '') + '</div>'
+      + '</button>';
+  }).join('');
+
+  const head = _scTrash
+    ? '<div class="shelf-head"><span>回收站</span><button class="ghost-btn sm" id="shelf-back-live">← 回书架</button></div>'
+    : '';
+  const foot = _scTrash
+    ? ''
+    : '<button class="ghost-btn shelf-trash" id="shelf-trash-btn">回收站（' + trashed + '）</button>';
+
+  box.innerHTML = head
+    + (rows || '<p class="shelf-empty">' + (_scTrash ? '回收站是空的。' : '还没有戏。点右上角 ＋ 开一场。') + '</p>')
+    + foot;
+
+  box.querySelectorAll('[data-scene]').forEach(b => {
+    b.onclick = () => { openScene(b.dataset.scene); };
+  });
+  const tb = $('shelf-trash-btn');
+  if (tb) tb.onclick = () => { _scTrash = true; renderShelf(); };
+  const bb = $('shelf-back-live');
+  if (bb) bb.onclick = () => { _scTrash = false; renderShelf(); };
+}
+
+/** 书架点开某一场。⚠️ v0.5.2 之前这里调用的 openScene 根本没定义（点了报 ReferenceError）。 */
+async function openScene(id) {
+  let s = null;
+  try { s = await scenes.get(id); } catch (e) { s = null; }
+  if (!s) { toast('这一场已经不在了'); await renderShelf(); return; }
+  _scNow = s;
+  await openRead(s);
+}
+
+async function openShelf() {
+  _scTrash = false;
+  await renderShelf();
+  showView('shelf');
+}
 
 async function loadArcFor(id) {
   if (!id) return emptyArc();
@@ -11608,6 +13239,31 @@ function bindSettings() {
   renderStRegex();   // 酒馆正则面板（v0.4.0）：只渲染一次，自己的开关自己重绘
   renderClockRanges();
   refreshClockHint();
+  // 称谓层（v0.5.2）：全局那些 —— 她默认怎么叫你、旁白怎么指你
+  $('s-uname').value = S.userName || '';
+  $('s-uaddr').value = S.userAddressDefault || '';
+  renderSeg('s-upron', USER_PRONOUN_PRESETS, S.userPronoun || 'you', v => {
+    $('s-upron').dataset.v = String(v);
+    saveSettings({ userPronoun: String(v) });
+    refreshNameHint();
+  });
+  $('s-upron').dataset.v = S.userPronoun || 'you';
+  renderSeg('s-uid', USER_IDENTITY_PRESETS, S.userIdentity || 'lead', v => {
+    $('s-uid').dataset.v = String(v);
+    saveSettings({ userIdentity: String(v) });
+    refreshNameHint();
+  });
+  $('s-uid').dataset.v = S.userIdentity || 'lead';
+  $('s-uname').onchange = async e => {
+    await saveSettings({ userName: e.target.value.trim() });
+    refreshNameHint();
+  };
+  $('s-uaddr').onchange = async e => {
+    await saveSettings({ userAddressDefault: e.target.value.trim() });
+    refreshNameHint();
+  };
+  refreshNameHint();
+
   $('s-apikey').value = S.apiKey;
   $('s-baseurl').value = S.baseUrl;
   $('s-model').value = S.model;
@@ -11734,6 +13390,8 @@ function bindSettings() {
         items: before.map(m => ({ id: m.id, text: m.text, kind: m.kind,
                                   untilDay: m.untilDay,
                                   untilHour: m.untilHour, untilMinute: m.untilMinute,
+                                  day: m.day ?? null, sourceMsgIds: m.sourceMsgIds || [],
+                                  status: m.status || 'active', legacy: m.legacy === true,
                                   freq: m.freq, mine: !!m.mine })),
       });
       _lastDedupeStat = null;
@@ -11851,6 +13509,15 @@ function bindSettings() {
                         untilDay: typeof it.untilDay === 'number' ? it.untilDay : null,
                         untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                         untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
+                        day: typeof it.day === 'number' ? it.day : null,
+                        sourceMsgIds: it.sourceMsgIds || [],
+                        status: it.status === 'superseded' ? 'superseded' : 'active',
+                        // 槽位与取代链（v0.5.1.1）：撤销一次整理要把它们一起还回去，
+                        // 否则旧说法会重新变成 active，记忆里同时出现两个互相矛盾的状态。
+                        key: it.key || '', supersededBy: it.supersededBy || null,
+                        supersededDay: typeof it.supersededDay === 'number' ? it.supersededDay : null,
+                        supersededAt: typeof it.supersededAt === 'number' ? it.supersededAt : 0,
+                        legacy: it.legacy === true,
                         freq: it.freq, mine: !!it.mine, ts: Date.now() });
       }
       // 删掉【备份之外新增的】—— 用 id 比对（2026-09-27 修）。
@@ -12185,6 +13852,8 @@ async function archivePreview() {
   // renderArchiveHint 早就为这个状态加了 !curCharId 守卫，这两个按钮漏了。
   // 删光所有角色（或刚装好还没建角色）时进设置页展开「归档旧对话」就会碰到。
   if (!curCharId) return { total: 0, kept: 0, archived: 0 };
+  // 归档是「统计这条对话有多长」，算全量 —— 被切走的分支也是真实存在过的对话，
+  // 它不该因为没在当前这条线上就躲过归档（参见 curMsgs 的注释）。
   const all = await msgs.list(curCharId);
   const keep = Math.max(0, Number(S.archiveKeep) || 0);
   const arch = await msgs.archived(curCharId);
@@ -12308,8 +13977,18 @@ async function refreshMemOverflow() {
  */
 function memItemHtml(m, opts = {}) {
   const clickable = opts.clickable !== false;
+  // 被取代的旧说法（v0.5.1.1）：灰掉、划掉、给一个「恢复」。
+  // 故意不删 —— 用户要能看见"她以前是这么认为的"，也好自己判断哪条才对。
+  const st = String((m && m.status) || '');
+  const dead = st === 'superseded';
+  // 过期（v0.5.1.1）：不再是"删掉就算了"。灰掉、标一句过期，同样给「恢复」。
+  const gone = st === 'expired';
   const tags = [];
-  if (m.kind === 'event' && typeof m.untilDay === 'number') {
+  if (dead) {
+    tags.push('<em class="mem-tag sup">已被取代</em>');
+  } else if (gone) {
+    tags.push('<em class="mem-tag exp">已过期</em>');
+  } else if (m.kind === 'event' && typeof m.untilDay === 'number') {
     // 有小时就显示到分钟（"第 4 天 15:00"），没有就还是"第 4 天"
     const t = (typeof m.untilHour === 'number')
       ? ' ' + String(m.untilHour).padStart(2, '0') + ':' + String(m.untilMinute || 0).padStart(2, '0')
@@ -12318,16 +13997,28 @@ function memItemHtml(m, opts = {}) {
   } else {
     tags.push('<em class="mem-tag">长期</em>');
   }
+  if (typeof m.day === 'number' && m.day >= 1) {
+    tags.push('<em class="mem-tag">记于第 ' + m.day + ' 天</em>');
+  }
+  if (m.key) tags.push('<em class="mem-tag key">' + esc(m.key) + '</em>');
   if (m.mine) tags.push('<em class="mem-tag mine">自定义</em>');
-  // 结构：左列（正文 + 下面另起一行的标签）｜右列（✕）
+  // 来源（记忆回链）：点一下看这条是从哪几句话里抽出来的。
+  // 只用已经存下来的 sourceMsgIds，不花 token、不额外请求。
+  if (Array.isArray(m.sourceMsgIds) && m.sourceMsgIds.length) {
+    tags.push('<em class="mem-tag src" data-src="' + esc(m.id) + '">来自 ' + m.sourceMsgIds.length + ' 条</em>');
+  }
+  // 结构：左列（正文 + 下面另起一行的标签）｜右列（✕ / 恢复）
   // 标签必须包在左列里才会"在文字下面"；直接和 .txt 平级的话，
   // .mem-item 是横排 flex，标签会被挤到文字右边去。
-  return '<div class="mem-item' + (clickable ? ' tap' : '') + '" data-mid="' + esc(m.id) + '">'
+  return '<div class="mem-item' + (clickable ? ' tap' : '') + (dead || gone ? ' sup' : '') + '" data-mid="' + esc(m.id) + '">'
     + '<div class="mem-body">'
     +   '<div class="txt">' + esc(m.text) + '</div>'
     +   '<div class="mem-foot">' + tags.join('') + '</div>'
     + '</div>'
-    + '<button class="del" data-cdel="' + esc(m.id) + '">✕</button></div>';
+    + (dead || gone
+        ? '<button class="restore" data-restore="' + esc(m.id) + '">恢复</button>'
+        : '<button class="del" data-cdel="' + esc(m.id) + '">✕</button>')
+    + '</div>';
 }
 
 /**
@@ -12415,8 +14106,68 @@ async function saveMemEdit(memId, charId) {
 }
 
 /**
- * 绑定一批记忆条目的交互：✕ 删除、点内容弹窗修改。
+ * 把一条被取代的旧说法恢复成生效（v0.5.1.1）。
+ *
+ * 同时把当时顶掉它的那条标回 superseded —— 一个槽位在同一时刻只能有一个说法成立，
+ * 两条都 active 就又回到"她同时在两个状态里挑"的老毛病。
+ */
+async function restoreMemory(id, charId) {
+  const all = await mem.list(charId);
+  const m = all.find(x => x && x.id === id);
+  if (!m) return false;
+  const by = all.find(x => x && x.id === m.supersededBy);
+  if (by && by.status !== 'superseded') {
+    await mem.add({ ...by, status: 'superseded', supersededBy: m.id,
+                    supersededDay: typeof m.day === 'number' ? m.day : null, supersededAt: Date.now() });
+  }
+  // 恢复一条【过期】的记忆时必须把限期一起清掉（v0.5.1.1）：
+  // untilDay 还留着的话，下一轮 pruneMemories 立刻又把它标回 expired ——
+  // 用户点了"恢复"、看着它变回正常，再发一句话又变灰了。
+  // 语义上也说得通：既然要它回来，就是"从现在起一直记着"。
+  const rev = { ...m, status: 'active', supersededBy: null, supersededDay: null, supersededAt: 0 };
+  if (String(m.status || '') === 'expired') {
+    rev.kind = 'fact'; rev.untilDay = null; rev.untilHour = null; rev.untilMinute = null;
+    rev.expiredDay = null; rev.expiredAt = 0;
+  }
+  await mem.add(rev);
+  return true;
+}
+
+/**
+ * 记忆回链：这条是从哪几句里抽出来的（v0.5.1.1）。
+ *
+ * 只用存下来的 sourceMsgIds 查原文，不发请求、不花 token。
+ * 目的是让他能判断"她是真记得，还是在编"—— 在这之前，记忆页只有一句结论，
+ * 没有任何东西能对上原文。
+ */
+async function showMemSources(id, charId) {
+  const m = (await mem.list(charId)).find(x => x && x.id === id);
+  if (!m) return;
+  const ids = new Set(Array.isArray(m.sourceMsgIds) ? m.sourceMsgIds : []);
+  let picked = [];
+  if (ids.size) {
+    try { picked = (await msgs.list(charId, 0, true)).filter(x => x && ids.has(x.id)); } catch { picked = []; }
+  }
+  picked.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  const body = picked.length
+    ? '<p class="hint-text">按时间顺序，她是下面这几句里记下的。原文改不了，但你能看出她记对没有。</p>'
+      + picked.map(x => {
+          const day = x.story && typeof x.story.day === 'number' ? x.story.day : null;
+          const who = x.role === 'user' ? '你说的' : (x.who ? String(x.who) + '说的' : '她说的');
+          return '<div class="mem-src"><div class="mh">' + esc(who)
+            + (day ? ' · 第 ' + day + ' 天' : '')
+            + '</div><div class="mb">' + esc(String(x.content || '').slice(0, 400)) + '</div></div>';
+        }).join('')
+    : '<p class="hint-text">这条没有来源记录。要么是旧版本记下的，要么是整理/导入之后剩下来的 —— 那时候还没存来源。</p>';
+  await infoBox('这条记忆从哪来', body);
+}
+
+/**
+ * 绑定一批记忆条目的交互：✕ 删除、点内容弹窗修改、来源、恢复。
  * 回调 after() 用来让调用方重绘自己那一块。
+ *
+ * ⚠️ 来源和恢复都要 stopPropagation：它们是 .mem-item.tap 里的子元素，
+ *    不拦的话点一下会连带打开"修改这条记忆"弹窗。
  */
 function bindMemItems(box, charId, after) {
   box.querySelectorAll('[data-cdel]').forEach(b => b.onclick = async (e) => {
@@ -12424,10 +14175,28 @@ function bindMemItems(box, charId, after) {
     await mem.del(b.dataset.cdel);
     await after();
   });
+  box.querySelectorAll('[data-restore]').forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    const ok = await restoreMemory(b.dataset.restore, charId);
+    await after();
+    toast(ok ? '已恢复这条说法' : '这条记忆找不到了', 2000);
+  });
+  box.querySelectorAll('[data-src]').forEach(el => el.onclick = async (e) => {
+    e.stopPropagation();
+    await showMemSources(el.dataset.src, charId);
+  });
   box.querySelectorAll('.mem-item.tap').forEach(el => el.onclick = async () => {
     const ok = await openMemEditor(el.dataset.mid, charId);
     if (!ok) return;
     const saved = await saveMemEdit(el.dataset.mid, charId);
+    await after();
+    if (saved) toast('已保存', 1600);
+  });
+  // 时间线视图的行没有 .mem-item 的外壳（那是卡片样式），单独绑一条同样的"点开改"
+  box.querySelectorAll('[data-tlmid]').forEach(el => el.onclick = async () => {
+    const ok = await openMemEditor(el.dataset.tlmid, charId);
+    if (!ok) return;
+    const saved = await saveMemEdit(el.dataset.tlmid, charId);
     await after();
     if (saved) toast('已保存', 1600);
   });
@@ -12536,6 +14305,27 @@ function appendLook(text) {
  */
 let _memOpen = new Set();     // 展开了哪些角色（存 charId）
 let _memDraft = {};           // charId -> 还没提交的输入内容
+// 记忆管理两种看法（v0.5.1.1）：列表按人分组，时间线按剧情天数排队。
+// 时间线只排【有天数的】条目 —— 没记过天的是老数据，排进去只会挤在最前面造谣。
+let _memView = 'list';
+
+/** 时间线视图：把每个角色的事件型记忆按剧情天数升序排成一条线 */
+function memTimelineHtml(items) {
+  const rows = (items || []).filter(m => m && memoryDay(m.day));
+  if (!rows.length) return '<div class="sys-line">这个人还没有带天数的事件。事件型记忆会记下是第几天发生的。</div>';
+  rows.sort((a, b) => memoryDay(a.day) - memoryDay(b.day) || (a.ts || 0) - (b.ts || 0));
+  return '<div class="tl">' + rows.map(m => {
+    const gone = String(m.status || '') === 'expired';
+    const hat = String(m.status || '') === 'superseded';
+    const kind = m.kind === 'event' ? '事件' : '事实';
+    return '<div class="tl-row' + (gone || hat ? ' dead' : '') + '" data-tlmid="' + esc(m.id) + '">'
+      + '<span class="tl-d">第 ' + memoryDay(m.day) + ' 天</span>'
+      + '<div class="tl-b">' + esc(m.text)
+      + '<span class="tl-k">' + kind + (gone ? ' · 已过期' : (hat ? ' · 已被取代' : '')) + '</span>'
+      + '</div></div>';
+  }).join('') + '</div>';
+}
+
 
 /** 群记忆：按"谁记得的"分组（v0.4.1.4）。没有 who 的是全群共识。 */
 function memBodyByWho(items) {
@@ -12561,6 +14351,16 @@ async function renderMem() {
   const cs = await chars.all();
   const box = $('mem-groups');
   if (!box) return;
+
+  // 视图切换（v0.5.1.1）：按钮是 index.html 里的静态节点，用 onclick 赋值而不是
+  // addEventListener —— renderMem 每删一条就重跑一次，监听器会越叠越多。
+  const vbL = $('mem-view-list'), vbT = $('mem-view-time');
+  if (vbL && vbT) {
+    vbL.classList.toggle('on', _memView === 'list');
+    vbT.classList.toggle('on', _memView === 'time');
+    vbL.onclick = () => { if (_memView !== 'list') { _memView = 'list'; renderMem(); } };
+    vbT.onclick = () => { if (_memView !== 'time') { _memView = 'time'; renderMem(); } };
+  }
 
   const cnt = $('mem-count');
   if (cnt) {
@@ -12602,9 +14402,11 @@ async function renderMem() {
     //    真正缺的是【按人分】这一层 —— 甲的私事和大家都知道的混在一起，
     //    而注入时它们已经分开了（persona.js 按 who 筛），界面必须跟着说清楚。
     const owner = cs.find(c => c.id === g.id);
-    const body = (owner && isGroup(owner) && g.items.some(m => m && m.who))
-      ? memBodyByWho(g.items)
-      : (g.items.map(m => memItemHtml(m)).join('') || '<div class="sys-line">她还没记住什么。</div>');
+    const body = (_memView === 'time')
+      ? memTimelineHtml(g.items)
+      : ((owner && isGroup(owner) && g.items.some(m => m && m.who))
+        ? memBodyByWho(g.items)
+        : (g.items.map(m => memItemHtml(m)).join('') || '<div class="sys-line">她还没记住什么。</div>'));
     return `<div class="mem-group${open ? ' open' : ''}" data-cid="${esc(g.id)}">`
       + `<button class="fold-head sub" data-head="1"><span>${esc(g.name)}</span>`
       + `<em class="fold-num">${num}</em><i class="fold-arrow">▾</i></button>`
@@ -12676,7 +14478,20 @@ const BACKUP_KV_PREFIXES = [
   // v0.5.0.2：剧情卡。「导出全部数据」漏了它，换台机器导入回来卡就没了 ——
   // 而它是用户手写的、写起来最费时的东西（方向 + 五拍的四个字段）。
   // 它是两段式 'arc:<charId>'，导入时的 remap 逐段试，charId 会被换成新 id。
-  'arc:'
+  'arc:',
+  // v0.5.1.6：活动分支叶子 'branch:<charId>'（外部评审 §三）。
+  //
+  // 漏了它的后果不是"少个设置"，是【屏幕上的对话变了】：
+  //   · 完全还原：叶子为空 → pickLeaf 退回 ts 最大的那条。你正在看的那条支
+  //     不一定是时间最晚的，导入后直接落到另一条上；
+  //   · 仅聊天记录（合并）：本机旧叶子还在，导进来的对话挂在非活动分支上 ——
+  //     数据在库里、屏幕上一条都看不见，用户只会以为"导入失败了"。
+  // 消息的 parentId 早就跟着 messages 走了，只有"我现在看的是哪条叶子"没走。
+  'branch:',
+  // v0.5.1.7：切支时"被放回来的归档"记账 'unarch:<charId>'。
+  // 它是这条支自己的折叠状态，不带过去的话导入后线是完整的、却少了"更早"的折叠 ——
+  // 表现是整条历史一次全铺开，长对话直接把屏幕撑爆。
+  'unarch:'
 ];
 
 // ⚠️ 有几个键【没有冒号】，前缀表装不下它们（v0.4.0）。
@@ -12964,8 +14779,12 @@ async function collectBackupPayload() {
     // 带着它导出，换机/重装后设定能一起回来。
     worldbook: { groups: [], solo: [] },
     // 记账 / 情景状态（v1.19.11）。字段独立，老版本读到会忽略，不会崩。
-    kv: []
+    kv: [],
+    // 小说层（v0.5.2）：一场戏一张卡，单独一张表。
+    // 老版本读到这个字段会直接忽略（它们只挑自己认识的键），不会崩。
+    scenes: []
   };
+  try { payload.scenes = await scenes.all(); } catch (e) { payload.scenes = []; }
   for (const c of payload.characters) {
     // 必须带上已归档的！list() 默认把它们过滤掉了，
     // 用默认的话备份里会静默少掉一大段老对话，恢复后永远找不回来。
@@ -13230,6 +15049,8 @@ async function applyImport(data, p, file) {
     if (want('msgs')) stores.push('messages');
     if (want('mems')) stores.push('memories');
     if (want('wb')) stores.push('wbGroups', 'wbSolo');
+    // 小说层（v0.5.2）：场跟着角色走，「完全还原」时一起清。
+    if (want('chars')) stores.push('scenes');
     await dbAdmin.clearStores(stores);
     // 记账键单独清：kv 表里还放着 settings（含本机 apiKey），整表清掉要用户重填。
     if (want('kv')) {
@@ -13596,6 +15417,13 @@ async function applyImport(data, p, file) {
                         // 注释上面自己就写着这句话，却漏了这两个。
                         untilHour: typeof m.untilHour === 'number' ? m.untilHour : null,
                         untilMinute: typeof m.untilMinute === 'number' ? m.untilMinute : 0,
+                        day: typeof m.day === 'number' ? m.day : null,
+                        sourceMsgIds: Array.isArray(m.sourceMsgIds) ? m.sourceMsgIds : [],
+                        status: m.status === 'superseded' ? 'superseded' : 'active',
+                        // 0.5.2 之前导出的备份没有这三个字段 —— 那就是旧记忆，
+                        // 标记出来，进角色时才有机会用 story.day 反推日期。
+                        // 自己手写的（mine）不标：用户写「明天」是他的自由。
+                        legacy: m.legacy === true || (!m.mine && m.day == null && m.status == null && m.sourceMsgIds == null),
                         mine: !!m.mine,
                         freq: MEM_FREQ.has(m.freq) ? m.freq : 'normal',
                         ts: typeof m.ts === 'number' ? m.ts : Date.now() });
@@ -13694,11 +15522,68 @@ async function applyImport(data, p, file) {
         if (acc.size !== beforeN) await kv.set('memSummed:' + cid, [...acc]);
         // 节奏水位也对齐，免得刚导入就立刻触发一次总结
         await kv.set('memSumAt:' + cid, n);
+        // ⚠️ 合并导入后把活动叶子推到【刚导进来那条线的末端】（v0.5.1.6，外部评审 §三）。
+        //
+        // 起因：本机的 branch:<cid> 还指着旧对话最后一句话。导进来的消息自带
+        // parentId（新备份），seedParents 不会动它们 —— 于是整份导入内容挂在
+        // 【非活动分支】上：数据在库里、屏幕上一条都不显示。
+        // 用户看不出"导入成功但看不见"和"导入失败"的区别，只会重导一遍。
+        //
+        // 只在带进来了消息、且末端确实比当前叶子新时才推：完全还原没这条
+        // （叶子跟着 kv 一起导入了），合并导入才是它要救的场景。
+        try {
+          const fresh = arr.filter(m => m && m.id && typeof m.ts === 'number');
+          if (fresh.length) {
+            const allNow = await msgs.list(cid, 0, true);
+            const byId = new Map(allNow.map(m => [m.id, m]));
+            let tip = '';
+            let tipTs = -Infinity;
+            for (const m of fresh) {
+              const rec = byId.get(m.id);
+              const t = Number((rec || m).ts) || 0;
+              if (t > tipTs) { tipTs = t; tip = m.id; }
+            }
+            const curLeaf = await kv.get(leafKey(cid), '');
+            const curTs = curLeaf && byId.has(curLeaf) ? (Number(byId.get(curLeaf).ts) || 0) : -Infinity;
+            if (tip && tipTs > curTs) await setLeaf(cid, deepestIn(allNow, tip) || tip);
+          }
+        } catch { /* 推不动叶子不该让整次导入失败 */ }
         // 这里必须写记忆条数，不是消息条数（v1.21.25 修）。
         // 上一版写的是 n（消息数，可能几百），而读取侧当记忆条数用，
         // 又一个量纲错：导入完自动查重就再也不触发了。
         await kv.set('memDedupeAt:' + cid, (await mem.list(cid)).length);
       } catch { /* 单条失败不影响整体导入 */ }
+    }
+  }
+
+  // ---- 小说层（v0.5.2）：一场戏一张卡 ----
+  //
+  // 两条规矩：
+  //   ① 同 id 且 updatedAt 一样 = 同一份，跳过（不然每次导入都给自己复制一堆）；
+  //   ② 同 id 但内容不同 = 真冲突 → 换新 id，原 id 记进 sourceSceneId，
+  //      两份都留着。宁可多一篇，不能悄悄覆盖掉他写过的字。
+  let scIn = 0;
+  let scDup = 0;
+  let scBad = 0;
+  if (want('chars') && Array.isArray(data.scenes) && data.scenes.length) {
+    try {
+      const localSc = new Map((await scenes.all()).map(s => [s.id, s]));
+      const batch = [];
+      for (const raw of data.scenes) {
+        if (!raw || !raw.id) { scBad++; continue; }
+        const rec = normalizeScene({ ...raw, charId: raw.charId ? remap(raw.charId) : '' });
+        const cur = localSc.get(rec.id);
+        if (cur) {
+          if ((cur.updatedAt || 0) === (rec.updatedAt || 0)) { scDup++; continue; }
+          rec.sourceSceneId = rec.id;
+          rec.id = newSceneId();
+        }
+        batch.push(rec);
+        scIn++;
+      }
+      if (batch.length) await scenes.putMany(batch);
+    } catch (e) {
+      console.error('[导入] 小说导入失败', e);
     }
   }
 
@@ -13737,6 +15622,9 @@ async function applyImport(data, p, file) {
   }
   if (typeof wbTurnedOn !== 'undefined' && wbTurnedOn) bits.push('世界书原来是关着的，已帮你打开');
   if (kvN) bits.push(`记账 ${kvN} 项`);
+  if (scIn) bits.push(`${scIn} 场戏`);
+  if (scDup) bits.push(`${scDup} 场戏本机已有，没重复覆盖`);
+  if (scBad) bits.push(`${scBad} 场戏格式不对，已跳过`);
   // ⚠️ 导入完之后，【内存里】那几份从 kv 读出来的东西要重新读一遍（v0.4.0）。
   //
   // 起因：酒馆正则那份表（kv 的 stRegex）现在跟着备份走了，但界面用的是
@@ -13889,6 +15777,10 @@ function bindEvents() {
   // 旧设置页保留，从抽屉的「全部设置」进 —— 老用户习惯不变，e2e 也不会挂。
   $('btn-settings').onclick = () => openDrawer();
 
+  // 阅读模式的退出键（v0.5.1.5）。挂在这里而不是每次 setReading 里 ——
+  // 这是静态按钮，重绘不会把它换掉，反复 addEventListener 会叠。
+  if ($('read-exit')) $('read-exit').onclick = () => { setReading(false); };
+
   // 引导条：点一下直接进设置，并滚到 / 聚焦到 API Key 输入框（v1.21.40）。
   // 那次 setTimeout 是必须的 —— 抽屉有 .34s 的滑出动画（见 style.css 的 .view），
   // 立刻 scrollIntoView 算的还是旧布局，会滚不到位。
@@ -13946,7 +15838,10 @@ function bindEvents() {
   // ⚠️ 必须传 {cont:true}，不能直接 send —— 不带参数的 send 会去读输入框，
   //    空的时候第一行就 return 了，按钮看起来就是坏的。
   $('btn-continue').onclick = () => send({ cont: true });
-  $('btn-stop').onclick = () => abortCtl && abortCtl.abort();
+  // v0.5.1.7：停止键也要掐掉已经排上的下一段。
+  // 原来这里只 abort 在途请求，而自动串联排队的那 1.2 / 2.5 秒里【没有】在途请求 ——
+  // 按下去等于什么都没发生，时间一到照样发。
+  $('btn-stop').onclick = () => { cancelChain('自动续写已停'); if (abortCtl) abortCtl.abort(); };
 
   $('input').addEventListener('input', () => syncInput());
   $('input').addEventListener('keydown', e => {
@@ -14267,6 +16162,8 @@ function bindEvents() {
   // 角色页：「他的设定」「他的居处」（v1.21.47，从 ⚙ 里搬过来的）
   fold('e-mine-fold', 'e-mine-wrap', refreshEditMineBrief);
   fold('e-home-fold', 'e-home-wrap', refreshEditMineBrief);
+  fold('e-addr-fold', 'e-addr-wrap', refreshEditAddrBrief);
+  fold('name-fold', 'name-wrap', refreshNameHint);
   $('e-mine').oninput = refreshEditMineBrief;
   $('e-home').oninput = refreshEditMineBrief;
   // 「填回默认」和设置页原来那个一样：只填进框，不直接落库
@@ -14502,7 +16399,9 @@ function bindEvents() {
     if (hasArc) {
       wipeArc = await confirmBox('剧情卡也清掉吗？',
         `<p>「${nm}」还留着一张剧情卡（${arcNow.beats.length} 拍${arcNow.title ? '：' + esc(arcNow.title) : ''}）。</p>`
-        + '<p>它<b>不属于聊天记录</b>，默认留着 —— 清完聊天还能接着演。</p>'
+        + '<p>它<b>不属于聊天记录</b>，默认留着 —— 方向、几拍、每拍写的东西都还在。</p>'
+        + '<p>但它会<b>从第 1 拍重新开始</b>：演到第几拍了、每拍演了几轮、上一拍实际发生过什么，'
+        + '这些是上一场对话的进度，跟聊天一起清掉；聊天都没了，留着它只会让她从半截接管。</p>'
         + '<p>要连它一起删就点「清掉」；只清聊天就点「取消」。</p>',
         '清掉');
     }
@@ -14592,6 +16491,25 @@ function bindEvents() {
     }
     if (wipeArc) {
       try { await kv.del(arcKey(id)); } catch { /* 删不掉也就是多留一张卡，不阻断 */ }
+    } else if (hasArc && arcNow) {
+      // 卡留着，但「演到哪儿」必须一起清零（v0.5.1.7 修，外部评审 §二-2）。
+      //
+      // 起因：清空聊天是【从头开始】—— 剧情天数回第 1 天、长期记忆全清、
+      // 滚动摘要全清，唯独剧情卡带着 currentBeat / turns / done / result 原样活下来。
+      // 于是新开一段，她直接从"第 3 拍、这一拍已经演了 8 轮"的中段接手，
+      // 而支撑那条进度的对话已经删了 —— 她会在半空里接着演。
+      // 用户以为从头开始，实际从中间开始；弹窗原来只写"清完还能接着演"，也没说清。
+      //
+      // 留下的是他手写的（方向 / 不能发生 / 每拍的四个字段），
+      // 清掉的是进度（演到第几拍、每拍几轮、演完没有、上一拍实际发生了什么）。
+      try {
+        const a = normalizeArc(arcNow);
+        a.currentBeat = 0;
+        a.beats = a.beats.map(b => ({ ...b, turns: 0, done: false, doneBy: '', result: '' }));
+        a.status = 'on';
+        // 再收一遍：这一步会把"其实什么都没有"的卡降回 off（normalizeArc 的不变量）
+        await kv.set(arcKey(id), normalizeArc(a));
+      } catch { /* 重置失败也就是留着旧进度，不该挡住清空本身 */ }
     }
     await refreshArcBar();
     await renderMessages();
@@ -14665,7 +16583,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.1';
+const WEB_VERSION_FALLBACK = '0.5.2';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
@@ -14723,6 +16641,9 @@ async function init() {
     if (S.theme === 'system') applyTheme();
   });
   bindEvents();
+  // 小说层（v0.5.2）：书架/阅读页/开戏弹窗的绑定。
+  // 和 bindEvents 分开是为了让这块能独立复跑（E2E 会重复进 init 的路径）。
+  bindSceneUI();
   bindBackButton();
   renderAppVersion();   // 关于页版本号（v1.21.45）：真机读原生，不再写死 v0.1.0
   // ⚠️ updateStatus 必须在这里补一次（v1.21.40）。

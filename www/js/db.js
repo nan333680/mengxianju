@@ -3,7 +3,10 @@ const DB_NAME = 'ai-companion';
 // ⚠️ 加新表时必须 +1，并且 onupgradeneeded 里要写成【增量式】——
 //    只建"还不存在的表"，绝不能把老表删了重建，否则老用户数据全没。
 //    v2 加了 worldbook（世界书：角色组 + 条目）。
-const DB_VER = 2;
+//    v3 给记忆补 status/sourceMsgIds/day/legacy（时间锚与来源）。
+//    v4 加了 scenes（小说层：一场戏一张卡，正文不进 messages）。
+import { normalizeMemory, planSupersede, MEMORY_STATUS } from './memory.js';
+const DB_VER = 4;
 
 let _db = null;
 
@@ -11,8 +14,8 @@ export async function openDB() {
   if (_db) return _db;
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VER);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
+    req.onupgradeneeded = () => {
+      const db = req.result;
       if (!db.objectStoreNames.contains('characters')) {
         const s = db.createObjectStore('characters', { keyPath: 'id' });
         s.createIndex('createdAt', 'createdAt');
@@ -39,6 +42,29 @@ export async function openDB() {
         const s = db.createObjectStore('wbSolo', { keyPath: 'id' });
         s.createIndex('charId', 'charId');
       }
+      // ---- v4 新增：小说层 ----
+      // 只加表，不动 messages / memories / characters / kv（规格 §12 的硬约束）。
+      // 小说正文【不】进 messages：聊天是发生，小说是成篇，两者共用同一场戏但不共用一张表。
+      if (!db.objectStoreNames.contains('scenes')) {
+        const s = db.createObjectStore('scenes', { keyPath: 'id' });
+        s.createIndex('charId', 'charId');
+        s.createIndex('createdAt', 'createdAt');
+      }
+      // ---- v3 迁移：老记忆补字段 ----
+      // 旧记录没有 day/sourceMsgIds/status。这里不能凭空造出「记于第几天」，
+      // 所以 day 保持 null、sourceMsgIds 为空、legacy=true；界面会显示「旧记忆」。
+      // 新建的表（全新安装）也会走到这里，但表是空的，遍历没有副作用。
+      const memStore = req.transaction.objectStore('memories');
+      const cur = memStore.openCursor();
+      cur.onsuccess = (ev) => {
+        const c = ev.target.result;
+        if (!c) return;
+        const rec = normalizeMemory(c.value);
+        // 手写记忆不标 legacy：它不该被自动反推，也不该在注入时被当成「旧记忆」。
+        rec.legacy = rec.mine === true ? false : true;
+        c.update(rec);
+        c.continue();
+      };
     };
     req.onsuccess = () => { _db = req.result; resolve(_db); };
     req.onerror = () => reject(req.error);
@@ -133,9 +159,9 @@ export const dbAdmin = {
   async counts() {
     const db = await openDB();
     const one = (store) => req2p(db.transaction(store).objectStore(store).count());
-    const [characters, messages, memories, wbGroups, wbSolo, kvCount] = await Promise.all(
-      ['characters', 'messages', 'memories', 'wbGroups', 'wbSolo', 'kv'].map(one));
-    return { characters, messages, memories, wbGroups, wbSolo, kv: kvCount };
+    const [characters, messages, memories, wbGroups, wbSolo, kvCount, scenesCount] = await Promise.all(
+      ['characters', 'messages', 'memories', 'wbGroups', 'wbSolo', 'kv', 'scenes'].map(one));
+    return { characters, messages, memories, wbGroups, wbSolo, kv: kvCount, scenes: scenesCount };
   }
 };
 
@@ -306,8 +332,50 @@ export const mem = {
   },
   async add(m) {
     const db = await openDB();
+    const rec = normalizeMemory(m);
+    // 槽位取代（v0.5.1.1 / M0.6）：同一个槽位只留最新说法，旧的标 superseded、不物理删。
+    //
+    // 放在这一层而不是各个写入点：全库有 7 处 mem.add（实时总结 / 归档总结 / 群聊总结 /
+    // 整理记忆 / 导入 / 手写），逐处加"先查一遍旧记录"既啰嗦又一定会漏掉某处。
+    // 这里是唯一收口，加一次全部生效。
+    //
+    // ⚠️ 单事务（v0.5.1.6 修，外部评审 §六）。
+    //
+    // 原来是【两个事务】：先单独提交"把旧的标成 superseded"，再另起一个事务 put 新的。
+    // 中间那次失败（配额满、事务中止、页面被系统杀）的后果是：
+    //   旧的已经不在 active，新的又没写进去，supersededBy 指向一个不存在的 id ——
+    // 用户看到的是"记忆凭空消失"，而且没有任何报错。
+    //
+    // 顺带堵住并发：两个总结同时写同一个槽位时，原来两边可能都读到"旧的还没被标"，
+    // 于是同槽出现两条 active，或者同一条被顶两次。
+    //
+    // 现在读旧 / 标旧 / 写新在同一个 readwrite 事务里，要么全成要么全不成。
+    // ⚠️ 事务回调里【不能 await】（会跳出事件循环、事务自动提交），
+    //    所以这一段全是同步的 put，由 oncomplete 统一收口。
     const t = db.transaction('memories', 'readwrite');
-    t.objectStore('memories').put(m);
+    const st = t.objectStore('memories');
+    const rq = st.index('charId').getAll(rec.charId);
+    rq.onsuccess = () => {
+      try {
+        const old = rq.result || [];
+        const plan = rec.key ? planSupersede(rec, old) : [];
+        for (const id of plan) {
+          const o = old.find(x => x && x.id === id);
+          if (!o) continue;
+          st.put(normalizeMemory({
+            ...o,
+            status: MEMORY_STATUS.SUPERSEDED,
+            supersededBy: rec.id,
+            supersededDay: rec.day || null,
+            supersededAt: Date.now()
+          }));
+        }
+        if (plan.length) rec.supersedes = plan.slice();
+      } catch { /* 取代计划出错就只写新的，旧的留着（宁可两条并存，也不静默丢一条） */ }
+      st.put(rec);
+    };
+    // 读旧条失败（极少）：不 abort 整个事务，退化成"只写新的"
+    rq.onerror = () => { try { st.put(rec); } catch { /* 真写不进去就让事务报错 */ } };
     return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
   },
   async del(id) {
@@ -421,6 +489,87 @@ export const wb = {
       if (s && s.charId === charId) await wb.delSolo(s.id);
     }
   },
+};
+
+// ---------- 小说层：一场戏 ----------
+//
+// 一张表存整张场景卡（含正文 blocks 与场记 log）。
+// 为什么不做三张表（场景 / 拍 / 段落）：这一层的读写单位【永远是整场】——
+// 开一场、写一拍、删一段、进回收站，全是在一张卡上改。拆开只会带来
+// 「卡读到一半、段落读失败」和跨表事务，换不到任何好处。
+// 正文条数上限 400 段（normalizeScene 里 already 夹住），单条卡撑不到几十 KB。
+export const scenes = {
+  /** 全部（含回收站里的）—— 备份/导出用 */
+  async all() {
+    const db = await openDB();
+    return req2p(db.transaction('scenes').objectStore('scenes').getAll());
+  },
+  /** 某个角色的全部（含回收站） */
+  async byChar(charId) {
+    const db = await openDB();
+    return req2p(db.transaction('scenes').objectStore('scenes').index('charId').getAll(charId));
+  },
+  /** 书架用：不进回收站的那些，新的在前 */
+  async shelf(charId) {
+    const arr = await scenes.byChar(charId);
+    return arr.filter(s => s && s.status !== 'trashed').sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+  /** 回收站 */
+  async trash(charId) {
+    const arr = charId ? await scenes.byChar(charId) : await scenes.all();
+    return arr.filter(s => s && s.status === 'trashed')
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+  async get(id) {
+    const db = await openDB();
+    return req2p(db.transaction('scenes').objectStore('scenes').get(id));
+  },
+  async put(rec) {
+    const db = await openDB();
+    const t = db.transaction('scenes', 'readwrite');
+    t.objectStore('scenes').put(rec);
+    return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+  },
+  async putMany(list) {
+    const arr = (list || []).filter(Boolean);
+    if (!arr.length) return 0;
+    const db = await openDB();
+    const t = db.transaction('scenes', 'readwrite');
+    for (const s of arr) t.objectStore('scenes').put(s);
+    return new Promise((res, rej) => { t.oncomplete = () => res(arr.length); t.onerror = () => rej(t.error); });
+  },
+  async del(id) {
+    const db = await openDB();
+    const t = db.transaction('scenes', 'readwrite');
+    t.objectStore('scenes').delete(id);
+    return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+  },
+  /**
+   * 删角色时用：把这个角色的戏【解绑】而不是删掉。
+   * 规格 §12 的硬规则：删角色时问「保留作品 / 一起删」，默认保留。
+   * 保留 = charId 置空、卡上记一个 charName 以便书架还能显示是谁的戏。
+   */
+  async detachChar(charId, charName) {
+    const arr = await scenes.byChar(charId);
+    if (!arr.length) return 0;
+    const db = await openDB();
+    const t = db.transaction('scenes', 'readwrite');
+    for (const s of arr) {
+      s.charId = '';
+      if (charName) s.detachedName = String(charName).slice(0, 40);
+      s.updatedAt = Date.now();
+      t.objectStore('scenes').put(s);
+    }
+    return new Promise((res, rej) => { t.oncomplete = () => res(arr.length); t.onerror = () => rej(t.error); });
+  },
+  /** 清空某个角色的戏（只在用户明确选了「一起删」时调用） */
+  async delByChar(charId) {
+    const arr = await scenes.byChar(charId);
+    const db = await openDB();
+    const t = db.transaction('scenes', 'readwrite');
+    for (const s of arr) t.objectStore('scenes').delete(s.id);
+    return new Promise((res, rej) => { t.oncomplete = () => res(arr.length); t.onerror = () => rej(t.error); });
+  }
 };
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 9);

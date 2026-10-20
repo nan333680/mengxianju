@@ -33,7 +33,10 @@ t('提取到卡片字段表', mkKeys.length >= 20, mkKeys.length + ' 个');
 
 // 这四个走卡片的标准字段（name / description / first_mes / 头像），不走 extensions；
 // myProfile / myEnv 是【用户本人】的私事，明确不进卡（用户 2026-10-09 复核过这条边界）。
-const EXPECTED_OUT = ['name', 'greeting', 'persona', 'avatar', 'myProfile', 'myEnv'];
+// userAddress / userPerception / userKnowledge / userAttitude 是同一类（v0.5.2 的「她怎么看你」）：
+// 记的是用户本人的信息，卡一分享出去就是泄露，所以同样故意不带进卡。
+const EXPECTED_OUT = ['name', 'greeting', 'persona', 'avatar', 'myProfile', 'myEnv',
+  'userAddress', 'userPerception', 'userKnowledge', 'userAttitude'];
 const missing = charKeys.filter(k => !mkKeys.includes(k) && !EXPECTED_OUT.includes(k));
 t('★ 角色上没有任何「卡片带不回来」的字段', missing.length === 0, missing.join(', '));
 t('myProfile / myEnv 确实不在卡里（卡是会被分享出去的东西）',

@@ -37,7 +37,7 @@ jobs:
 
       # 这一批全部【不需要真 key】：要么是纯函数（node 直接 import），
       # 要么自己拦截请求假造一个模型回复。
-      - name: e2e（不依赖真实 key 的 22 套，清单在下面 $suites 里）
+      - name: e2e（不依赖真实 key 的 26 套，清单在下面 $suites 里）
         shell: pwsh
         run: |
           $suites = @(
@@ -48,7 +48,17 @@ jobs:
             'e2e-nav','e2e-menu','e2e-empty','e2e-appearance','e2e-ellipsis',
             'e2e-i18n','e2e-privacy',
             # 剧情卡（v0.5.0 起的主线）：自己假造 SSE，不需要真 key
-            'e2e-arc'
+            'e2e-arc',
+            # 非破坏分支（v0.5.4）：老数据串链 / 重聊不删 / 切走向
+            'e2e-branch',
+            # 长篇档与反客服腔（v0.5.5）：提示词与 max_tokens
+            'e2e-epic',
+            # v0.5.1.7 四条止血的真行为验证：切支归档对称 / 清空聊天重置剧情卡进度 /
+            # 自动续写刹车 / 阅读模式外壳。全部点界面 + 读回 IndexedDB，不 grep 源码。
+            'e2e-v517',
+            # 小说层（v0.5.2）：开戏 → 分拍 → 逐拍写 → 场记 → 书架 → 阅读页 → 删除。
+            # 假 SSE 按 system 内容分流（正文流 / 分拍 JSON / 场记 JSON / 临时人物 JSON）。
+            'e2e-scene'
           )
           $fail = 0
           foreach ($s in $suites) {

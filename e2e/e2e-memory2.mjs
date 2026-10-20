@@ -285,20 +285,23 @@ for (let _i = 0; _i < 100; _i++) {
     const o = indexedDB.open('ai-companion');
     const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
     const ms = await new Promise(r => { const q = db.transaction('memories').objectStore('memories').getAll(); q.onsuccess = () => r(q.result); });
-    db.close(); return ms.map(m => m.id);
+    db.close(); return ms.map(m => ({ id: m.id, status: m.status || 'active' }));
   });
-  if (!ids.includes('evA')) break;
+  // ⚠️ v0.5.1.1 起过期不物理删，只标 status:'expired'（memory.js:15-18）。
+  //    等的是「被停用」，不是「从库里消失」。
+  if ((ids.find(m => m.id === 'evA') || {}).status === 'expired') break;
   await sleep(100);
 }
 const after = await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const ms = await new Promise(r => { const q = db.transaction('memories').objectStore('memories').getAll(); q.onsuccess = () => r(q.result); });
-  db.close(); return ms.map(m => m.id);
+  db.close(); return ms.map(m => ({ id: m.id, status: m.status || 'active' }));
 });
 console.log('   剩余记忆: ' + JSON.stringify(after));
-t('A 那条过期的被清掉了', !after.includes('evA'));
-t('B 那条过期的还在（她的剧情时间还没到）', after.includes('evB'));
+const st2 = (id) => (after.find(m => m.id === id) || {}).status || 'missing';
+t('A 那条过期的被停用（expired）', st2('evA') === 'expired', st2('evA'));
+t('B 那条过期的还是 active（她的剧情时间还没到）', st2('evB') === 'active', st2('evB'));
 
 console.log('');
 if (errs.length) console.log('  JS 错误: ' + JSON.stringify(errs));

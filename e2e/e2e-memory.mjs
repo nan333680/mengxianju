@@ -125,17 +125,37 @@ await page.evaluate(async()=>{
 await page.reload({waitUntil:'networkidle0'}); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
 const before = await page.evaluate(async()=>{const o=indexedDB.open('ai-companion');const db=await new Promise(r=>{o.onsuccess=()=>r(o.result);});const n=await new Promise(r=>{const q=db.transaction('memories').objectStore('memories').count();q.onsuccess=()=>r(q.result);});db.close();return n;});
 t('清理前有 3 条记忆', before===3, String(before));
+// ⚠️ 这一节要的是【纯代码的时效清理】，不能让真模型参与（v0.5.1.5）。
+// 带真 key 跑回归时，这一轮会真调模型 → 总结/整理顺手写进新记忆 →
+// 种子那三条被换成新 id、status 重置成 active，然后整套报假红。
+// 这里把 /chat/completions 拦成一句普通回复（不带记忆 JSON），模型不参与，记忆链路不受干扰。
+await page.setRequestInterception(true);
+page.on('request', (req) => {
+  if (!req.url().includes('/chat/completions')) { try { req.continue(); } catch {} return; }
+  if (req.method() === 'OPTIONS') {
+    return req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': '*' } }).catch(() => {});
+  }
+  return req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'text/event-stream' },
+    body: 'data: {"choices":[{"delta":{"content":"在"}}]}\n\ndata: [DONE]\n\n' }).catch(() => {});
+});
 // 发一条消息触发 prune
 await page.click('#input');
 await page.type('#input','在吗',{delay:4});
 await page.click('#btn-send');
 for(let i=0;i<60;i++){await sleep(500);const b=await page.$eval('#btn-stop',el=>!el.classList.contains('hidden')).catch(()=>false);if(!b)break;}
 await sleep(1500);
-const after = await page.evaluate(async()=>{const o=indexedDB.open('ai-companion');const db=await new Promise(r=>{o.onsuccess=()=>r(o.result);});const all=await new Promise(r=>{const q=db.transaction('memories').objectStore('memories').getAll();q.onsuccess=()=>r(q.result);});db.close();return all.map(m=>m.id);});
+const after = await page.evaluate(async()=>{const o=indexedDB.open('ai-companion');const db=await new Promise(r=>{o.onsuccess=()=>r(o.result);});const all=await new Promise(r=>{const q=db.transaction('memories').objectStore('memories').getAll();q.onsuccess=()=>r(q.result);});db.close();return all.map(m=>({id:m.id,kind:m.kind,untilDay:m.untilDay,status:m.status||'active'}));});
 console.log('   清理后剩: ' + JSON.stringify(after));
-t('过期的 event 被删了', !after.includes('m-expired'));
-t('没过期的 event 保留', after.includes('m-alive'));
-t('永久事实保留', after.includes('m-fact'));
+// ⚠️ 断言不能按 id 找（v0.5.1.5）：带真 key 跑回归时这一轮会真调模型，
+//    记忆自动整理有可能把种子那条换 id 重写（日志里就是三个陌生 id 而语义还在）。
+//    按【语义】找：kind + untilDay，这两样整理不会动。
+const pick = (f) => after.find(f) || {};
+const exp = pick(m => m.kind === 'event' && m.untilDay === 3);
+const alive = pick(m => m.kind === 'event' && m.untilDay === 10);
+const fact = pick(m => m.kind === 'fact' && !m.untilDay);
+t('过期的 event 被停用（标成 expired）', exp.status === 'expired', JSON.stringify(exp));
+t('没过期的 event 仍然是 active', alive.status === 'active', JSON.stringify(alive));
+t('永久事实仍然是 active', fact.status === 'active', JSON.stringify(fact));
 
 console.log('');
 console.log('=== 3. 记忆页标签 ===');

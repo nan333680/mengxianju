@@ -54,7 +54,7 @@ await page.reload({ waitUntil:'networkidle0' }); await sleep(500);
 const CID = 'pipeline-test';
 await seedChar(page, '积压测试', { id: CID, greeting:'（开场）', longMemory:true, extra:{} });
 await page.evaluate(async (id) => {
-  const o = indexedDB.open('ai-companion', 2);
+  const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => o.onsuccess = () => r(o.result));
   // 600 条消息
   for (let i = 0; i < 600; i += 50) {
@@ -79,7 +79,7 @@ await page.evaluate(async (id) => {
 await page.reload({ waitUntil: 'networkidle0' }); await sleep(800);
 
 const snap = async () => await page.evaluate(async (id) => {
-  const o = indexedDB.open('ai-companion', 2);
+  const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => o.onsuccess = () => r(o.result));
   const idx = db.transaction('messages').objectStore('messages').index('charId_ts');
   const all = await new Promise(r => { const q = idx.getAll(IDBKeyRange.bound([id,-Infinity],[id,Infinity])); q.onsuccess = () => r(q.result); });

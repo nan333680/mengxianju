@@ -209,7 +209,11 @@ console.log('=== 其余静态确认 ===');
   t('新7 用全量 liveAll', src.includes('const liveAll = new Map();')
     && src.includes('const now = liveAll.get(k);') && src.includes('content: now.content'),
     'liveAll=' + src.includes('const liveAll = new Map();') + ' now=' + src.includes('const now = liveAll.get(k);'));
-  t('新8 del 退时间', (src.match(/typeof m.story.day === 'number' && !isRealClock()/g)||[]).length >= 4, '出现 ' + (src.match(/typeof m.story.day === 'number' && !isRealClock()/g)||[]).length + ' 次');
+  // v0.5.1.4：这条原本要求 ≥4 处。0.5.4 的非破坏分支把「从这里重聊」那处的
+  // 判据从被删的 m 换成了 um0（重聊不再删后面的消息，要退到【那条 user 消息】的时间），
+  // 字面串因此少一处 —— 语义没退，只是写法变了。这里跟着放宽到 ≥3。
+  t('新8 del 退时间', (src.match(/typeof m.story.day === 'number' && !isRealClock()/g)||[]).length >= 3, '出现 ' + (src.match(/typeof m.story.day === 'number' && !isRealClock()/g)||[]).length + ' 次');
+  t('新8 重聊退时间改看 um0', src.includes("if (um0 && um0.story && typeof um0.story.day === 'number' && !isRealClock())"));
   t('新9 regen 取真开场白', src.includes('const allFull = await msgs.list(curCharId, 0, true);'));
   t('新10 破坏性强制备份', src.includes('const destructive = list.length > 0'));
   t('新11 lastLen 可写', src.includes("let lastLen = (await kv.get('memDedupeAt:' + cidFor, null));"));

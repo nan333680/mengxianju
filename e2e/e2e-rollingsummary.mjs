@@ -51,7 +51,7 @@ await page.reload({ waitUntil:'networkidle0' }); await sleep(500);
 const CID = 'rolling-test';
 await seedChar(page, '摘要测试', { id: CID, greeting:'（开场）', longMemory:true });
 await page.evaluate(async (id) => {
-  const o = indexedDB.open('ai-companion', 2);
+  const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => o.onsuccess = () => r(o.result));
   for (let i = 0; i < 300; i += 50) {
     const tx = db.transaction('messages','readwrite'); const st = tx.objectStore('messages');
@@ -73,7 +73,7 @@ await page.evaluate(async (id) => {
 await page.reload({ waitUntil:'networkidle0' }); await sleep(800);
 
 const getRolling = async () => await page.evaluate(async (id) => {
-  const o = indexedDB.open('ai-companion', 2);
+  const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => o.onsuccess = () => r(o.result));
   const q = db.transaction('kv').objectStore('kv').get('memRolling:' + id);
   const v = await new Promise(r => { q.onsuccess = () => r(q.result ? q.result.v : null); });
@@ -82,7 +82,7 @@ const getRolling = async () => await page.evaluate(async (id) => {
 }, CID);
 
 const snap = async () => await page.evaluate(async (id) => {
-  const o = indexedDB.open('ai-companion', 2);
+  const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => o.onsuccess = () => r(o.result));
   const idx = db.transaction('messages').objectStore('messages').index('charId_ts');
   const all = await new Promise(r => { const q = idx.getAll(IDBKeyRange.bound([id,-Infinity],[id,Infinity])); q.onsuccess = () => r(q.result); });

@@ -180,7 +180,10 @@ console.log('\n=== 1. 源码：三个退回操作【都要】清记忆 ===');
   const hasNote = (b) => b.includes('noteDeleted(') || b.includes('purgeRemoved(');
   const hasTidy = (b) => b.includes('tidyNow(') || b.includes('dedupeIfNeeded(');
   t('编辑重发调了清理', hasNote(body.edit), '区间长度 ' + body.edit.length);
-  t('从这里重聊调了清理', hasNote(body.rewind));
+  // ⚠️ v0.5.4 反转了这条断言：没有"删掉的内容"，也就没有"该忘的清单"。
+  // 「从这里重聊」改成非破坏分支以后只挪活动叶子，旧的那一支整段还在库里、
+  // 随时能切回来 —— 这时候清记忆是【错的】：切回旧分支的人会发现她把事情忘了。
+  t('从这里重聊【不再】清理记忆（非破坏分支没删东西）', !hasNote(body.rewind), '区间长度 ' + body.rewind.length);
   t('重新思考调了清理', hasNote(body.regen));
   t('删除单条也调了清理', hasNote(body.del));
   const purgeBody = (() => {
@@ -196,8 +199,9 @@ console.log('\n=== 1. 源码：三个退回操作【都要】清记忆 ===');
     '函数体长度 ' + purgeBody.length);
   t('purgeRemoved 空数组直接返回（不白跑一次库读）',
     purgeBody.includes('if (!list.length) return;'));
-  t('三个退回操作都触发整理',
-    hasTidy(body.edit) && hasTidy(body.rewind) && hasTidy(body.regen),
+  // 同上：编辑重发 / 重新思考是【真的重写同一轮】，要整理；重聊不是。
+  t('编辑重发与重新思考触发整理，重聊不触发',
+    hasTidy(body.edit) && hasTidy(body.regen) && !hasTidy(body.rewind),
     JSON.stringify({ edit: hasTidy(body.edit), rewind: hasTidy(body.rewind), regen: hasTidy(body.regen) }));
 }
 

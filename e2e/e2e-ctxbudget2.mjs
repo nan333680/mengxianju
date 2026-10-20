@@ -45,7 +45,12 @@ const seeded = await page.evaluate(async () => {
   s.apiKey = 'sk-test';
   s.baseUrl = 'https://api.deepseek.com';
   s.model = 'deepseek-flash';
-  s.contextBudget = 4000;          // 故意压小：一段长历史就顶满
+  // ⚠️ 不能压到 2000-4000（v0.5.1.5，实测）：人设本身三千多 token，4000 扣完固定段
+  //    只剩 hist=615，正好装 3 条；重试按 0.6 重拼成 369，只能装 minKeep 保底的 2 条。
+  //    只要固定段的随机部分让 615 变成 610，第一次就只剩 2 条 —— 再降还是 2 条，
+  //    droppedNow === before → 按设计不重发、原错误照报，测试随机变红。
+  //    留够余量：8000 时 kept≈20，乘 0.6 后仍明显变少，降级一定降得动。
+  s.contextBudget = 8000;          // 故意压小：一段长历史就顶满
   s.longMemory = false;
   s.autoArchive = false;
   s.searchOn = false;
@@ -56,14 +61,33 @@ const seeded = await page.evaluate(async () => {
     // ⚠️ ts 不能省：messages 的索引是 [charId, ts]，msgs.list() 走的就是它，
     //    少了 ts 的消息写进去了但【查不出来】—— 第一版就栽在这（列表返回 0 条，
     //    整套断言在原地空转还以为通过了）。
-    await msgs.add({ id: 'seed-' + i, charId: cid, role: i % 2 ? 'assistant' : 'user', content: '字'.repeat(200), ts: Date.now() + i });
+    // ⚠️ parentId 也自己写好（v0.5.1.5）：不靠 renderMessages 里的 seedParents 串链。
+    //    串链是异步的，reload 后多久串完不确定 —— 没串完 activePath 只看得见最后一条，
+    //    预算裁不掉东西，第一次 400 之后就不重发，整套随机报红。
+    await msgs.add({ id: 'seed-' + i, charId: cid, role: i % 2 ? 'assistant' : 'user', content: '字'.repeat(200), parentId: i === 0 ? '' : 'seed-' + (i - 1), ts: Date.now() + i });
   }
+  await kv.set('branch:' + cid, 'seed-49');
   const all = await msgs.list(cid);
   return { cid, count: all.length };
 });
 t('拿到了当前角色 id', !!seeded.cid, JSON.stringify(seeded));
 t('历史塞进去了（50 条以上，含开场白）', seeded.count >= 50, String(seeded.count));
-await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
+await page.reload({ waitUntil: 'networkidle0' });
+// ⚠️ 不能只 sleep：reload 后是 renderMessages 里的 seedParents 把 50 条串成一条链，
+//    串完 activePath 才看得见它们。还没串完就发，坏的历史只有最后一条 ——
+//    预算根本裁不掉东西（dropped=0），于是第一次 400 之后不重发，整套变成假红（v0.5.1.5）。
+// 等的是【活动路径真的读得到 50 条】，不是界面上画了多少个气泡。
+await page.waitForFunction(async () => {
+  try {
+    const br = await import('./js/branch.js');
+    const { msgs, kv } = await import('./js/db.js');
+    const cid = await kv.get('lastCharId', null);
+    if (!cid) return false;
+    const p = await br.activePath(cid, await msgs.list(cid, 0, true), 0);
+    return p.length >= 50;
+  } catch { return false; }
+}, { timeout: 25000 }).catch(() => {});
+await sleep(300);
 
 console.log('');
 console.log('=== 2. 第一次请求故意回 400 context_length_exceeded ===');

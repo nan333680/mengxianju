@@ -67,7 +67,9 @@ const t=(n,ok,ex='')=>{if(ok){pass++;console.log('  OK   '+n);}else{fail++;conso
 await page.goto('http://127.0.0.1:'+port+'/',{waitUntil:'networkidle0',timeout:40000});
 await sleep(1500);
 await page.evaluate(()=>indexedDB.deleteDatabase('ai-companion'));
-await page.reload({waitUntil:'networkidle0'}); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
+await page.reload({waitUntil:'networkidle0'})
+// v0.5.1.4：重绘前要先补 parentId（多一次读库 + 可能一次写库），固定等 400ms 不够稳
+await page.waitForFunction(() => document.querySelectorAll('#messages .msg').length >= 4, { timeout: 20000 }).catch(()=>{});
 // v1.21.59：全新安装不再自动建角色（产品改空），测试自己塞一个
 await seedChar(page, '测试角色', { greeting: '' });   // 空开场白：不额外多出一条消息
 await page.reload({waitUntil:'networkidle0'}); await sleep(500);
@@ -125,7 +127,9 @@ console.log('');
 console.log('=== 4. 回溯重聊 ===');
 // 造几条：让 AI 消息不在最后
 const cnt0 = await page.evaluate(async()=>{const o=indexedDB.open('ai-companion');const db=await new Promise(r=>{o.onsuccess=()=>r(o.result);});const cs=await new Promise(r=>{const q=db.transaction('characters').objectStore('characters').getAll();q.onsuccess=()=>r(q.result);});const cid=cs[0].id;const tx=db.transaction('messages','readwrite');const st=tx.objectStore('messages');const base=Date.now();st.put({id:'rw-a',charId:cid,role:'assistant',content:'中间这句',ts:base-3000});st.put({id:'rw-b',charId:cid,role:'user',content:'后面的话',ts:base-2000});st.put({id:'rw-c',charId:cid,role:'assistant',content:'最后一句',ts:base-1000});await new Promise(r=>{tx.oncomplete=r;});db.close();return 1;});
-await page.reload({waitUntil:'networkidle0'}); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
+await page.reload({waitUntil:'networkidle0'})
+// v0.5.1.4：重绘前要先补 parentId（多一次读库 + 可能一次写库），固定等 400ms 不够稳
+await page.waitForFunction(() => document.querySelectorAll('#messages .msg').length >= 4, { timeout: 20000 }).catch(()=>{});
 const idxA = await page.evaluate(()=>[...document.querySelectorAll('.msg')].findIndex(el=>el.dataset.id==='rw-a'));
 t('找到中间那条 AI 消息', idxA>=0, 'idx='+idxA);
 const box = await page.evaluate((i)=>{const r=document.querySelectorAll('.msg')[i].getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};},idxA);

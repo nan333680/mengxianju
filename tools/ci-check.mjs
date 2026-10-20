@@ -47,7 +47,7 @@ if (other > BASELINE) {
 
 console.log('== 2. www 里的 js 都得在（app 少一个文件就整个白屏）==');
 const need = ['app.js', 'api.js', 'db.js', 'persona.js', 'presets.js', 'charcard.js', 'ccv3.js',
-  'stchat.js', 'stregex.js', 'autobackup.js', 'exportmd.js', 'i18n.js', 'storyarc.js'];
+  'stchat.js', 'stregex.js', 'autobackup.js', 'exportmd.js', 'i18n.js', 'storyarc.js', 'memory.js'];
 const miss = need.filter(f => !fs.existsSync(path.join(ROOT, 'www/js', f)));
 if (miss.length) { console.log('   ✗ 少了：' + miss.join(', ')); process.exit(1); }
 console.log('   ✓ ' + need.length + ' 个都在');

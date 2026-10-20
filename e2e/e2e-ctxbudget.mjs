@@ -106,7 +106,7 @@ t('app.js 把用得到的都引了进来',
   !!appJs && ['estimateTokens', 'estimateMsgTokens', 'isContextOverflow', 'fitHistoryByBudget']
     .every(n => appJs.includes(n)));
 t('★ 本轮用户消息按【消息】算额度（图片不会被漏掉）',
-  !!appJs && appJs.includes('const turnTokens = estimateMsgTokens({ content: cont ? CONT_NUDGE : visibleText, images, imageNotes });'));
+  !!appJs && appJs.includes("const turnTokens = estimateMsgTokens({ content: cont ? CONT_NUDGE : (noUser ? '' : visibleText), images, imageNotes });"));
 t('没有留下用不到的 import', !!appJs && !appJs.includes('estimateMessagesTokens'));
 t('★ app.js 里没有第二份 fitHistoryByBudget（搬走后不能留副本）', !!appJs && !appJs.includes('function fitHistoryByBudget'));
 t('默认预算 48000', !!appJs && appJs.includes('contextBudget: 48000'));

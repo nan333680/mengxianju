@@ -551,6 +551,25 @@ t('★ 还没够最少轮数时明确说不准收',
 const t2 = await kvGet('arc:' + C1);
 t('轮数继续累加', !!t2 && t2.beats[1].turns === 2, String(t2 && t2.beats[1].turns));
 
+// ③-b 点「继续」也是一段叙事（v0.5.1.6 修，外部评审 §五）
+// 以前条件是「!regen && !cont」：自动串联 4 段只记 1 轮，
+// 提示词却对模型说"这一拍才演 1 轮，至少 4 轮才算演完" —— 她会照这个假数字拖节奏。
+await page.evaluate(() => { const b = document.getElementById('btn-continue'); if (b) b.click(); });
+for (let i = 0; i < 40; i++) {
+  const b = await page.$eval('#btn-stop', el => !el.classList.contains('hidden')).catch(() => false);
+  if (b) break;
+  await sleep(100);
+}
+for (let i = 0; i < 200; i++) {
+  const b = await page.$eval('#btn-stop', el => !el.classList.contains('hidden')).catch(() => false);
+  if (!b) break;
+  await sleep(100);
+}
+await sleep(400);
+const t2b = await kvGet('arc:' + C1);
+t('★ 点「继续」也计一轮（续写也是一段叙事）', !!t2b && t2b.beats[1].turns === 3,
+  String(t2b && t2b.beats[1].turns));
+
 // ④ 最后一拍也收掉 → 整段进终态，之后不再进提示词
 await page.evaluate(() => document.getElementById('chat-arc').click());
 await sleep(350);

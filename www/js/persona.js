@@ -1,6 +1,7 @@
 // 人格表现力系统：system prompt 构建 + 颜文字频率闭环控制
 
 import { arcPrompt } from './storyarc.js';
+import { memoryLine } from './memory.js';
 
 // ---------- 颜文字库 ----------
 // ---------- 颜文字库（v0.4.2.2：按【心情】分组）----------
@@ -209,8 +210,42 @@ const LEN_HINT = {
   // 但用户的意思不是「让她多说」—— 是「她的台词本来就少，要的是括号里
   // 的动作/神情更多、整条更长」。台词量由人设管，这一档只管【上限】，
   // 强行加下限会把她写成话痨，反而破坏设定。总量要靠 descLevel / detailDrive 拉。
-  long: '说出口的话可以多聊一些，但不要超过 150 字，除非对方要求详细说明。'
+  long: '说出口的话可以多聊一些，但不要超过 150 字，除非对方要求详细说明。',
+  // ⚠️ 长篇（v0.5.5）不是「台词再多一点」，而是换一种体裁：一条消息可以是一整场戏。
+  // 它仍然不是「整条消息的字数」，而是【说出口的话】的上限 —— 描写另算（见 DESC_HINT）。
+  // 所以这里给的是一个上限而不是要求：真到了要写整场戏的时候，不该被 150 字卡住。
+  epic: '这条可以写成很长的一场戏：说出口的话不用刻意压缩，一场里该有的对话都写出来，单条不超过 800 字。'
 };
+
+// 长篇写法（v0.5.5）：只在 verbosity === 'epic' 时注入。
+//
+// 为什么不把它塞进 LEN_HINT：「回复长度」这个开关的语义是【上限】，
+// 而下面这些是【结构】—— 一条消息怎么分段、每段里至少要有哪几样、
+// 结尾该停在哪。混进上限表里会让「很长」这一档变成一堆互相打架的要求。
+//
+// ⚠️ 刻意没写「每段 300 字」这类数字：字数由模型自己按内容决定，
+// 给了数字它就会为了凑数把一句话拆成三句（v0.4.3.3 量过：档位只要带数字，
+// 模型就把它当配额用）。
+const LONG_PROSE = [
+  '这一条可以写成一整场戏（几百字到上千字），不是一条聊天消息。',
+  '按【场景】分段：换了地点、换了时间、或者在场的人变了，就另起一段，段与段之间空一行。',
+  '每一段里至少要有一处【具体的动作】、一句【说出口的话】、一个【感官细节】—— 三样都要有，但不必每段都排一样多。',
+  '这一场要有一个【落点】：结尾停在一个具体的动作、物件或者一句话上，不要用总结句收。',
+  '不要自己跳时间（「三天后」「过了很久」）—— 时间由上面给你的时间标决定，你只写眼前这一幕。',
+  '配角可以说话、可以有动作，但他们不是主角：他们的台词不超过两三轮就得回到她身上。'
+];
+
+// 反客服腔（v0.5.5）：对所有档位都生效，不只长篇。
+//
+// 起因：模型一旦被要求「写长 / 写详细」，就会滑回助手人格 ——
+// 「有什么可以帮你的」「希望这个回答对你有用」「总结一下我们刚才聊的」。
+// 这些话在聊天里不算 bug（不报错、不截断），但一句就出戏，而且会被历史同化：
+// 出现一次，后面几轮都跟着学。所以在提示词里一次性点名禁止。
+const ANTI_SERVICE = [
+  '【不合格】说「有什么可以帮你」「需要我做什么」「希望这个回答对你有用」「总结一下」这类话 —— 你是她，不是助手。',
+  '【不合格】把对方刚说的话复述一遍再回答，也不要替他总结他刚才说了什么。',
+  '【不合格】用「首先 / 其次 / 总之 / 综上」这种分点结构写感情戏。'
+];
 
 // 非对话描写档位：管【括号里的内容】写多详细。
 // 和 LEN_HINT 是【两个独立的上限】—— 话可以很短，但括号里可以写得很足。
@@ -590,6 +625,55 @@ const GROUP_USE = '（下面是这个场合和在场的人 —— 你是其中�
  * 内容不随轮次变化 —— 保持完全一致才能命中 DeepSeek 的前缀缓存（省一个数量级）
  * 不要往这里面放时间、随机值、每轮变化的东西
  */
+/**
+ * 「他怎么被称呼、怎么被看待」（v0.5.2）。
+ *
+ * 为什么要有：正文里怎么称呼用户，以前只能塞在「我的设定」那一大段散文里，
+ * 模型于是自由发挥 —— 一会儿叫名字、一会儿叫「用户」、旁白里还写成「他」。
+ * 这里是那份散文的【结构化】版本，只影响措辞，不影响情节。
+ *
+ * ⚠️ 全空返回空串（调用方据此决定要不要 push 这一段）：
+ *    默认必须与 v0.5.1 的提示词逐字相同，否则所有老角色的行为都会被动到。
+ */
+const PRONOUN_LABEL = { he: '「他」', she: '「她」', ta: '「TA」', it: '「它」' };
+function userAddressBlock(char, s) {
+  const c = char || {}, st = s || {};
+  const name = String(st.userName || '').trim();
+  const pron = String(st.userPronoun || 'you');
+  const ident = String(st.userIdentity || 'lead');
+  const addrD = String(st.userAddressDefault || '').trim();
+  const cAddr = String(c.userAddress || '').trim();
+  const perc = String(c.userPerception || '').trim();
+  const know = String(c.userKnowledge || '').trim();
+  const att = String(c.userAttitude || '').trim();
+  const lines = [];
+  if (name) {
+    lines.push('- 他的名字是「' + name + '」。你要时可以直接叫这个名字，但不必每句都叫 —— 大多时候还是说「你」。');
+  }
+  const addr = cAddr || addrD;
+  if (addr) {
+    lines.push('- 你叫他「' + addr + '」。这是你对他的固定叫法，别换成别的称呼。');
+  }
+  const pl = PRONOUN_LABEL[pron];
+  if (pl) {
+    lines.push('- 旁白里指他用 ' + pl + '（不要写成「你」以外的性别，也不要写成「用户」）。');
+    lines.push('- 你的台词里永远说「你」，不要把旁白那个第三人称带进说出来。');
+  } else if (pron === 'name') {
+    lines.push('- 旁白里指他就直接用名字，不用代词。你的台词里还是说「你」。');
+  }
+  if (ident === 'off') {
+    lines.push('- 这个故事里他不在场。不要把他在场写成既定事实，也别替他安排动作。');
+  } else if (ident === 'side') {
+    lines.push('- 他是这个场子里的人，但不是主角。别把注意力一直挂在他身上。');
+  }
+  if (perc) lines.push('- 你以为他是：' + perc);
+  if (know) lines.push('- 关于他，你知道 / 不知道：' + know);
+  if (att) lines.push('- 你对他：' + att);
+  if (!lines.length) return '';
+  return '# 你怎么称呼他、怎么看他\n'
+    + '（这一节只管措辞和认知，不改变任何情节。空着的事就是【你不知道】，不要替他补。）\n'
+    + lines.join('\n');
+}
 export function buildStablePrompt(char, s, constWb) {
   const parts = [];
 
@@ -685,6 +769,11 @@ export function buildStablePrompt(char, s, constWb) {
       '不要凭空添加这里没有的房间、家具、天气、外面的景物。）\n' + env);
   }
 
+  // 称谓（v0.5.2 · 小说模式的称谓层，聊天里也用）：她怎么叫他、旁白怎么指他。
+  // ⚠️ 只有真填过才有这一段 —— 全空时一个字符都不出现，老角色的提示词完全不变。
+  const addrLines = userAddressBlock(char, s);
+  if (addrLines) parts.push(addrLines);
+
   const exp = [];
   const freq = effKaomojiFreq(char, s);
 
@@ -725,6 +814,16 @@ export function buildStablePrompt(char, s, constWb) {
   }
 
   exp.push('- ' + (LEN_HINT[s.verbosity] || LEN_HINT.medium));
+
+  // 长篇档的结构要求（v0.5.5）：只在「长篇」这一档注入。
+  // 别的档位下她就是在发消息，硬塞分段/落点只会把日常对话写歪。
+  if (s.verbosity === 'epic') {
+    exp.push('这一条按【长篇】的要求写：');
+    for (const line of LONG_PROSE) exp.push('- ' + line);
+  }
+
+  // 反客服腔（v0.5.5）：所有档位都生效。
+  for (const line of ANTI_SERVICE) exp.push('- ' + line);
 
   // 非对话描写：和上面的"回复长度"是两个独立上限。
   // 先讲清括号是干什么的，再说这一档写多细。
@@ -1388,14 +1487,19 @@ export function buildTurnNote(char, s, ctx = {}) {
       const picked = memories.filter(m => keep.has(m));   // 按原时间顺序回去
       if (picked.length) {
         const blocks = [];
+        const dayNote = [...minePick, ...sharedPick].some(m => typeof m.day === 'number' && m.day >= 1)
+          && clockState && typeof clockState.day === 'number'
+          ? '\n（每条前面的「第 N 天记下」是记下那天的剧情天数，相对时间按那一天解释；今天是第 ' + clockState.day + ' 天。）'
+          : '';
         if (minePick.length) {
           blocks.push('# 你（' + (selfName || '她') + '）自己看在眼里的事\n'
-            + minePick.map(m => '- ' + m.text).join('\n'));
+            + minePick.map(m => '- ' + memoryLine(m)).join('\n'));
         }
         if (sharedPick.length) {
           blocks.push('# 这个群里大家都知道的事\n'
-            + sharedPick.map(m => '- ' + m.text).join('\n'));
+            + sharedPick.map(m => '- ' + memoryLine(m)).join('\n'));
         }
+        if (dayNote) blocks.push(dayNote.trim());
         // ⚠️ 最后那句只在【真有"她自己看在眼里的事"】时才说 ——
         //    乙一条自己的记忆都没有时还写"上面那些只有你知道"，
         //    上面根本没有那一段（e2e-groupmem 抓到的）。
@@ -1407,8 +1511,12 @@ export function buildTurnNote(char, s, ctx = {}) {
       }
     } else {
       const picked = rankMemories(memories, topic, 24);
-      const body = picked.map(m => '- ' + m.text).join('\n');
-      parts.push('# 你记得关于他的事\n' + body + '\n\n这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。');
+      const body = picked.map(m => '- ' + memoryLine(m)).join('\n');
+      const dayNote = picked.some(m => typeof m.day === 'number' && m.day >= 1)
+        && clockState && typeof clockState.day === 'number'
+        ? '\n\n（每条前面的「第 N 天记下」是记下那天的剧情天数，相对时间按那一天解释；今天是第 ' + clockState.day + ' 天。）'
+        : '';
+      parts.push('# 你记得关于他的事\n' + body + dayNote + '\n\n这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。');
     }
   }
 
@@ -1495,6 +1603,24 @@ export function buildTurnNote(char, s, ctx = {}) {
     if (useEmoji === true) want.push('加一两个 emoji（从上面那张表里对上心情的那一组里挑）');
     else if (useEmoji === false) want.push('不加 emoji');
     parts.push('# 本轮要求\n这一次的回复里，' + want.join('；') + '。');
+  }
+
+  // 复读提醒（v0.5.5）：只有在【上一轮那条被检测出跟更早的回复撞得很厉害】时才出现。
+  //
+  // 为什么不放进稳定的「表达方式」段（那里第 907 行已经有一条"别把前几轮用过的话
+  // 再写一遍"）：那一条是每轮都在的常驻规则，模型会习惯性忽略 —— 人对"每次都出现
+  // 的警告"也一样。真撞车的那一轮要说得具体：撞了多少、别再复刻什么。
+  // 也因此它必须留在【本轮段】：放稳定前缀会改动整块前缀、把缓存全废掉。
+  // 阈值和检测都在 www/js/prose.js，那个 0.45 是从真实备份量出来的。
+  //
+  // ⚠️ 放最末尾：这是整段里最频繁变化的一项之一（上一轮撞没撞车），
+  //    放末尾之后它变的时候后面没有东西要跟着重算。
+  if (Number(ctx.rep) >= 0.45) {
+    parts.push('# 这一轮要避开的东西\n'
+      + '- 你上一条和更早的回复撞得很厉害（字面重合 ' + Math.round(Number(ctx.rep) * 100) + '%）：'
+      + '起手的方式、中间那个动作、收尾那句，有一半以上是以前写过的。\n'
+      + '- 这一轮换一条路走：别再用同一个起手动作，别再写一遍那个细节。\n'
+      + '- 不是要你避开这个话题 —— 是同一件事换个写法说。');
   }
 
   return parts.join('\n\n');

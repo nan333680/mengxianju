@@ -1,7 +1,7 @@
 {
   "name": "ai-companion",
   "version": "0.5.2",
-  "description": "梦弦居 —— 安卓端 AI 伴侣 App（纯前端，无后端）",
+  "description": "梦弦居 —— 安卓端 AI 角色扮演 App（纯前端，无后端）",
   "private": true,
   "author": "DaRiko <3780117926@qq.com>",
   "license": "AGPL-3.0-only",

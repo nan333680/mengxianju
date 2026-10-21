@@ -60,6 +60,15 @@ await page.evaluateOnNewDocument(() => {
 });
 
 async function hardReset() {
+
+// ⚠️ CI 的 runner 是 en-US，而界面语言默认「跟随系统」。这套要读界面上的中文文案，
+//    不钉语言的话在 CI 上拿到的是英文，断中文的地方必红（v0.5.2 CI #29 的 e2e-branch）。
+//    位置必须在 newPage 之后、goto 之前：tools/ci-precheck.mjs 会把 en-US 伪装插在
+//    newPage 紧跟的下一行，晚注册的那份才生效，才能盖过它。
+await page.evaluateOnNewDocument(() => {
+  Object.defineProperty(navigator, 'language', { get: () => 'zh-CN', configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
+});
   await page.goto(BASE, { waitUntil: 'networkidle0' });
   const cdp = await page.target().createCDPSession();
   await cdp.send('Storage.clearDataForOrigin', { origin: 'http://127.0.0.1:' + port, storageTypes: 'indexeddb' });

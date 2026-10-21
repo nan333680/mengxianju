@@ -67,6 +67,27 @@ for (const s of suites) {
   }
 }
 if (!lintBad) console.log('  ✓ ' + suites.length + ' 套都没有引用被忽略的路径');
+
+// ---------- ④ 静态检查：CI 套件必须钉住界面语言 ----------
+// 为什么能在本地拦下：GitHub runner 是 en-US，而界面语言默认「跟随系统」→ 英文界面。
+// 断言中文文案的套件在 CI 上必红，本地中文机器却恒绿，看不见 ——
+// v0.5.2 的 CI #29（e2e-branch 断言「从这里重聊」拿到 Rewind to here）就是这么红的。
+// 启了浏览器却读中文文案的套件，都要在 newPage 之后、goto 之前钉 zh-CN。
+// 纯 Node 的套件不启浏览器，不受影响，放过。
+let langBad = 0;
+for (const s of suites) {
+  const file = path.join(root, 'e2e', s + '.mjs');
+  if (!fs.existsSync(file)) continue;   // 上一条已经报过了
+  const src = fs.readFileSync(file, 'utf8');
+  if (!src.includes('puppeteer') || !/await page\.goto\(/.test(src)) continue;
+  if (/navigator,\s*'language'/.test(src)) continue;
+  langBad++;
+  console.log('  ✗ ' + s + ' 启了浏览器却没钉界面语言 → CI（en-US）上会红');
+  console.log('      修法：newPage 之后、goto 之前加 evaluateOnNewDocument 钉 zh-CN（照 e2e-menu.mjs 那份写）');
+}
+if (!langBad) console.log('  ✓ ' + suites.length + ' 套都钉住了界面语言（或不需要）');
+lintBad += langBad;
+
 if (lintOnly) process.exit(lintBad ? 1 : 0);
 
 // ---------- ①② 生成副本：en-US + 强制关动画 ----------

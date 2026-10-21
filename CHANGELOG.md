@@ -87,6 +87,28 @@
 - 解包核对：`assets/public/js` 里 `app.js` / `db.js` / `scene.js` / `scenegen.js` / `persona.js` 与工作区逐字节相同。
 - **真机安装仍未验证**：`adb devices` 一直为空，这台机器上没有可连的设备。
 
+#### 十二、发布后的 CI 修复（只动测试，产品一行没改）
+
+发布提交 `b02ff97` 的 CI #29 是红的，卡的只有一套：`e2e/e2e-branch.mjs` 报
+
+```
+FAIL 非最后一条的菜单里有「从这里重聊」  -> ["Copy text","Read aloud","Delete","Rewind to here","Cancel"]
+```
+
+**根因不是产品。** GitHub 的 runner 是 en-US，而界面语言默认「跟随系统」——CI 上界面是英文的，断言里的中文文案永远拿不到。本地是中文机器，所以这套恒绿，问题在本地根本看不见。
+
+反向验证过（不是推测）：把这一套钉住的 language 去掉、再按 `tools/ci-precheck.mjs` 的方式注入 en-US，跑出来是同一条 FAIL、同一串英文菜单；把钉子加回去，同样的 en-US 环境 21 项全过。
+
+修法与扩散范围：
+
+- 先修红的这一套（`e2e-branch`），再顺着查了 CI 清单里的其余 25 套 —— 发现 `e2e-epic`、`e2e-v517`、`e2e-scene` 三套同样没钉（它们目前恰好还没断言到会被翻译的文案，所以没红，但下一句中文断言就会红），四套一起钉住。清单里另外 4 套是纯 Node、不启浏览器，不受影响。
+- 位置有讲究：钉子必须放在 `newPage()` 之后、`goto()` 之前。`ci-precheck` 把 en-US 伪装插在 `newPage()` 紧跟的下一行，`evaluateOnNewDocument` 是晚注册的那份生效 —— 放错了就会被预检自己的伪装盖掉，本地预检永远绿、CI 照样红。
+- 防复发：`tools/ci-precheck.mjs` 的静态检查加了一条 —— **CI 清单里启了浏览器的套件必须钉住界面语言**，没钉就当场报红并给出修法。这条不用启动浏览器，`node tools/ci-precheck.mjs --lint-only` 秒出结果。下次往清单里加套件，本地就能拦住，不用等 GitHub 红一轮再看日志。
+
+验证：`node tools/ci-precheck.mjs`（26 套，en-US + prefers-reduced-motion）**通过 21 / 失败 0 / 跳过 5**，其中 branch 21 / epic 21 / v517 34 / scene 86 / arc 171 / i18n 25 全绿。
+
+**这一节不产生新包**：产品代码、`www/` 下一个字节都没动，`梦弦居-v0.5.2.apk` 的 SHA256 仍是 `31E48530…2CC8`，已经装上的人不用重装。
+
 ### 0.5.1.7（versionCode 153 · 本地内测号，未上传）
 
 **还是只修状态，不加功能。** 这一轮的四条全部来自外部评审 §六「先补四个洞，再谈 0.6」—— 它们有个共同点：不是「坏了」，是「你以为它在做 A，其实它在做 B」。

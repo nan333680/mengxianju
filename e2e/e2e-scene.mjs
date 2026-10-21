@@ -130,6 +130,15 @@ const click = async (sel) => { await page.waitForSelector(sel, { timeout: 15000 
 const clickSoft = async (sel, ms = 8000) => { try { await page.waitForSelector(sel, { timeout: ms }); await page.evaluate(s => { const e = document.querySelector(s); if (e) e.click(); }, sel); return true; } catch (e) { return false; } };
 const visible = (sel) => page.evaluate(s => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).display !== 'none'; }, sel);
 
+
+// ⚠️ CI 的 runner 是 en-US，而界面语言默认「跟随系统」。这套要读界面上的中文文案，
+//    不钉语言的话在 CI 上拿到的是英文，断中文的地方必红（v0.5.2 CI #29 的 e2e-branch）。
+//    位置必须在 newPage 之后、goto 之前：tools/ci-precheck.mjs 会把 en-US 伪装插在
+//    newPage 紧跟的下一行，晚注册的那份才生效，才能盖过它。
+await page.evaluateOnNewDocument(() => {
+  Object.defineProperty(navigator, 'language', { get: () => 'zh-CN', configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
+});
 await page.goto('http://127.0.0.1:' + port + '/index.html', { waitUntil: 'networkidle0' });
 await seed({
   chars: [baseChar('sc1', '红白')],

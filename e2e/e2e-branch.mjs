@@ -85,6 +85,17 @@ const baseChar = (id, name, extra) => Object.assign({
 const M = (id, role, content, ts) => ({ id, charId: CID, role, content, ts, story: null });
 
 const T0 = 1790000000000;
+
+// ⚠️ CI 的 runner 是 en-US，而界面语言默认「跟随系统」。这套要读菜单里的中文文案
+//    （「从这里重聊」），不钉语言的话 CI 上拿到的是 "Rewind to here"，必红 ——
+//    v0.5.2 的 CI #29 就是这么红的（本地中文机器恒绿，看不见）。
+//    位置必须在 newPage 之后、goto 之前：tools/ci-precheck.mjs 会把 en-US 伪装插在
+//    newPage 紧跟的下一行，晚注册的那份才生效，才能盖过它。
+await page.evaluateOnNewDocument(() => {
+  Object.defineProperty(navigator, 'language', { get: () => 'zh-CN', configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
+});
+
 // 先让页面起来（about:blank 里 IndexedDB 是被拒的），再往里灌数据，最后 reload 一遍。
 await page.goto('http://127.0.0.1:' + port + '/index.html', { waitUntil: 'networkidle0' });
 await sleep(600);

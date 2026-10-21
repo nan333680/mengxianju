@@ -37,14 +37,20 @@ export function maxTokensFor(targetChars) {
 /**
  * 写一拍正文（流式）。
  *
- * opts: { scene, cfg, beatIdx, prevText, userLine, directive, signal, onDelta }
+ * opts: { scene, cfg, beatIdx, prevText, userLine, directive, context, log, signal, onDelta }
  *   prevText  —— 「继续这一段」：把已经写的尾巴接上
  *   userLine  —— 演员模式：他自己写的那句（不许替他说）
  *   directive —— 导演模式：导演指令（不进正文）
+ *   context   —— 开戏时的底色快照（她是谁 / 世界 / 已发生过什么），v0.5.2.4
+ *   log       —— 前面几拍的场记（多拍接力用），v0.5.2.4
  */
 export async function genProse(o) {
-  const { scene, cfg, beatIdx = 0, prevText = '', userLine = '', directive = '', signal, onDelta } = o || {};
-  const prompt = sceneProsePrompt(scene, { beatIdx, prevText, userLine, directive, fixup: (o && o.fixup) || '' });
+  const { scene, cfg, beatIdx = 0, prevText = '', userLine = '', directive = '',
+    context = '', log = null, signal, onDelta } = o || {};
+  const prompt = sceneProsePrompt(scene, {
+    beatIdx, prevText, userLine, directive, context, log,
+    fixup: (o && o.fixup) || ''
+  });
   const L = (scene && scene.targetChars) || [300, 600];
   let text = '';
   let finish = '';

@@ -10,7 +10,18 @@
 //   · 第一版照抄规格 §5 的字段，一个不多加 —— 加字段之前先问「它服务哪一句裁决」。
 
 /** 场景卡结构版本。以后改字段就 +1，normalize 里按版本分别认。 */
-export const SCENE_VER = 1;
+export const SCENE_VER = 2;
+
+/**
+ * 场景上下文的字数上限（v0.5.2.4）。
+ *
+ * 这一块是「开戏那一刻世界长什么样」的快照：她是谁、世界是什么底色、
+ * 你们之间发生过什么。它进的是【稳定前缀之外、每拍都在】的位置，
+ * 所以必须封顶 —— 否则一个 3000 字的人设会把整场戏的预算吃掉，
+ * 而正文才是这一场真正在产出的东西。
+ * 2400 字 ≈ 1500 token，约等于短场正文的一半、中场的三分之一。
+ */
+export const SCENE_CONTEXT_MAX = 2400;
 
 /** 两档长度：字数 = 上限，不是任务（§3） */
 export const SCENE_LENGTHS = {
@@ -60,6 +71,7 @@ export function emptyScene(charId = '') {
     log: { events: [], cast: [], change: '', openThreads: [], keyLines: [] },
     status: 'draft',
     canon: false,
+    context: '',
     quality: 'ok',
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -139,6 +151,10 @@ export function normalizeScene(raw) {
     const p = Number(a.readAt);
     out.readAt = (isFinite(p) && p > 0 && p <= 1) ? Math.round(p * 1000) / 1000 : 0;
   }
+  // 开戏时拍下来的上下文快照（v0.5.2.4）。存成字符串而不是每次生成重读库：
+  // 聊天被改了、分支切了、记忆被整理掉了，这场戏读到的还是当初那一份 ——
+  // 和 source.excerpt 的快照隔离是同一个原则。
+  out.context = S(a.context, SCENE_CONTEXT_MAX);
   out.status = SCENE_STATUS.includes(a.status) ? a.status : 'draft';
   out.canon = a.canon === true;
   out.quality = (a.quality === 'warn') ? 'warn' : 'ok';
@@ -259,6 +275,21 @@ export function countChars(text) {
   return cjk + words;
 }
 
+/**
+ * 提示词里点名禁掉的句子（v0.5.2.4，照聊天侧那套「不合格」清单搬过来的）。
+ *
+ * 为什么单列一份而不是直接复用 AI_TELL：AI_TELL 是【检查器】，宁可漏判不可误伤，
+ * 所以只留最没有歧义的几条；这里是【禁令】，多写几条没有代价 —— 模型看见了会绕开，
+ * 真绕开了也就不用检查了。两边都留着，但职责不同。
+ */
+export const PROSE_BAN = [
+  '作为 AI', '作为人工智能', '希望你喜欢', '希望这能帮到你', '希望对你有帮助',
+  '总结一下', '以下是', '如果需要', '随时告诉我', '祝你',
+  '这段文字', '本段', '字数：', '未完待续',
+  '让我们一起', '不得不说', '值得一提的是', '总而言之',
+  '空气中弥漫着', '仿佛时间静止', '心中五味杂陈'
+];
+
 const AI_TELL = [
   '作为AI', '作为 AI', '作为人工智能', '希望你喜欢', '希望这能帮到你', '总结一下',
   '如果需要', '随时告诉我', '祝你', '希望对你有帮助', '以下是', '这段文字', '本段',
@@ -349,9 +380,19 @@ export function sceneProsePrompt(scene, opts = {}) {
     return c.name + '（她）';
   }).join('、');
 
+  // 开戏那一刻拍下来的底色（v0.5.2.4）。opts.context 优先，没传就用卡里存的。
+  const ctx = S(opts.context != null && opts.context !== '' ? opts.context : a.context, SCENE_CONTEXT_MAX);
+
   const p = [];
   p.push('你是这场戏的叙述者，不是助手。');
   p.push('');
+  if (ctx) {
+    p.push('【她是谁、这是个什么世界（开这一场时定下的底色）】');
+    p.push(ctx);
+    p.push('上面这些是【底色】，不是这一场要写的内容：不要复述它，不要把它当旁白念出来；');
+    p.push('但写出来的每一句都不能跟它打架 —— 她的说话方式、她的习惯、这个世界的规矩，都按上面来。');
+    p.push('');
+  }
   p.push('【场景卡】');
   p.push('地点：' + (a.setting.place || '沿用角色现在所在的地方'));
   p.push('时间：' + (a.setting.time || '接着上一段'));
@@ -389,7 +430,9 @@ export function sceneProsePrompt(scene, opts = {}) {
   p.push('- 不新增未登记的名字' + (temps.length ? '（临时人物只有 ' + temps.map(c => c.name).join('、') + '）' : '') + '。');
   p.push('- 不跳时间；不写「第二天」「后来」「多年后」。');
   p.push('- 结尾停在具体动作、未说完的话、或一个物件上。');
-  p.push('- 不写「作为 AI」「希望你喜欢」「总结一下」。');
+  // 客服腔 / 陈词滥调（v0.5.2.4）：原来只禁三句，等于只堵了最显眼的那个洞。
+  // 清单本身在 PROSE_BAN（和检查器共用一份素材，检查器只用其中最没歧义的几条）。
+  p.push('- 下面这些说法一个都不许出现：' + PROSE_BAN.join('、') + '。');
   p.push('');
   p.push('【长度】');
   p.push('写到这一场自然结束，但不超过上限。');
@@ -397,8 +440,25 @@ export function sceneProsePrompt(scene, opts = {}) {
   p.push('');
   if (opts.prevText) {
     p.push('【前面已经写到这里，接住它，不要复述】');
-    p.push(String(opts.prevText).slice(-600));
+    // 2400 字（v0.5.2.4）：原来只给最后 600 字，中场写第 2 拍时第 1 拍的
+    // 前半段已经看不见了 —— 人还在门口，模型已经开始写屋里，或者反过来。
+    p.push(String(opts.prevText).slice(-2400));
     p.push('');
+  }
+  // 场记（v0.5.2.4）：多拍时上一拍的「发生了什么」也要带进来。
+  // 只靠 prevText 的正文尾巴不够 —— 正文写的是【怎么写的】，场记写的是【发生了什么】，
+  // 前者 2400 字之后就开始丢，后者一句话就够。
+  const lg = (opts.log && typeof opts.log === 'object') ? opts.log : null;
+  if (lg) {
+    const evs = Array.isArray(lg.events) ? lg.events.filter(Boolean).slice(0, 8) : [];
+    const ths = Array.isArray(lg.openThreads) ? lg.openThreads.filter(Boolean).slice(0, 4) : [];
+    if (lg.change || evs.length) {
+      p.push('【前面几拍已经发生的事（照着往下走，不要重演）】');
+      if (evs.length) p.push(evs.map(x => '· ' + String(x).slice(0, 120)).join('\n'));
+      if (lg.change) p.push('到现在为止变成什么样了：' + String(lg.change).slice(0, 200));
+      if (ths.length) p.push('还悬着的事：' + ths.map(x => String(x).slice(0, 100)).join('；'));
+      p.push('');
+    }
   }
   if (a.userMode === 'actor' && opts.userLine) {
     p.push('【他已经说过的话（不要重复，不要替他再说一遍）】');

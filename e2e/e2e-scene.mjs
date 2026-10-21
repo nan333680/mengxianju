@@ -89,6 +89,8 @@ async function seed(spec) {
     for (const e of (s.kv||[])) await put('kv', e);
     for (const m of (s.msgs||[])) await put('messages', m);
     for (const e of (s.scenes||[])) await put('scenes', e);
+    for (const e of (s.solos||[])) await put('wbSolo', e);
+    for (const m of (s.mems||[])) await put('memories', m);
     db.close();
   }, spec);
 }
@@ -140,15 +142,26 @@ await page.evaluateOnNewDocument(() => {
   Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
 });
 await page.goto('http://127.0.0.1:' + port + '/index.html', { waitUntil: 'networkidle0' });
+// v0.5.2.4：开戏时要读一次「底色」（人设 / 常驻世界书 / 记忆），
+// 这里把三样都种上，第 8b 节据此断言它们真的进了正文提示词。
+const SC_PERSONA = '你是红白。你话少，句子短，先看人再看事，不解释自己。';
 await seed({
-  chars: [baseChar('sc1', '红白')],
+  chars: [baseChar('sc1', '红白', {
+    persona: SC_PERSONA,
+    cardFields: { personality: '冷静、话少、记仇', scenario: '住在河边的旧屋' },
+    appearance: '银白长发，总穿深色外套'
+  })],
   kv: [
-    { k: 'settings', v: { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', clockMode: false, lang: 'zh' } },
+    { k: 'settings', v: { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', clockMode: false, lang: 'zh', worldbookOn: true, memLimit: 20 } },
     { k: 'lastCharId', v: 'sc1' }
   ],
   msgs: [
     { id: 'm1', charId: 'sc1', role: 'assistant', content: '（红白）', ts: Date.now() - 2000 }
-  ]
+  ],
+  solos: [{ id: 'wbs1', charId: 'sc1', entries: [
+    { id: 'wbe1', title: '河边的旧屋', content: '这一带没有电，天黑只能点油灯，屋外是连片的芦苇荡。', on: true, pos: 'always' }
+  ] }],
+  mems: [{ id: 'mm1', charId: 'sc1', text: '她左手腕上有道旧疤，是小时候从树上摔下来留的。', kind: 'fact', day: '1' }]
 });
 await page.reload({ waitUntil: 'networkidle0' });
 await sleep(900);
@@ -280,9 +293,38 @@ await click('#beat-ok');
 await waitDone(90000);
 scs = await dbScenes();
 h = await hits();
-t('分了拍、写了 2 段正文、收了 1 次场记', h.chat === 2 && h.kinds.filter(k => k === 'beats').length === 1 && h.kinds.filter(k => k === 'log').length === 1, JSON.stringify(h));
+// v0.5.2.4：多拍时每拍写完先整理一次场记，下一拍才看得见前面发生了什么 ——
+// 所以中场 = 1 次分镜 + 2 次场记（第 1 拍后 / 整场写完），不是 1 次。
+t('分了拍、写了 2 段正文、跑了 2 次场记（每拍一次 + 收尾一次）', h.chat === 2 && h.kinds.filter(k => k === 'beats').length === 1 && h.kinds.filter(k => k === 'log').length === 2, JSON.stringify(h));
+const sys2 = await page.evaluate(() => { const c = window.__fake.chat[1]; return c ? String(c.sys) : ''; });
+t('第 2 拍的提示词里带着第 1 拍的场记', sys2.indexOf('前面几拍已经发生的事') >= 0, sys2.slice(-300));
 t('两拍都写了', (scs[0] && (scs[0].blocks || []).length) === 2, JSON.stringify((scs[0] && (scs[0].blocks || []).map(b => b.beat))));
 t('中等长度落的是 medium', scs[0] && scs[0].length === 'medium', String(scs[0] && scs[0].length));
+
+// ---------- 8b. 底色快照：人设 / 世界书 / 记忆真进了正文提示词（v0.5.2.4）----------
+// 评审第九条：这一套原来 86 项里没有一项断言「角色卡进过提示词」——
+// 正文写得再顺也可能是因为模型自己会编。这里把三样都种上，逐样查一遍。
+console.log('=== 8b. 底色快照 ===');
+await clearScenes();
+await fakeReset([{ text: PROSE, finish: 'stop' }]);
+t('再开一场（短场）', await openScene());
+await clickSoft('#sc-len button[data-v="short"]');
+await click('#sc-go');
+await waitDone();
+const baseSys = await page.evaluate(() => { const c = window.__fake.chat[0]; return c ? String(c.sys) : ''; });
+t('正文提示词里带着角色人设', baseSys.indexOf('先看人再看事') >= 0, baseSys.slice(0, 160));
+t('正文提示词里带着常驻世界书', baseSys.indexOf('芦苇荡') >= 0, '');
+t('正文提示词里带着记忆', baseSys.indexOf('左手腕上有道旧疤') >= 0, '');
+t('角色卡里的外貌也带了', baseSys.indexOf('银白长发') >= 0, '');
+const ctxSaved = await page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const all = await new Promise(r => { const q = db.transaction('scenes', 'readonly').objectStore('scenes').getAll(); q.onsuccess = () => r(q.result || []); });
+  db.close();
+  return (all[0] && all[0].context) || '';
+});
+t('底色快照存进了场景卡', ctxSaved.length > 20, JSON.stringify(ctxSaved.slice(0, 80)));
+t('快照不超过 2400 字上限', ctxSaved.length <= 2400, String(ctxSaved.length));
 
 // ---------- 9. 导演模式 ----------
 console.log('=== 9. 导演模式 ===');

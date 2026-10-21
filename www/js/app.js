@@ -31,7 +31,7 @@ import { parseStRegexList, applyStRegex, previewOne } from './stregex.js';
 import { parseStChat, toMessages } from './stchat.js';
 // 小说层（v0.5.2）：场景卡的数据形状与纯逻辑全在 scene.js，
 // 出正文 / 出分镜 / 出场记在 scenegen.js，两边都不碰 DOM 也不碰数据库。
-import { SCENE_LENGTHS, USER_MODES, USER_MODE_NAME, SCENE_STATUS, GUARDRAILS_MAX, TEMP_CAST_MAX, TRASH_DAYS, emptyScene, emptyBeat, beatCountFor, clampBeats, normalizeScene, sceneNames, countChars, checkQuality, sceneWordCount, sceneFilled, textToBlocks, dialogueToNarration, newSceneId } from './scene.js';
+import { SCENE_LENGTHS, USER_MODES, USER_MODE_NAME, SCENE_STATUS, GUARDRAILS_MAX, TEMP_CAST_MAX, TRASH_DAYS, SCENE_CONTEXT_MAX, emptyScene, emptyBeat, beatCountFor, clampBeats, normalizeScene, sceneNames, countChars, checkQuality, sceneWordCount, sceneFilled, textToBlocks, dialogueToNarration, newSceneId } from './scene.js';
 import { genProse, genBeatPlan, genLog, genTempCast } from './scenegen.js';
 
 // ⚠️ 这里绝对不能 import '@capacitor/xxx'！
@@ -11777,6 +11777,65 @@ async function scChatSnapshot(charId) {
   } catch { return { msgIds: [], excerpt: '' }; }
 }
 
+/**
+ * 开戏那一刻的「底色」快照（v0.5.2.4）。
+ *
+ * 之前小说提示词里【只有名字】：角色叫「八云紫」，模型就拿一个通用的「她」往上写 ——
+ * 这是评审里那句「把一个单场草稿生成器叫小说模式」的根。
+ * 这里拼三样，加起来封顶 SCENE_CONTEXT_MAX 字：
+ *   她是谁（人设 + 卡里带的性格/场景/说明 + 外貌）
+ *   世界是什么底色（常驻世界书）
+ *   你们之间已经发生过什么（记忆里 state / relationship / event 这几类）
+ * 拼完存进 scene.context，这一场之后不再读库 —— 和 source.excerpt 一样是快照隔离。
+ */
+async function buildSceneContext(charId) {
+  const parts = [];
+  let ch = null;
+  try { ch = await chars.get(charId); } catch { ch = null; }
+  if (!ch) return '';
+  // —— 她是谁 ——
+  const who = [];
+  const persona = String(ch.persona || '').trim();
+  if (persona) who.push(persona.slice(0, 900));
+  const cf = (ch.cardFields && typeof ch.cardFields === 'object') ? ch.cardFields : {};
+  if (cf.personality) who.push('【性格】' + String(cf.personality).slice(0, 200));
+  if (cf.scenario) who.push('【场景】' + String(cf.scenario).slice(0, 200));
+  if (cf.systemPrompt) who.push('【卡里给的角色说明】' + String(cf.systemPrompt).slice(0, 200));
+  if (cf.postHistory) who.push('【要一直记着的】' + String(cf.postHistory).slice(0, 200));
+  const look = String(ch.appearance || (ch.params && ch.params.appearance) || '').trim();
+  if (look) who.push('【外貌】' + look.slice(0, 200));
+  if (who.length) parts.push('# 她是谁\n' + who.join('\n'));
+
+  // —— 世界的底色 ——
+  // 只收「基础设定」那一档（worldbookConst），不收关键词命中的：
+  // 命中的条目一场一变，塞进快照就会跟开戏那一刻看到的东西对不上。
+  try {
+    const wbC = await worldbookConst(charId);
+    if (wbC && wbC.length) {
+      const body = wbC.slice(0, 6)
+        .map(h => '【' + (h.title || '设定') + '】\n' + String(h.content || '').slice(0, 260))
+        .join('\n\n');
+      if (body) parts.push('# 这个世界的底色\n' + body);
+    }
+  } catch { /* 世界书读不到就不带 */ }
+
+  // —— 已经发生过的事 ——
+  try {
+    const all = await mem.list(charId);
+    const keep = all.filter(m => m && m.text && m.status !== 'deleted' && m.status !== 'draft'
+      && ['state', 'relationship', 'event', 'goal', 'fact'].includes(String(m.kind || 'fact')));
+    const picked = pickMemories({
+      list: keep, limit: 10, budgetTokens: 420,
+      estimate: t => estimateMsgTokens({ content: t })
+    });
+    const txt = memoryBlockText(picked.used);
+    if (txt) parts.push('# 你们之间已经这样了\n' + txt);
+  } catch { /* 记忆读不到就不带 */ }
+
+  const out = parts.join('\n\n').trim();
+  return out.length > SCENE_CONTEXT_MAX ? out.slice(0, SCENE_CONTEXT_MAX) : out;
+}
+
 /** 弹窗里填的东西 → 一张场景卡（不落库）。char 读不到时也要能返回一张能用的空卡。 */
 function scDraftScene() {
   if (!_scCharId) return null;
@@ -12052,6 +12111,11 @@ async function writeScene(sc, opts = {}) {
         try {
           r = await genProse({
             scene: sc, cfg, beatIdx: i, prevText,
+            // 底色快照（v0.5.2.4）：她是谁 / 世界 / 已经发生过的事。
+            // 存在卡里而不是每拍重读库 —— 这场戏开演时世界什么样，就按那个写。
+            context: sc.context || '',
+            // 场记（v0.5.2.4）：多拍时上一拍已经发生的事，别只靠正文尾巴。
+            log: sc.log || null,
             userLine: attempt === 0 ? (opts.userLine || '') : '',
             directive: opts.directive || '',
             fixup,
@@ -12081,6 +12145,17 @@ async function writeScene(sc, opts = {}) {
         rvScrollBottom();
         if (r.truncated) { stopMsg = '这一段没写完（被长度截断）'; }
         else if (i < sc.beats.length - 1) { sc.currentBeat = i + 1; }
+        // 中场（多拍）每拍写完就先整理一次场记，下一拍才看得见「前面发生了什么」（v0.5.2.4）。
+        // 只有一拍时不跑 —— 整场写完之后那次就够了，不该为同一件事付两次钱。
+        // 失败不挡下一拍：没有场记顶多接得松一点，卡在这儿就是整场写不完。
+        if (sc.beats.length > 1 && i < sc.beats.length - 1 && !stopMsg) {
+          showReadLive('（在整理这一拍的场记…）');
+          try {
+            const lg = await genLog({ text: sc.blocks.map(b => b.text).join('\n'), cfg });
+            if (lg && lg.ok && lg.log) sc.log = lg.log;
+          } catch { /* 场记失败不影响下一拍 */ }
+          hideReadLive();
+        }
       }
       if (stopMsg) break;
       if (!got) break;
@@ -12281,6 +12356,11 @@ async function beginScene(sc) {
   _scStarting = false;
   if (!sc.id) sc.id = newSceneId();
   if (!sc.createdAt) sc.createdAt = Date.now();
+  // 底色快照（v0.5.2.4）：只在这一刻算一次，之后这一场不再读角色卡 / 世界书 / 记忆。
+  // 算不出来也要能开演 —— 没有底色顶多写得泛一点，卡在这儿就是完全写不了。
+  if (!sc.context) {
+    try { sc.context = await buildSceneContext(sc.charId); } catch { sc.context = ''; }
+  }
   sc.updatedAt = Date.now();
   sc.status = 'generating';
   if (!sc.title) {
@@ -17371,7 +17451,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.2.3';
+const WEB_VERSION_FALLBACK = '0.5.2.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

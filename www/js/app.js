@@ -15224,6 +15224,28 @@ async function renderMem() {
   });
 }
 
+// 「已记住的事」自动跟着数据走（v0.5.2.3）。
+//
+// 这一段只在【展开时】和【用户自己操作完】才重绘，可是记忆真正变化的地方大多在它
+// 看不见的时候（后台过期、自动整理、这一轮模型新抽出一条、群聊那边收下草稿）。
+// 结果就是列表停在旧的条数和状态上 —— 偏偏这一段是折叠的，退出设置页再进来也不会
+// 自动刷新，只能手动收起来再展开。db.js 每次写入成功都会广播 mem-changed，这里收着。
+//
+// 两条克制：
+//   · 只在它【正展开着】的时候重绘。收着的时候下次展开本来就会渲染一次，白重绘一次
+//     等于把用户刚滚到的位置和正在输入的焦点打断。
+//   · 400ms 节流。一轮总结可能连着写好几条，一条一次重绘会把界面闪成幻灯片。
+let _memRedrawT = 0;
+window.addEventListener('mem-changed', () => {
+  if (_memRedrawT) return;
+  _memRedrawT = setTimeout(async () => {
+    _memRedrawT = 0;
+    const wrap = $('mem-wrap');
+    if (!wrap || !wrap.classList.contains('open')) return;
+    try { await renderMem(); await refreshMemOverflow(); } catch { /* 重绘失败不该冒泡到聊天 */ }
+  }, 400);
+});
+
 // ================= 数据导入导出 =================
 // 备份要带上的 kv 键（记账 / 情景状态）。
 //
@@ -17349,7 +17371,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.2.2';
+const WEB_VERSION_FALLBACK = '0.5.2.3';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

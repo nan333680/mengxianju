@@ -193,16 +193,20 @@ const delId = await page.evaluate((name) => {
   btn.click();
   return id;
 }, A.name);
+await sleep(600);
+// ⚠️ 0.5.2.2 起界面上的删除是【软删】，先弹一次确认 —— 不点确认就什么都没发生。
+//    这套原来是按下就断言"库里没了"，那是物理删时代的写法，会一直红。
+await page.evaluate(() => { const b = document.getElementById('modal-ok'); if (b) b.click(); });
 await sleep(900);
 const afterDel = await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const ms = await new Promise(r => { const q = db.transaction('memories').objectStore('memories').getAll(); q.onsuccess = () => r(q.result); });
-  db.close(); return ms.map(m => m.id);
+  db.close(); return ms.map(m => ({ id: m.id, st: m.status || 'active' }));
 });
 console.log('   删除的 id: ' + delId + ' / 剩余: ' + JSON.stringify(afterDel));
-t('那条被删掉了', !afterDel.includes(delId));
-t('别人的记忆没被误删', afterDel.includes('b1'), JSON.stringify(afterDel));
+t('那条被软删了（还在库里，状态 deleted）', (afterDel.find(x => x.id === delId) || {}).st === 'deleted', JSON.stringify(afterDel.find(x => x.id === delId)));
+t('别人的记忆没被误删', afterDel.some(x => x.id === 'b1' && x.st === 'active'), JSON.stringify(afterDel));
 
 console.log('');
 console.log('=== 6. 删掉一个角色后，他的记忆还能看到和清理 ===');

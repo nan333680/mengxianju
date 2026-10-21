@@ -327,6 +327,23 @@ export const msgs = {
 };
 
 // ---------- 长期记忆 ----------
+/**
+ * 记忆数据变了就广播一声（v0.5.2.3）。
+ *
+ * 设置页「已记住的事」那段列表是 renderMem() 一次性拼出来的静态 HTML ——
+ * 它只在【展开那一段】和【用户自己操作完】的时候重绘。可是记忆真正变化的地方
+ * 大多在它看不见的地方：后台按时间过期、自动整理压成大意、模型这一轮新抽出一条、
+ * 群聊那边收下一条草稿…… 结果是列表停在用户上次展开时的样子（条数、状态都不对），
+ * 退出设置页再进来才对 —— 而这一段是折叠的，退出再进也不会自动重绘。
+ *
+ * 所以：所有写入成功之后在这里统一广播，谁关心谁自己听（app.js 听的是重绘）。
+ * 用事件而不是回调，是因为写入点分散在总结 / 归档 / 整理 / 导入 / 手写好几处，
+ * 逐个去接一定会漏。
+ */
+function notifyMemChanged() {
+  try { window.dispatchEvent(new CustomEvent('mem-changed')); } catch { /* 没有 window 就算了 */ }
+}
+
 export const mem = {
   /** 全部记忆（记忆是全局的，不按角色分） */
   async all() {
@@ -417,7 +434,10 @@ export const mem = {
     };
     // 读旧条失败（极少）：不 abort 整个事务，退化成"只写新的"
     rq.onerror = () => { try { st.put(rec); } catch { /* 真写不进去就让事务报错 */ } };
-    return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+    return new Promise((res, rej) => {
+      t.oncomplete = () => { notifyMemChanged(); res(undefined); };
+      t.onerror = () => rej(t.error);
+    });
   },
   /**
    * 改一条记忆的字段 / 状态（0.6.0）。
@@ -434,7 +454,10 @@ export const mem = {
       if (!cur) return;
       st.put(normalizeMemory({ ...cur, ...(patch || {}), updatedAt: Date.now() }));
     };
-    return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+    return new Promise((res, rej) => {
+      t.oncomplete = () => { notifyMemChanged(); res(undefined); };
+      t.onerror = () => rej(t.error);
+    });
   },
   /**
    * 软删除（规格 §6.3）：只把 status 改成 deleted 并记 deletedAt，不物理删。
@@ -455,7 +478,10 @@ export const mem = {
     const db = await openDB();
     const t = db.transaction('memories', 'readwrite');
     t.objectStore('memories').delete(id);
-    return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+    return new Promise((res, rej) => {
+      t.oncomplete = () => { notifyMemChanged(); res(undefined); };
+      t.onerror = () => rej(t.error);
+    });
   }
 };
 

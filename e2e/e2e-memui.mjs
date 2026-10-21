@@ -216,16 +216,18 @@ console.log('');
 console.log('=== 6. 角色页显示的内容，和设置页按人物分组的对得上 ===');
 await page.click('#btn-edit-back'); await sleep(600);
 await openSettings(page, sleep);
-await jsClick('#mem-fold'); await sleep(800);
+// ⚠️ 不能盲点 #mem-fold：第 2 节已经展开过一次，这一步再点就是【收起来】，
+//    而列表在收起状态下本来就不该重绘（见 app.js 里 mem-changed 那段的注释）。
+if (!(await page.$eval('#mem-wrap', el => el.classList.contains('open')))) {
+  await jsClick('#mem-fold'); await sleep(800);
+}
 const groupCounts = await page.$$eval('.mem-group', els => els.map(e => ({
   name: e.querySelector('[data-head] span').textContent.trim(),
   num: e.querySelector('.fold-num').textContent.trim()
 })));
 console.log('   设置页分组: ' + JSON.stringify(groupCounts));
-// 设置页的 DOM 可能是更早那次渲染留下的（点折叠时不一定重跑），
-// 先切一次视图强制重绘，否则比的是旧 DOM、断言永远对不上。
-await jsClick('#mem-view-key'); await sleep(500);
-await jsClick('#mem-view-list'); await sleep(500);
+// v0.5.2.3 起这里不再需要"先切一次视图强制重绘"：展开这一段本身就会渲染一次，
+// 而且记忆数据一变（mem-changed）列表会自己跟上 —— 下面第 7 节专门验这件事。
 const groupCounts2 = await page.$$eval('.mem-group', els => els.map(e => ({
   name: e.querySelector('[data-head] span').textContent.trim(),
   num: e.querySelector('.fold-num').textContent.trim()
@@ -233,6 +235,18 @@ const groupCounts2 = await page.$$eval('.mem-group', els => els.map(e => ({
 console.log('   重绘后设置页分组: ' + JSON.stringify(groupCounts2));
 const aGroup = groupCounts2.find(g => g.name === A.name);
 t('设置页里 A 的条数和角色页一致', aGroup && aGroup.num === `${afterDel.mine} 条`, JSON.stringify(aGroup));
+
+console.log('');
+console.log('=== 7. 列表展开着的时候，库里新增一条要自己跟上 ===');
+const beforeAuto = await page.$$eval('#mem-groups .mem-item', e => e.length);
+await page.evaluate(async (cid) => {
+  const { mem } = await import('./js/db.js');
+  await mem.add({ id: 'auto-redraw-1', charId: cid, text: '自动重绘测试条', kind: 'fact', ts: Date.now() });
+}, A.id);
+await sleep(1200);
+const afterAutoList = await page.$$eval('#mem-groups .mem-item', e => e.map(x => x.textContent));
+t('不加任何操作，列表自己多出那一条', afterAutoList.length === beforeAuto + 1, beforeAuto + ' -> ' + afterAutoList.length);
+t('新那条真的画在页面上了', afterAutoList.some(s => s.includes('自动重绘测试条')), '');
 
 console.log('');
 if (errs.length) console.log('  JS 错误: ' + JSON.stringify(errs));

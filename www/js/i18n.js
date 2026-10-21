@@ -742,6 +742,112 @@ const BY_ZH = {
   '已经推到下一拍了': 'Moved on to the next beat',
   '撤销': 'Undo',
   '撤回上一拍': 'Went back one beat',
+  // ⚠️ 0.6.0：记忆 OS（收件箱 / 事实卡 / 槽位 / 拆分 / 本轮注入检查器）。
+  //    这一批大多直接拼在 innerHTML 里、没走 tt，靠 applyI18n 的兜底扫文本节点翻 ——
+  //    所以【必须】登记在这里，否则英文界面下整页中文（i18n-report 也扫不到这类串）。
+  '按人看': 'By person',
+  '按时间线看': 'By timeline',
+  '待确认': 'Pending',
+  '事实卡': 'By slot',
+  '连「她以为」一起看': 'Also show what she assumes',
+  '长期': 'Long-term',
+  '建议拆开': 'Split suggested',
+  '自定义': 'Custom',
+  '她以为': 'She assumes',
+  '她以为（不一定真）': 'What she assumes (not necessarily true)',
+  '算数': 'Counts',
+  '已被取代': 'Superseded',
+  '已过期': 'Expired',
+  '已删除': 'Deleted',
+  '收下': 'Keep',
+  '不收': 'Drop',
+  '恢复': 'Restore',
+  '事实': 'Fact',
+  '事件': 'Event',
+  '状态': 'State',
+  '关系': 'Relationship',
+  '物品': 'Item',
+  '计划': 'Goal',
+  '一直算数': 'Always counts',
+  '只在这一条线': 'This branch only',
+  '只在小说里': 'Scenes only',
+  '没归槽的': 'No slot',
+  '模型没归槽，不会自动顶替': 'No slot from the model, so it replaces nothing',
+  '这一条现在没有在用的说法。': 'Nothing in use at this slot right now.',
+  '模型拿不准的先落在这儿，不进提示词。收下才会进她的脑子。':
+    'Whatever the model was unsure of lands here and stays out of the prompt. Keep it and she remembers it.',
+  '没有待确认的。她自动记下都够确定，不用你操心。':
+    'Nothing pending. Everything she noted on her own was clear enough.',
+  '她还没记住什么。': 'She has not remembered anything yet.',
+  '已删除的角色': 'Deleted character',
+  '怎么拆': 'How',
+  '拆': 'Split',
+  '拆成几条': 'Split into memories',
+  '至少要有两条才叫拆开': 'Needs at least two lines to split',
+  '一行一条，一条只说一件事。改完点保存 —— 原来那条会标成「已被取代」，随时能恢复。':
+    'One line each, one thing per line. Save it and the original is marked superseded — you can always bring it back.',
+  '修改这条记忆': 'Edit this memory',
+  '槽位，比如 identity.job，可留空': 'Slot, e.g. identity.job — optional',
+  '同一槽位的新说法会顶掉旧的（旧的留着能恢复）。留空 = 不归槽，照样注入。':
+    'A newer claim in the same slot replaces the older one (kept, and restorable). Empty = no slot; it is still injected.',
+  '在某一天之后不再记着': 'Stop remembering after a certain day',
+  '天之后不再记着': 'onwards — stop remembering',
+  '第': 'Day',
+  '为止（留空 = 那一天过完）': 'until then (empty = the whole day)',
+  '收下了，下一轮起她会记得': 'Kept — she remembers it from the next turn',
+  '没记这条（在「已删除」里还能撤回）': 'Not kept (you can undo it under Deleted)',
+  '那条已经不在这一屏（可能归档了，或在另一条线上）':
+    'That message is not on this screen (archived, or on another branch)',
+  '看原话': 'Show the words',
+  '（这条包含不止一件事，建议去记忆页拆开）':
+    '(holds more than one thing — split it on the memory page)',
+  '剧情卡': 'Plot card',
+  // ⚠️ '本轮更改' 在 :531 已经登记过（那时检查器的标题是「本轮更改」）。这里不重复登记，
+  //    重复的 key 是 tsc 的 TS1117（语法错），ci-check 会直接拦下来。
+
+  '世界书 · 命中': 'Worldbook · matched',
+  '世界书 · 常驻': 'Worldbook · always',
+  '这一轮除了人设和聊天记录，什么附加内容都没注入。':
+    'Nothing extra was injected this turn beyond the persona and the chat history.',
+  '人设、聊天记录、滚动摘要每轮都在，这里不逐条列。':
+    'The persona, the chat history and the rolling summary are always there; they are not listed one by one.',
+  // 记忆为什么被选进来的说法（mempick.js 的 KIND_WHY）与没进来的原因
+  '你钉住的': 'pinned by you',
+  '她想做但还没做到': 'what she wants but has not done',
+  '两人关系': 'between the two of you',
+  '当前状态': 'current state',
+  '最近发生的': 'happened recently',
+  '她以为的': 'what she assumes',
+  '较早的事实': 'older facts',
+  '只在小说里用': 'scenes only',
+  '不在这条故事线上': 'not on this branch',
+  '预算不足': 'out of budget',
+  '别人的私事，她不知道': "someone else's business — she does not know",
+  '她进群之前的事': 'before she joined the group',
+  // 时间线那张图里「类型 · 状态」是拼成整串塞进一个 span 的，所以组合也得登记。
+  '事件 · 已过期': 'Event · expired',
+  '事实 · 已过期': 'Fact · expired',
+  '事件 · 已被取代': 'Event · superseded',
+  '事实 · 已被取代': 'Fact · superseded',
+  '这个人还没有带天数的事件。事件型记忆会记下是第几天发生的。':
+    'No dated events for this character yet. Event memories record which day they happened.',
+  // 事实卡的分组名（KEY_HEAD_NAME）与几个常见槽位的人话名（KEY_FULL_NAME）
+  '身份': 'Identity',
+  '地方': 'Place',
+  '身体': 'Body',
+  '称呼': 'Address',
+  '打算': 'Plans',
+  '东西': 'Things',
+  '他是做什么的': 'What he does',
+  '他叫什么': 'His name',
+  '他多大': 'His age',
+  '他住哪': 'Where he lives',
+  '他此刻在哪': 'Where he is now',
+  '他在哪上班': 'Where he works',
+  '他身体怎么样': 'How his body is',
+  '他跟她算什么': 'What they are to each other',
+  '他怎么称呼她': 'What he calls her',
+  '她眼下想做什么': 'What she wants to do now',
 };
 
 let _lang = 'zh';       // 实际生效的（'zh' / 'en'）
@@ -851,6 +957,27 @@ const BY_PATTERN = [
   [/^演到第 (\d+) 拍（已保存）$/, (m) => 'Now at beat ' + m[1] + ' (saved)'],
   [/^这一拍才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,
     (m) => 'Only ' + m[1] + ' rounds so far; ' + m[2] + ' is the minimum before this beat counts as done — hold on.'],
+  // v0.6.0 记忆 OS：记忆页 / 检查器里的数字拼串（「记于第 N 天」「有 N 条旧记忆…」「没进来的（N 条）」）。
+  // ⚠️ `(\d+) 条` 是通用条目数，放在这里比放精确表里可靠 —— 分组标题、收件箱角标都是拼出来的。
+  [/^记于第 (\d+) 天$/, (m) => 'Noted day ' + m[1]],
+  [/^(\d+) 条$/, (m) => m[1] + (m[1] === '1' ? ' item' : ' items')],
+  [/^以前的说法（(\d+)）$/, (m) => 'Previous takes (' + m[1] + ')'],
+  [/^来自 (\d+) 条$/, (m) => 'from ' + m[1] + (m[1] === '1' ? ' message' : ' messages')],
+  [/^有 (\d+) 条旧记忆里装着好几件事，她一次全倒出来容易串味。$/,
+    (m) => m[1] + (m[1] === '1' ? ' old memory holds' : ' old memories hold')
+      + ' several things at once, and she tends to dump them all in one go.'],
+  [/^拆成了 (\d+) 条$/, (m) => 'Split into ' + m[1] + ' memories'],
+  [/^没进来的（(\d+) 条）$/, (m) => 'Left out (' + m[1] + ')'],
+  [/^约 (\d+) token$/, (m) => 'about ' + m[1] + ' tokens'],
+  [/^条数满了（已用 (\d+) 条）$/, (m) => 'No room left (' + m[1] + ' already)'],
+  [/^长期记忆（(\d+) 条）$/, (m) => 'Long-term memory (' + m[1] + ')'],
+  [/^长期记忆（(\d+) 条，约 (\d+) token）$/, (m) => 'Long-term memory (' + m[1] + ', about ' + m[2] + ' tokens)'],
+  [/^长期记忆（(\d+) 条，条数已满）$/, (m) => 'Long-term memory (' + m[1] + ', at the cap)'],
+  [/^长期记忆（(\d+) 条，约 (\d+) token，条数已满）$/,
+    (m) => 'Long-term memory (' + m[1] + ', about ' + m[2] + ' tokens, at the cap)'],
+  // 检查器（这一轮用了什么）里的小节计数与拍号：「剧情方向（2）」「第 1/2 拍」
+  [/^（(\d+)）$/, (m) => ' (' + m[1] + ')'],
+  [/^第 (\d+)\/(\d+) 拍$/, (m) => 'Beat ' + m[1] + '/' + m[2]],
 ];
 
 /** 只查词典、不看当前语言（v0.5.0.1 抽出来的）。

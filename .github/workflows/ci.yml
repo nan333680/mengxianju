@@ -37,7 +37,7 @@ jobs:
 
       # 这一批全部【不需要真 key】：要么是纯函数（node 直接 import），
       # 要么自己拦截请求假造一个模型回复。
-      - name: e2e（不依赖真实 key 的 26 套，清单在下面 $suites 里）
+      - name: e2e（不依赖真实 key 的 27 套，清单在下面 $suites 里）
         shell: pwsh
         run: |
           $suites = @(
@@ -58,7 +58,10 @@ jobs:
             'e2e-v517',
             # 小说层（v0.5.2）：开戏 → 分拍 → 逐拍写 → 场记 → 书架 → 阅读页 → 删除。
             # 假 SSE 按 system 内容分流（正文流 / 分拍 JSON / 场记 JSON / 临时人物 JSON）。
-            'e2e-scene'
+            'e2e-scene',
+            # 记忆 OS（0.6.0）：待确认的记忆绝不注入 / 收下就注入 / 不收就软删 /
+            # 「这一轮用了什么」把 used 与 dropped 都摊开 / 「看原话」跳回来源。
+            'e2e-memos'
           )
           $fail = 0
           foreach ($s in $suites) {

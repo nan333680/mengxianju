@@ -1133,6 +1133,12 @@ export function buildTurnNote(char, s, ctx = {}) {
           // 同样只这一轮；不设余温 —— 方向一旦写出来就已经进了历史，下一轮自然延续，
           // 再注入一遍只会让她反复推同一件事。
           plot = [],
+          // 「记忆块」（0.6.0 记忆 OS）：检索在 www/js/mempick.js 里做完（active 过滤、
+          // 分支、优先级、预算、dropped），这里只认最终那块文本。
+          // ⚠️ memBlock 为 null = 还没接上新检索（或长期记忆关着），走下面的老 rankMemories 分支；
+          //    memBlock 存在但 text 为空 = 这一轮一条都不该注入（全过期/全不在这条线上），
+          //    这时绝不能回退到老逻辑，否则等于把"不该进的"又塞回去了。
+          memBlock = null,
           // 「剧情卡」（v0.5.0）：这段关系要往哪走，跨轮持续（不像 plot 只活一轮）。
           // 它是【导演层】：plot 管这一轮，剧情卡管这一章。见 www/js/storyarc.js。
           arc = null, arcNames = null } = ctx;
@@ -1457,7 +1463,47 @@ export function buildTurnNote(char, s, ctx = {}) {
 
   // 记忆放在最后：模型对结尾的内容注意力最高。原来放在最前面，
   // 会被几千字的人设淹没，等于没写。
-  if (s.longMemory && memories.length) {
+  if (memBlock) {
+    // ---- 0.6.0 记忆 OS ----
+    // 挑哪几条已经在 mempick.js 里决定了（含 dropped 与原因，给「这一轮用了什么」用）。
+    // 这里只负责把它摆进提示词，不再自己 rank / 截条数 —— 两处各挑一次必然打架。
+    //
+    // ⚠️ 群聊必须分成两段（她自己 / 全群共识），不能挤成一段：
+    //    甲的私事被读成"大家都知道"是 v0.4.1.4 就修过的 bug，这里只是换了挑选的
+    //    实现，标题和那句话的规矩一条都不能少。ctx.memWho 为空才是单聊。
+    const selfId = String(ctx.memWho || '');
+    const selfName = String(ctx.memWhoName || '');
+    const dayNote = clockState && typeof clockState.day === 'number'
+      && (memBlock.hasDay === true)
+      ? '（每条前面的「第 N 天记下」是记下那天的剧情天数，相对时间按那一天解释；今天是第 '
+        + clockState.day + ' 天。）'
+      : '';
+    if (selfId) {
+      const mineText = String((memBlock && memBlock.mineText) || '');
+      const sharedText = String((memBlock && memBlock.sharedText) || '');
+      if (mineText || sharedText) {
+        const blocks = [];
+        if (mineText) {
+          blocks.push('# 你（' + (selfName || '她') + '）自己看在眼里的事\n' + mineText);
+        }
+        if (sharedText) blocks.push('# 这个群里大家都知道的事\n' + sharedText);
+        if (dayNote) blocks.push(dayNote);
+        // 最后那句只在【真有"她自己看在眼里的事"】时才带那半句 ——
+        // 乙一条自己的记忆都没有时还写"上面那些只有你知道"，上面根本没那一段。
+        blocks.push('（这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。'
+          + (mineText
+              ? '\n上面「你自己看在眼里的事」只有你知道 —— 别当成大家都知道的事说出来。）'
+              : '）'));
+        parts.push(blocks.join('\n\n'));
+      }
+    } else {
+      const text = String((memBlock && memBlock.text) || '');
+      if (text) {
+        parts.push('# 你记得关于他的事\n' + text + (dayNote ? '\n\n' + dayNote : '')
+          + '\n\n这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。');
+      }
+    }
+  } else if (s.longMemory && memories.length) {
     // ⚠️ v1.21.56：从「最近 24 条」改成「跟眼下这段话最相关的 24 条」。
     //
     // 起因：纯按最新挑，几百轮之后就变成"她记得结论、但细节对不上"——

@@ -225,7 +225,65 @@ await page.evaluate(() => { const c=document.querySelectorAll('#char-list .char-
 const attrEn3 = await scanAttr();
 t('★ 角色编辑页：title/placeholder 无中文', attrEn3.length === 0, attrEn3.slice(0, 6).join(' | '));
 await page.evaluate(() => { const b=document.getElementById('btn-edit-back'); if(b)b.click(); }); await sleep(500);
-await page.evaluate(v => { const s = document.getElementById('s-lang'); if (!s) return; }, 'zh');
+// ⚠️ 0.6.0 记忆 OS：收件箱 / 事实卡 / 槽位标签 / 旧记忆横幅这一批文案几乎全是
+//    innerHTML 拼出来的，i18n-report 扫不到、静态 data-i18n 也标不了 —— 只能在
+//    英文界面下把整屏的界面文字抓出来查一遍。这里就是那道闸。
+console.log('');
+console.log('=== 0.6.0 记忆页（按人看 / 时间线 / 事实卡 / 待确认）英文下不留中文 ===');
+await page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const ch = await new Promise(r => { const q = db.transaction('characters').objectStore('characters').getAll(); q.onsuccess = () => r(q.result[0]); });
+  const put = (st, v) => new Promise(r => { const tx = db.transaction(st, 'readwrite'); tx.objectStore(st).put(v); tx.oncomplete = () => r(); });
+  // 角色名也要换成英文：它会被当成用户内容跳过，混在这里会让断言看不出真假
+  await put('characters', Object.assign({}, ch, { name: 'Tester' }));
+  const base = { charId: ch.id, ts: Date.now(), subject: 'char', scope: 'character',
+    sourceKind: 'manual', sourceMsgIds: ['i18n-src'], who: '', quote: '',
+    legacy: false, needsSplit: false, pinned: false, day: 3 };
+  await put('memories', Object.assign({}, base, { id: 'i18n-a', text: 'mem-one', kind: 'fact', key: 'identity.job', status: 'active' }));
+  await put('memories', Object.assign({}, base, { id: 'i18n-b', text: 'mem-two', kind: 'goal', key: 'goal.current', status: 'active' }));
+  await put('memories', Object.assign({}, base, { id: 'i18n-c', text: 'mem-three', kind: 'fact', key: 'identity.job', status: 'superseded' }));
+  await put('memories', Object.assign({}, base, { id: 'i18n-d', text: 'mem-four', kind: 'fact', key: 'location.home', status: 'draft' }));
+  await put('memories', Object.assign({}, base, { id: 'i18n-e', text: 'mem-five', kind: 'belief', key: 'belief.user.x', status: 'active', who: ch.id }));
+  await put('memories', Object.assign({}, base, { id: 'i18n-f', text: 'mem-six', kind: 'fact', key: '', status: 'active', legacy: true, needsSplit: true }));
+  db.close();
+});
+await page.evaluate(() => { const b = document.getElementById('btn-settings'); if (b) b.click(); }); await sleep(700);
+await page.evaluate(() => { const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'settings'); if (b) b.click(); }); await sleep(1000);
+await page.evaluate(() => { const g = document.getElementById('mem-fold'); if (g) { const s = g.closest('.group'); if (s && !s.classList.contains('open')) g.click(); } }); await sleep(500);
+// 从整屏里挑【界面文字】：跳过正文（.txt / 时间线正文）和角色名（fold-head 的 span），
+// 她的台词、用户输入、记忆正文都不该被翻译，混进来只会把真问题淹掉。
+const uiCjk = () => page.evaluate(() => {
+  const CJK = /[\u3400-\u9fff\uff00-\uffef\u3000-\u303f]/;
+  const box = document.getElementById('mem-groups');
+  if (!box) return ['(没有 mem-groups)'];
+  const out = [];
+  for (const el of box.querySelectorAll('*')) {
+    for (const n of el.childNodes) {
+      if (n.nodeType !== 3) continue;
+      const t = n.textContent.replace(/\s+/g, ' ').trim();
+      if (!t || !CJK.test(t)) continue;
+      if (el.closest('.txt')) continue;
+      if (el.classList.contains('tl-b')) continue;
+      if (el.matches('.fold-head > span')) continue;
+      out.push(t);
+    }
+  }
+  return [...new Set(out)];
+});
+for (const [v, label] of [['list', '按人看'], ['time', '时间线'], ['key', '事实卡'], ['inbox', '待确认']]) {
+  await page.evaluate(v => { const b = document.getElementById('mem-view-' + v); if (b) b.click(); }, v); await sleep(700);
+  const bad = await uiCjk();
+  t('★ 记忆页「' + label + '」英文下不留中文', bad.length === 0, bad.slice(0, 5).join(' | '));
+}
+// 各视图都点过一遍之后，确认【真的渲染出东西了】—— 否则上面四条全是空屏假绿。
+// 统计要在「按人看」上做：上一步停在「待确认」，那里本来就只有 1 条 draft。
+await page.evaluate(() => { const b = document.getElementById('mem-view-list'); if (b) b.click(); }); await sleep(700);
+const rows = await page.evaluate(() => document.querySelectorAll('#mem-groups .mem-item').length);
+t('记忆页确实渲染出了条目（不是空屏假绿）', rows >= 4, String(rows));
+const keyRows = await page.evaluate(() => { const b = document.getElementById('mem-view-key'); if (b) b.click(); return 0; }); await sleep(700);
+const kb = await page.evaluate(() => document.querySelectorAll('#mem-groups .mem-keycard').length);
+t('事实卡按槽位分出了卡片', kb >= 3, String(kb));
 
 console.log('');
 t('全程无 JS 错误', errs.length===0, errs.slice(0,3).join(' | '));

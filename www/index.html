@@ -826,11 +826,19 @@
       </button>
       <div class="fold-wrap" id="mem-wrap" data-i18n-nodes>
         <div class="fold-inner">
-          <!-- 两种看法（v0.5.1.1）：列表按人分组（默认），时间线按剧情天数排队 -->
+          <!-- 两种看法（v0.5.1.1）：列表按人分组（默认），时间线按剧情天数排队。
+               0.6.0 加第三个：收件箱 —— 模型自动提炼但"不够确定"的记忆先落在这里，
+               不会进提示词，等你看一眼决定收不收（规格 §4.3）。 -->
           <div class="seg mem-views">
             <button id="mem-view-list" data-v="list">按人看</button>
             <button id="mem-view-time" data-v="time">按时间线看</button>
+            <button id="mem-view-inbox" data-v="inbox">待确认<i id="mem-inbox-n" class="mem-inbox-n hidden"></i></button>
+            <button id="mem-view-key" data-v="key">事实卡</button>
           </div>
+          <!-- 「她以为」开关只在事实卡视图里出现（0.6.0 §7.2）：
+               她的看法和事实并排看，但绝不混成一条。默认关，免得一屏全是推断。 -->
+          <label class="mem-belief-sw hidden" id="mem-belief-sw"><input type="checkbox" id="mem-belief-on">
+            <span>连「她以为」一起看</span></label>
           <!-- 两层折叠：这里先按人物分组的按钮，每个角色展开后才是他自己的记忆列表 -->
           <div id="mem-groups"></div>
         </div>

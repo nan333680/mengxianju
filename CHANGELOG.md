@@ -5,6 +5,68 @@
 本地迭代用四段（`0.3.0` → `0.3.0.1` → …），**不上传**，只在本地并排留着对比；攒够了再打个三段版发出去。
 每一版对应的 versionCode 写在各节标题上；历史版本见发布页。
 
+### 0.5.2.2（versionCode 156 · 本地内测号，未上传 · 记忆状态修复）
+
+0.5.2.1 的记忆 OS 数据模型是对的，但**「写入 / 删除 / 恢复」三条路径违反了它自己的规则**：数据层会记住，路径层会在你没同意的时候让它失效，而且不说话。这一版只修状态，不加功能。
+
+外部评审报上来 12 条，逐条核对后**11 条属实、1 条不准确**（见五、六两节）。全量回归没跑（用户要求），受影响的 18 套单独跑，全绿。
+
+#### 一、P0-1 一条「待确认」的草稿能把现在生效的记忆顶掉
+
+`www/js/db.js` 的 `mem.add()` 在事务里无条件跑 `planSupersede` / `planExpire`，**只看旧记录是不是 active，不看新记录自己是什么状态**。
+
+真实路径：模型抽出一条没来源、或措辞含糊的记忆 → `memRecFromItem` 把它标成 `status='draft'` → 仍然走 `mem.add()` → 同槽位当前 active 被标成 superseded / expired。而草稿按设计**不进提示词**。结果：收件箱里躺着一条「待确认」，她同时把原来记得的事忘了。用户看到的是「待确认」，感受到的是失忆。导入旧备份里的 superseded / deleted 条目同理。
+
+修法：`mem.add` 里加 `const isLive = !rec.status || rec.status === MEMORY_STATUS.ACTIVE;`，冲突计划只在 `isLive` 时跑。非 active 的写入一律「原样落库」，不碰任何旧记录。
+
+#### 二、P0-2 过期清理每发一句话都在误杀当前状态
+
+`pruneMemories()` 遍历所有带 `untilDay` 的记忆，**不看 status**。已经 expired 的 A 每次都被再处理一遍，调的还是 `mem.add({...m, status: EXPIRED})` —— 于是 `planExpire` 把当前 active 的 B（同槽位的 state）当成「旧状态」再标过期。那个槽位从此没有 active。
+
+具体序列：第 3 天 A=住城西（active）；第 5 天 B=搬城东，A 被标 expired；第 6 天任意发消息触发 prune，A 又被处理一次，B 被误顶。**这是最隐蔽的一条，因为它看起来像「她记性不好」。**
+
+修法：`pruneMemories` 先 `if (!isActiveMemory(m)) continue;`，再把标记过期从 `mem.add` 换成 `mem.mark`（一个 get + put，不跑任何冲突计划）。
+
+#### 三、P0-3 记忆页的 ✕ 是物理删除
+
+`bindMemItems` 和群聊记忆弹窗两处都用 `mem.del()` —— 而 `db.js` 自己写着「界面上的删除按钮一律走 softDel」。没有确认、没有撤销，手滑一次这条记忆永久消失，「已删除 / 恢复 / 30 天」那套设计在这条路径上完全不生效。原来的 e2e 只断言「条数减一」，所以它一直是绿的。
+
+修法：两处都改成「先弹确认 → `mem.softDel`」。确认文案直说「不会立刻消失，在「已删除」里还能恢复」。`mem.del` 保留给「清空这个角色的数据」那一条物理删路径。
+
+#### 四、P1 九条
+
+- **1 恢复过期 state 会把它改成 fact，然后制造两条 active**：`restoreMemory` 原来对 expired 的条目做 `rev.kind = 'fact'`，既丢「状态」语义，又因为 kind 不同而不和当前 active 的 state 互相取代。现在**不改 kind**，只清限期（不清的话下一轮 prune 立刻把它又标回去）。恢复前还会先查同槽位有没有生效的说法，有就弹一句「现在生效的是……，恢复会把它标成已被取代」。
+- **2 冲突计划缺 scope**：`planSupersede` 补 scope 一致性；`planExpire` 原来**一个字都不比**，现在补 subject / mine / scope。不补的后果是「关于他」的 state 顶掉「关于她」的、模型抽的顶掉用户手写的、A 分支顶掉 B 分支。
+- **3 mempick 先去重后过滤状态**：`seenText.add(text)` 排在 status 检查之前，列表里只要先出现一条同文本的死副本，后面那条真正 active 的就被判成「重复」直接 `continue`，**既不进提示词也不进 dropped**。检查器里看不到它。现在顺序反过来，被去重掉的也写进 dropped（原因「和另一条完全一样，只留一条」）。
+- **4 活动路径为空时所有 branch 记忆都会注入**：`inBranch` 里 `if (!pathIds || !pathIds.size) return true` 把「读路径抛异常」和「确实没有消息」混成一件事。现在 `null` 才放行，空 Set 只放 pinned。
+- **5 总结/归档去重忽略 subject / scope / mine**：`sameMemory` 只比正文、kind、失效日，于是同一句话出现在两个 subject 或两个 scope 会被当成同一条：来源并进错的那条、新记忆干脆不写。现在 `sameMemory` 把 subject / scope / mine 也放进比较，两处去重也只和 `active` / `draft` 的记录比（原来只排除 superseded，deleted / expired 的老条目会被当成 dup）。
+- **6 收下草稿不走冲突检查**：`[data-accept]` 原来用 `mem.mark`（只改状态），草稿躺着的这段时间里如果已经写进同槽位的新说法，收下之后同槽两条 active。现在改走 `mem.add`。
+- **7 已失效的记忆仍可编辑，保存却写回死状态**：现在保留编辑入口，但保存后的提示改成「已保存 —— 不过这条已经不生效了，想让它重新算数得点「恢复」」。
+- **8 新 state 起始日缺失或更早时，旧 state 仍会被过期**：`planExpire` 的 `else` 分支不看新旧。现在「两条都有起点且新的不比旧的晚」时直接跳过旧的。起点缺失时退回「记下它的那一天」，两个都拿不到才按原逻辑处理。
+- **9 错误被吞掉**：`mem.add` 的 `catch` 是空的。现在至少 `console.warn` 一句并清掉 `rec.supersedes`，不再留一个指向没写进去的记录的溯源字段。
+
+#### 五、评审里不准确的一条
+
+评审说 `planSupersede`「没有 scope / subject / mine」。**subject 和 mine 在 0.5.1.1 就有了**（`www/js/memory.js` 里那两行 `if (String(old.subject || 'char') !== subject) continue;` 和 `if ((old.mine === true) !== mine) continue;`），缺的只有 scope。这一版补的是 scope，不是从头做这三项。
+
+#### 六、这一版不做的事
+
+- **不做「已删除」单独筛选视图**。软删之后条目在「按人看」里仍是灰的一条、带「已删除」标签和「恢复」按钮，当场就能撤回。再开一个筛选视图是另一半工作量，而且现在这样已经能用。
+- **不动剧情卡 UI、不动小说模式、不动分支树**。评审最后一句是「修完之前不要碰 0.6」—— 同意，这一版一行都没碰。
+
+#### 七、测试
+
+- 按用户要求**没跑全套回归**。受影响的 18 套单独跑，全部通过：memui 23 / memedit 19 / memedit2 9 / memory 16 / memory2 19 / memos 64 / memdedupe 18 / memtidy 15 / memkeep 20 / memcadence 14 / memfix 12 / memfix2 13 / memtime 32 / groupmem 24 / import 18 / memimport 8 / composer 109。
+- `e2e/e2e-memui.mjs` 第 5 节按新语义重写：原来断言「删完库里少一条」，现在断言「那条还在库里、`status==='deleted'`、不再是算数状态」。物理删改软删之后，**原来那种只数条数的断言反而会漏掉真正的回归**（删了但没标记、标了但还在注入）。
+- 顺手修了这套测试的一个假绿：第 6 节读设置页 DOM 时，点折叠不一定触发重绘，读到的是上一次渲染的结果。现在先切一次视图强制重绘再比。
+- `ci-check`：语法 0 错 / 类型噪音 28（= 基线）/ 版本三方一致 0.5.2.2。
+
+#### 八、这一版的包
+
+- 版本 `0.5.2.2` / versionCode **156**（155 是 0.5.2.1）。
+- 包：`C:\Users\29214\Desktop\mxj\梦弦居-v0.5.2.2.apk`，**5,599,040 字节**，SHA256 `E61E03FE8FD7718A9C93AE3F1AD59A2C62242786B0D85B548E4380EC012A68B7`，签名 `e986da9d290ae1d4c2e987585a321841af89c8783dfc2a5db0442e91246c8c0a`（历版同一把）。
+- 解包核对：`assets/public/js/` 里的 `app.js`（977710 字节）、`db.js`、`memory.js`、`mempick.js` 与工作区逐字节相同；`versionName=0.5.2.2` / `versionCode=156`（aapt2 读出）。
+- 归档在 `releases/v0.5.2.2`。
 ### 0.5.2.1（versionCode 155 · 本地内测号，未上传 · 记忆 OS）
 
 0.6.0 的主体：记忆不再是一句会被反复复述的散文，而是一张张**能查来源、能取代、能拆开**的卡片。这一版只动记忆的写入 → 检索 → 注入 → 回链 → 迁移，剧情卡 UI、小说模式、分支树一行没动。

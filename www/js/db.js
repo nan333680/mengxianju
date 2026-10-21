@@ -5,8 +5,11 @@ const DB_NAME = 'ai-companion';
 //    v2 加了 worldbook（世界书：角色组 + 条目）。
 //    v3 给记忆补 status/sourceMsgIds/day/legacy（时间锚与来源）。
 //    v4 加了 scenes（小说层：一场戏一张卡，正文不进 messages）。
-import { normalizeMemory, planSupersede, MEMORY_STATUS } from './memory.js';
-const DB_VER = 4;
+//    v5（0.6.0 记忆 OS）：不建表，只给 memories 的每条补新字段 —— normalizeMemory
+//       会把 v/kind/scope/subject/sourceKind/pinned/sinceDay/quote 等全补成默认值，
+//       所以老库、老备份直接能读，不做数据搬迁。
+import { normalizeMemory, planSupersede, planExpire, MEMORY_STATUS } from './memory.js';
+const DB_VER = 5;
 
 let _db = null;
 
@@ -59,9 +62,14 @@ export async function openDB() {
       cur.onsuccess = (ev) => {
         const c = ev.target.result;
         if (!c) return;
-        const rec = normalizeMemory(c.value);
+        const raw = c.value || {};
+        const rec = normalizeMemory(raw);
         // 手写记忆不标 legacy：它不该被自动反推，也不该在注入时被当成「旧记忆」。
-        rec.legacy = rec.mine === true ? false : true;
+        // ⚠️ 只在【原记录还没 legacy 字段】时判定（0.6.0 修，见规格 §9 幂等要求）。
+        //    原来是无条件 rec.legacy = ...，而这段迁移每次 DB_VER 升级都会重跑，
+        //    于是 v3 之后已经标成 legacy:false 的记忆会被改回 true。
+        //    normalizeMemory 总会给出布尔值，所以只能看 raw。
+        if (raw.legacy === undefined) rec.legacy = raw.mine === true ? false : true;
         c.update(rec);
         c.continue();
       };
@@ -352,13 +360,25 @@ export const mem = {
     // 现在读旧 / 标旧 / 写新在同一个 readwrite 事务里，要么全成要么全不成。
     // ⚠️ 事务回调里【不能 await】（会跳出事件循环、事务自动提交），
     //    所以这一段全是同步的 put，由 oncomplete 统一收口。
+    // ⚠️ 只有【生效的写入】才参与冲突计划（v0.5.2.2，外部评审 P0-1）。
+    //
+    // 原来是"无条件跑 planSupersede / planExpire"，只看旧记录是不是 active、
+    // 不看【新记录】是什么状态。后果是一条待确认的草稿（status='draft'，
+    // 按设计不进提示词）也能把同槽位当前生效的记忆顶成 superseded/expired：
+    // 收件箱里躺着一条"待确认"，她同时把原来记得的事忘了 —— 用户看到的是
+    // 「待确认」，感受到的是失忆。导入旧备份里的 superseded/deleted 条目同理。
+    //
+    // 状态不是 active（或没有 status，= 老数据的 active）时一律"原样落库"，
+    // 不碰任何旧记录。
+    const isLive = !rec.status || rec.status === MEMORY_STATUS.ACTIVE;
     const t = db.transaction('memories', 'readwrite');
     const st = t.objectStore('memories');
     const rq = st.index('charId').getAll(rec.charId);
     rq.onsuccess = () => {
       try {
         const old = rq.result || [];
-        const plan = rec.key ? planSupersede(rec, old) : [];
+        // 同槽位的新说法 → 旧的标 superseded（fact / goal / relationship / item / belief）
+        const plan = (isLive && rec.key) ? planSupersede(rec, old) : [];
         for (const id of plan) {
           const o = old.find(x => x && x.id === id);
           if (!o) continue;
@@ -371,13 +391,66 @@ export const mem = {
           }));
         }
         if (plan.length) rec.supersedes = plan.slice();
-      } catch { /* 取代计划出错就只写新的，旧的留着（宁可两条并存，也不静默丢一条） */ }
+        // 同槽位的旧 state → 标 expired，限期 = 新状态的起点（0.6.0 §6.1）。
+        // 语义不一样：state 不是"被顶掉"，而是"到那天为止是这样"，
+        // 记忆页的时间线要按「已过期」显示，不能和「已被取代」混在一起。
+        const exp = (isLive && rec.key) ? planExpire(rec, old) : [];
+        for (const one of exp) {
+          const o = old.find(x => x && x.id === one.id);
+          if (!o) continue;
+          st.put(normalizeMemory({
+            ...o,
+            status: MEMORY_STATUS.EXPIRED,
+            untilDay: one.untilDay != null ? one.untilDay : (o.untilDay != null ? o.untilDay : null),
+            expiredBy: rec.id,
+            expiredAt: Date.now()
+          }));
+        }
+      } catch (e) {
+        // 取代计划出错就只写新的，旧的留着（宁可两条并存，也不静默丢一条）。
+        // 但要留下痕迹（v0.5.2.2，外部评审 P1-9）：原来这里是空 catch，
+        // 用户只看到"检查器里两条同时显示"，没有任何地方能查到为什么。
+        try { console.warn('[mem.add] 冲突计划失败，只写新的', e); } catch { /* 控制台也没了就认了 */ }
+        delete rec.supersedes;
+      }
       st.put(rec);
     };
     // 读旧条失败（极少）：不 abort 整个事务，退化成"只写新的"
     rq.onerror = () => { try { st.put(rec); } catch { /* 真写不进去就让事务报错 */ } };
     return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
   },
+  /**
+   * 改一条记忆的字段 / 状态（0.6.0）。
+   * 软删、恢复、pin、编辑 text/key/kind/scope 全走这里：一处归一化、一处盖 updatedAt。
+   * 只 get + put 两个请求，同一个事务，失败整条不生效。
+   */
+  async mark(id, patch) {
+    const db = await openDB();
+    const t = db.transaction('memories', 'readwrite');
+    const st = t.objectStore('memories');
+    const rq = st.get(id);
+    rq.onsuccess = () => {
+      const cur = rq.result;
+      if (!cur) return;
+      st.put(normalizeMemory({ ...cur, ...(patch || {}), updatedAt: Date.now() }));
+    };
+    return new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+  },
+  /**
+   * 软删除（规格 §6.3）：只把 status 改成 deleted 并记 deletedAt，不物理删。
+   * 物理删一条关系记忆是没法从聊天记录里找回来的；30 天后才允许清理。
+   */
+  async softDel(id) {
+    return this.mark(id, { status: MEMORY_STATUS.DELETED, deletedAt: Date.now() });
+  },
+  /** 恢复一条被软删 / 过期的记忆：状态回 active，清掉删除时间与限期（否则下一轮又过期） */
+  async restore(id) {
+    return this.mark(id, { status: MEMORY_STATUS.ACTIVE, deletedAt: null, untilDay: null, untilHour: null, untilMinute: null });
+  },
+  /**
+   * 物理删。只给"清空这个角色的数据"用（规格 §6.3 允许的唯一场景），
+   * 界面上的删除按钮一律走 softDel。
+   */
   async del(id) {
     const db = await openDB();
     const t = db.transaction('memories', 'readwrite');

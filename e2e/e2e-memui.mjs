@@ -193,16 +193,23 @@ await page.evaluate(() => {
   const item = [...document.querySelectorAll('#e-mem-list .mem-item')].find(x => x.textContent.includes('A记住的事一'));
   item.querySelector('[data-cdel]').click();
 });
+await sleep(700);
+// 0.5.2.2 起界面删除是【软删】，会先弹一次确认 —— 不点确认就什么都不发生。
+await page.evaluate(() => { const b = document.getElementById('modal-ok'); if (b) b.click(); });
 await sleep(900);
 const afterDel = await page.evaluate(async (a, b) => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const ms = await new Promise(r => { const q = db.transaction('memories').objectStore('memories').getAll(); q.onsuccess = () => r(q.result); });
   db.close();
-  return { mine: ms.filter(m => m.charId === a.id).length, other: ms.filter(m => m.charId === b.id).length };
+  const mine = ms.filter(m => m.charId === a.id);
+  return { mine: mine.length, other: ms.filter(m => m.charId === b.id).length,
+           deleted: mine.filter(m => m.status === 'deleted').length,
+           stillActive: mine.filter(m => m.text === 'A记住的事一' && (!m.status || m.status === 'active')).length };
 }, A, B);
-console.log('   删前 ' + beforeDel + ' 条 → 删后 A 剩 ' + afterDel.mine + ' 条 / B 有 ' + afterDel.other + ' 条');
-t('自己那条删掉了', afterDel.mine === beforeDel - 1, String(afterDel.mine));
+console.log('   删前(页面) ' + beforeDel + ' 条 → 库里 A ' + afterDel.mine + ' 条，其中软删 ' + afterDel.deleted + ' 条 / B ' + afterDel.other + ' 条');
+t('删掉的那条还在库里，但标成已删除', afterDel.deleted === 1, String(afterDel.deleted));
+t('它不再是算数状态（不再进提示词）', afterDel.stillActive === 0, String(afterDel.stillActive));
 t('别人的记忆没被误删', afterDel.other === 1, String(afterDel.other));
 
 console.log('');
@@ -215,7 +222,16 @@ const groupCounts = await page.$$eval('.mem-group', els => els.map(e => ({
   num: e.querySelector('.fold-num').textContent.trim()
 })));
 console.log('   设置页分组: ' + JSON.stringify(groupCounts));
-const aGroup = groupCounts.find(g => g.name === A.name);
+// 设置页的 DOM 可能是更早那次渲染留下的（点折叠时不一定重跑），
+// 先切一次视图强制重绘，否则比的是旧 DOM、断言永远对不上。
+await jsClick('#mem-view-key'); await sleep(500);
+await jsClick('#mem-view-list'); await sleep(500);
+const groupCounts2 = await page.$$eval('.mem-group', els => els.map(e => ({
+  name: e.querySelector('[data-head] span').textContent.trim(),
+  num: e.querySelector('.fold-num').textContent.trim()
+})));
+console.log('   重绘后设置页分组: ' + JSON.stringify(groupCounts2));
+const aGroup = groupCounts2.find(g => g.name === A.name);
 t('设置页里 A 的条数和角色页一致', aGroup && aGroup.num === `${afterDel.mine} 条`, JSON.stringify(aGroup));
 
 console.log('');

@@ -18,7 +18,12 @@ import { activePath, pathTo, setLeaf, pickLeaf, seedParents, siblings, deepestIn
 import { worstRepeat, REPEAT_WARN, REPEAT_LOOKBACK } from './prose.js';
 import { normalizeArc, arcActive, arcFinished, atLastBeat, beatTurns, emptyArc, ARC_BEATS_MAX, ARC_CONSTRAINTS_MAX } from './storyarc.js';
 // 记忆时间锚（0.5.2）：把「明天/昨天」换算成绝对剧情天数，并保留来源消息。
-import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMemory, memoryDay, memoryGrams, hasRelativeDay, MEMORY_KEYS, activeOnly, MEMORY_STATUS } from './memory.js';
+import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMemory, memoryDay, memoryGrams, hasRelativeDay, MEMORY_KEYS, activeOnly, MEMORY_STATUS,
+  MEMORY_KINDS, MEMORY_KIND_NAME, MEMORY_SCOPES, MEMORY_SCOPE_NAME, MEMORY_STATUS_NAME, normalizeMemory,
+  memoryKey, keyWasDropped, MEMORY_SUBJECTS, shouldAutoCommit, isActiveMemory } from './memory.js';
+// 记忆检索（0.6.0 记忆 OS）：active 过滤 / 分支 / 优先级 / 预算 / dropped 全在 mempick.js，
+// 这个文件只负责拿数据、按群聊视角过一遍、把结果存一份给「这一轮用了什么」。
+import { pickMemories, memoryBlockText, MEMORY_BUDGET_SHARE } from './mempick.js';
 // 酒馆正则（v0.4.0）：解析 + 应用都在 stregex.js 里，不碰 DOM 也不碰数据库。
 // ⚠️ 红线写在那文件头上：正则只作用于【副本】（提示词 / 屏幕），永不回写存档。
 import { parseStRegexList, applyStRegex, previewOne } from './stregex.js';
@@ -6041,6 +6046,75 @@ let namedInText = false;
     // 记忆召回的话题（v1.21.56）：用【本轮说的话 + 最近两条】。
     // 刻意不用上面那个 wbText —— 它带 6 条上下文，二元组命中会掺进太多噪声。
     const memTopic = [visibleText].concat(pastRaw.slice(-2).map(m => m.content || '')).join(' ');
+
+    // 记忆检索（0.6.0 记忆 OS · 规格 §5）。全部判断在 mempick.js，这里只做三件事：
+    //   ① 拿当前活动路径的消息 id（scope=branch 的记忆靠它判断"在不在这一条线上"）
+    //   ② 群聊按视角先滤一遍（别人视角的私事进不了她的脑子，这条比任何优先级都硬）
+    //   ③ 把结果存一份给「这一轮用了什么」检查器
+    // ⚠️ 长期记忆关着时 memBlock 保持 null —— persona.js 那边会整段跳过（连老逻辑都不走）。
+    let memBlock = null;
+    // 挑选结果单独拎出来，因为 turnInj（「这一轮用了什么」）要用同一份 ——
+    // 检查器如果拿另一个列表去渲染，就会变成"显示的记忆"和"真正喂进去的"不一致。
+    let memPick = null;
+    if (P.longMemory) {
+      let pathIds = null;
+      try { pathIds = new Set((await curMsgsAll(myCharId)).map(x => x && x.id).filter(Boolean)); }
+      catch { pathIds = null; }
+      // 传【全量】而不是上面那份 activeOnly 过的：检查器要能说出"这条没进来是因为已过期"，
+      // 只在 active 里挑的话那些条目根本不出现，用户就看不到它们为什么消失。
+      let allMem = [];
+      try { allMem = await mem.list(myCharId); } catch { allMem = memories; }
+      // 记忆块从上下文预算里切固定份额（§5.3），不新增滑杆。
+      const memBudget = Math.max(400, Math.round((Number(S.contextBudget) || DEFAULTS.contextBudget) * MEMORY_BUDGET_SHARE));
+      const memDay = clockState && clockState.day;
+      const memEst = (t) => estimateMsgTokens({ content: t });
+      const selfId = (isGroup(myChar) && speaker) ? speaker.id : '';
+      const sinceJoin = selfId ? (Number(memberCfgOf(myChar, speaker.id).joinedAt) || 0) : 0;
+      let pick;
+      if (selfId) {
+        // 群聊：挑两次，各挑各的（沿用 v0.4.1.4 的上限 16 / 8）。
+        // 别人视角的私事一条都不进她的脑子 —— 那不是"她记不清"，是"她根本不知道"。
+        const mine = allMem.filter(m => m && m.who === selfId);
+        const shared = allMem.filter(m => m && !m.who && (!sinceJoin || !m.ts || Number(m.ts) >= sinceJoin));
+        const mp = pickMemories({ list: mine, pathIds, limit: 16, budgetTokens: Math.round(memBudget * 0.66), nowDay: memDay, estimate: memEst });
+        const sp = pickMemories({ list: shared, pathIds, limit: 8, budgetTokens: Math.max(200, Math.round(memBudget * 0.34)), nowDay: memDay, estimate: memEst });
+        // 被视角过滤掉的那些也要进 dropped 并说明原因，否则检查器里它们凭空消失。
+        const dropped = mp.dropped.concat(sp.dropped);
+        for (const m of allMem) {
+          if (!m || !m.text) continue;
+          if (m.who && m.who !== selfId) dropped.push({ id: m.id, text: String(m.text), reason: '别人的私事，她不知道' });
+          else if (!m.who && sinceJoin && m.ts && Number(m.ts) < sinceJoin) dropped.push({ id: m.id, text: String(m.text), reason: '她进群之前的事' });
+        }
+        pick = { used: mp.used.concat(sp.used), dropped, tokens: mp.tokens + sp.tokens, limit: 24 };
+        memPick = pick;
+        memBlock = {
+          mineText: memoryBlockText(mp.used),
+          sharedText: memoryBlockText(sp.used),
+          hasDay: pick.used.some(x => /第 \d+ 天记下/.test(x.line))
+        };
+      } else {
+        pick = pickMemories({
+          list: allMem,
+          pathIds,
+          limit: S.memLimit || 20,
+          budgetTokens: memBudget,
+          nowDay: memDay,
+          estimate: memEst
+        });
+        memBlock = {
+          text: memoryBlockText(pick.used),
+          hasDay: pick.used.some(x => /第 \d+ 天记下/.test(x.line))
+        };
+        memPick = pick;
+      }
+      // 这一轮用了什么 / 哪些没进来 / 为什么 —— 只读展示，不改提示词、不花额外 token（§5.4）。
+      try {
+        await kv.set('lastPick:' + myCharId, {
+          ts: Date.now(), used: pick.used, dropped: pick.dropped, tokens: pick.tokens, limit: pick.limit
+        });
+      } catch { /* 存不下也不影响这一轮说话 */ }
+    }
+
     // 剧情卡（v0.5.0）：跨轮的方向层。每轮都从库里读一次 ——
     // 他在面板里改完下一轮就生效，不用重开聊天；读不到就当没卡。
     let arc = null;
@@ -6065,6 +6139,8 @@ let namedInText = false;
     })();
     const turnNote = buildTurnNote(myChar, P, {
       memories, useKaomoji, useEmoji, worldbook, rolling, topic: memTopic,
+      // 记忆 OS（0.6.0）：已经挑好的那一块；为 null 时 persona 走老的 rankMemories 分支
+      memBlock,
       clock: clockFull(clockState), clockLocked: !!clockState.locked,
       clockState, prevStory,
       // 临时场景（v1.21.47）：只进本轮段，不进稳定前缀
@@ -6117,8 +6193,24 @@ let namedInText = false;
     // ⚠️ 只存摘要（前 60 字 / 条目名）。存全文会让每条消息都拖着几 KB，
     //    而消息表是跟着备份一起进导出文件的。
     const _cut = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
+    //
+    // ⚠️ 记忆这一块必须用 memPick（检索层真正挑出来的那份），不能用上面的 memories：
+    //    memories 是"库里所有 active"，而这一轮可能因为预算/条数/分支/过期只注入了其中几条。
+    //    用错列表 = 检查器看起来有这条，可模型根本没看到 —— 比没有检查器更误导。
     turnInj = {
-      mem: (memories || []).map(x => ({ id: x.id, t: _cut(x.text, 60), key: x.key || '' })),
+      mem: (memPick ? memPick.used : []).map(x => ({
+        id: x.id, t: _cut(x.text, 60), key: x.key || '',
+        kind: x.kind || '', scope: x.scope || '',
+        why: x.why || '', tk: Number(x.tokens) || 0,
+        src: (x.sources || []).slice(0, 5),
+        legacy: x.legacy === true, needsSplit: x.needsSplit === true
+      })),
+      memDrop: (memPick ? memPick.dropped : []).slice(0, 80).map(x => ({
+        id: x.id, t: _cut(x.text, 60), why: x.reason || ''
+      })),
+      memTk: memPick ? Number(memPick.tokens) || 0 : 0,
+      memLimit: memPick ? Number(memPick.limit) || 0 : 0,
+      memBudget: memPick ? Number(memPick.budget) || 0 : 0,
       wb: (worldbookAll || []).map(h => _cut(h && h.title, 40)).filter(Boolean),
       wbC: (wbConst || []).map(h => _cut(h && h.title, 40)).filter(Boolean),
       arc: (arc && arcActive(arc)) ? {
@@ -6720,12 +6812,26 @@ function parseMemJson(s) {
   if (!kept.length && arr.length) {
     throw new Error('记忆总结的 ' + arr.length + ' 个元素里没有 text 字段（模型没按格式回）');
   }
-  return kept.map(x => ({
+  return kept.map(x => {
+      // 类型（0.6.0 §3）：七类。模型给了表外的值就当 fact —— 绝不把它写进去，
+      // 否则 normalizeMemory 会把它原样留在库里，注入时 kind 判定全失效。
+      const kind = MEMORY_KINDS.includes(String(x.kind || '').trim()) ? String(x.kind).trim() : 'fact';
+      // 槽位（0.6.0）：中文白名单 + 点号前缀都认，其它一律当没给。
+      // memoryKey 对认不出的值返回空串 → db.add 不会去取代任何旧记忆，安全。
+      const key = memoryKey(String(x.key == null ? '' : x.key).trim());
+      // 主人与作用域：表外的值退回默认，不报错也不丢这条记忆。
+      const subject = MEMORY_SUBJECTS.includes(String(x.subject || '').trim()) ? String(x.subject).trim() : 'user';
+      const scope = MEMORY_SCOPES.includes(String(x.scope || '').trim()) ? String(x.scope).trim() : 'character';
+      // 原话（0.6.0 §2 来源回链）：只留 80 字，空白压平。它是用来回查"这条是从哪句来的"，
+      // 所以宁可短而准，不要长而糊。
+      const quote = String(x.quote == null ? '' : x.quote).replace(/s+/g, ' ').trim().slice(0, 80);
+      return {
       text: String(x.text).trim(),
-      kind: x.kind === 'event' ? 'event' : 'fact',
-      // 槽位（v0.5.1.1）。只认白名单，模型给了别的就当没给 —— 见 memory.js 的 MEMORY_KEYS。
-      // 不在白名单里时 stripKey 为空，db.add 就不会去取代任何旧记忆。
-      key: MEMORY_KEYS.includes(String(x.key == null ? '' : x.key).trim()) ? String(x.key).trim() : '',
+      kind,
+      key,
+      subject,
+      scope,
+      quote,
       // 频次：让模型顺手标出来，代码这边判起来才可靠。
       // 模型偶尔漏填时退回正则兜底，双保险。
       // 兜底正则要避开否定句（"你不经常喝咖啡"不该被判成 often）
@@ -6740,7 +6846,7 @@ function parseMemJson(s) {
       //    untilDay:0 不是"没有限期"（那是 null），它让 memExpireMin 算出
       //    「第 0 天 23:59」= 1439 分钟，而任何一天的 nowMin 都 ≥ 1440 ——
       //    下一条消息触发的时效清理立刻把它删掉，无提示、无撤销点。
-      untilDay: (x.kind === 'event' && x.untilDay !== null && x.untilDay !== ''
+      untilDay: (kind === 'event' && x.untilDay !== null && x.untilDay !== ''
                  && Number.isFinite(Number(x.untilDay)) && Number(x.untilDay) >= 1)
                 ? Number(x.untilDay) : null,
       // ⚠️ 小时/分钟也必须在这里产出（v1.21.29 修，复审 新4）。
@@ -6752,11 +6858,12 @@ function parseMemJson(s) {
       // → 落库 {untilHour:null, untilMinute:0} →「第 5 天 15:30 前有效」退化成 23:59，多记 8 小时 29 分。
       //
       // 同样要排除 null / 空串（Number(null) === 0 会把「没填」变成「0 点」）。
-      untilHour: (x.kind === 'event' && x.untilHour !== null && x.untilHour !== ''
+      untilHour: (kind === 'event' && x.untilHour !== null && x.untilHour !== ''
                   && Number.isFinite(Number(x.untilHour))) ? Number(x.untilHour) : null,
-      untilMinute: (x.kind === 'event' && x.untilMinute !== null && x.untilMinute !== ''
+      untilMinute: (kind === 'event' && x.untilMinute !== null && x.untilMinute !== ''
                     && Number.isFinite(Number(x.untilMinute))) ? Number(x.untilMinute) : 0,
-  }));
+      };
+  });
 }
 
 // 旧记忆修复（0.5.2）：迁移只能给老记忆补 legacy=true，补不出「记下那天是第几天」。
@@ -6849,7 +6956,15 @@ async function pruneMemories(charId = null) {
   const list = await mem.list(cid);
   const nowMin = clockToMin(clockOf);
   for (const m of list) {
-    if (m.kind !== 'event' || typeof m.untilDay !== 'number') continue;
+    // 只看有没有限期，不再看 kind（0.6.0）：v2 的七类里 state / goal 也可以带限期，
+    // 老判据只认 event，用户给一条 state 填了「第 5 天之后不算数」会永远不过期。
+    if (typeof m.untilDay !== 'number') continue;
+    // ⚠️ 只处理还在生效的（v0.5.2.2，外部评审 P0-2）。
+    // 原来不看 status：已经过期的 A 每发一句话都会被再处理一次，
+    // 而 mem.add 会跑冲突计划 —— 于是当前 active 的 B（同槽位的 state）
+    // 被当成"旧状态"一次次标过期，那个槽位从此没有 active。
+    // 用户看到的是"她突然忘了自己住哪"，而且没有任何报错。
+    if (!isActiveMemory(m)) continue;
     // ⚠️ 兜底（v0.3.1 复查）：限期 <= 0 是【坏数据】，不是"立刻过期"。
     //    上面两个入口现在都不会再产出它了，但【库里可能已经存着】（老版本
     //    手输 0.5、或模型回了 untilDay:0）。不挡的话这条记忆会被静默删掉 ——
@@ -6859,10 +6974,13 @@ async function pruneMemories(charId = null) {
     // 过期不再物理删（v0.5.1.1）：标成 expired 留在库里。
     // 原来的 mem.del 是"静默消失"—— 用户看到记忆少了一条，既不知道为什么，
     // 也没有任何地方能查到它曾经存在过、本该记到第几天。
+    // 标过期走 mem.mark 而不是 mem.add（v0.5.2.2，外部评审 P0-2）：
+    // mem.add 会跑 planSupersede / planExpire，把"标记一条过期"变成"再顶掉另一条"。
+    // 这里只是想改这一条的状态，一个 get + put 就够。
     if (nowMin > memExpireMin(m)) {
-      await mem.add({ ...m, status: MEMORY_STATUS.EXPIRED,
-                      expiredDay: (typeof clockOf?.day === 'number' ? clockOf.day : null),
-                      expiredAt: Date.now() });
+      await mem.mark(m.id, { status: MEMORY_STATUS.EXPIRED,
+                             expiredDay: (typeof clockOf?.day === 'number' ? clockOf.day : null),
+                             expiredAt: Date.now() });
     }
   }
 }
@@ -6947,6 +7065,129 @@ function memQualityGuards(max) {
     + `  【输出前的自查】数一下你准备写的条数：\n`
     + `    如果超过 2 条，逐条再问一遍"这条真的过得了三关吗"。\n`
     + `    说得出"删了也没什么"的，删掉。\n\n`;
+}
+
+/**
+ * 记忆条目的输出格式（0.6.0 §3）。两条提炼路径共用这一份。
+ * 字段名必须和 parseMemJson 一一对上 —— 加字段要【同时】改这三处，
+ * 否则模型给了也拿不到（untilHour 历史上就漏过一次，成了死代码）。
+ */
+const MEM_OUTPUT_SHAPE =
+  '格式：[{"text":"...","kind":"fact","key":null,"subject":"user","scope":"character",'
+  + '"quote":"...","untilDay":null,"untilHour":null,"untilMinute":null,"freq":"often"}]\n'
+  + '  （text 一条只说一件事，尽量不超过 120 字；key / quote 没有就填 null）\n';
+
+/**
+ * 记忆条目的【字段说明】（0.6.0 记忆 OS）。两条提炼路径共用这一份。
+ *
+ * 为什么不再各写一份：以前 summarizeIfNeeded 和 summarizeChunk 各写一套
+ * 【分两类】+【槽位】，两处历史上各漏过一次同样的坑。这一版要加的东西
+ * （七类 kind / 点号槽位 / 原话 quote）在三处都必须一致，再各写各的必错。
+ *
+ * 只讲"输出什么"，不讲"该不该记" —— 后者在 memQualityGuards 里。
+ * @param {number} day 当前剧情第几天（留给「失效日」那一句引用，本函数不直接用）
+ * @param {boolean} withTime 是否允许填到小时（只归档那条路允许；false 时提示词不提小时）
+ */
+function memSchemaBlock(day, withTime) {
+  return `【分七类（kind）—— 选最贴的那个】\n`
+    + `  · fact         关于他本人的稳定事实：喜好、习惯、经历、忌讳、在意的东西。不会过期。\n`
+    + `  · event        有时限的事：假期、约定、某段时间的打算。要给出失效的那一天。\n`
+    + `  · state        他这一阵的处境或身体状态（"正在找工作""腿伤还没好"）。会变，新说法顶旧的。\n`
+    + `  · relationship 你们俩的关系变了（"你答应跟他走了""你们吵翻了"）。\n`
+    + `  · item         属于他的、以后还会提到的具体东西（"他有一把旧吉他"）。\n`
+    + `  · goal         他想做但还没做到的事（"想把老房子修好"）。\n`
+    + `  · belief       【她以为】的事 —— 不一定真（"她以为他怕黑"）。拿不准真假、只是推断的，用这一类，\n`
+    + `                不要写成 fact。这一类不用你填是谁以为的，程序会记到你头上。\n\n`
+    + `【槽位（key）—— 同一件事变了才填同一个槽位，填了才会顶掉旧说法】\n`
+    + `  写法是「前缀.名字」，前缀只能从下面挑，名字自己起（不要空格、不要点）：\n`
+    + `    identity.…      职业、身份          identity.job\n`
+    + `    location.…      住处、现在待的地方   location.home / location.current\n`
+    + `    body.…          身体、健康           body.state\n`
+    + `    relationship.…  和某个人的关系       relationship.user\n`
+    + `    address.…       怎么称呼谁           address.user\n`
+    + `    goal.…          想做的事             goal.current\n`
+    + `    item.…          某件具体的东西       item.guitar\n`
+    + `    belief.…        她以为的事           belief.user.fear\n`
+    + `  例：他在做程序员 → key="identity.job"；他搬到城西 → key="location.home"；\n`
+    + `      他养的猫叫团子 → key="item.cat"；他希望你能跟他走 → key="goal.current"。\n`
+    + `  ⚠️ 归不到上面任何一个前缀的（性格、喜好细节、一次性的事、拿不准的）——\n`
+    + `     一律留空。留空是安全的；乱填会把以前记的顶掉。\n\n`
+    + `【原话（quote）—— 以后要靠它点回去核对】\n`
+    + `  每条都带上他原话里最有代表性的一小段，最多 40 字，【一字不改地照抄】，\n`
+    + `  不要改写、不要拼两句、不要加标点。实在找不到就留空，绝不许自己编。\n\n`
+    + `【主人（subject）】这条说的是谁：user（他）/ char（你自己）/ npc（别人）/ world（世界）。\n`
+    + `【作用域（scope）】默认 character = 一直算数；只在这一次的某个场面里成立才填 scene。\n`
+    + `  拿不准就留 character。\n\n`;
+}
+
+/**
+ * 从这一批对话里找出"这条记忆是从哪句来的"（0.6.0 §2 来源回链）。
+ *
+ * 先用模型给的原话做精确包含匹配（最可信）；对不上就用二元组重合度兜底
+ * （和 repairLegacyMemories 同一套算法），但要求分数足够高，否则宁可不认。
+ * 认不出来时返回空串 —— 调用方会退回"整批来源"，并在写入时把它当摘要来源
+ * （摘要来源的条目进收件箱，不自动注入）。
+ *
+ * @param {Array} chunk 这批消息
+ * @param {string} quote 模型给的原话
+ * @param {string} text 记忆正文
+ * @returns {string} 消息 id，认不出来是空串
+ */
+function findSourceMsgId(chunk, quote, text) {
+  const list = (chunk || []).filter(m => m && m.id);
+  if (!list.length) return '';
+  const norm = (s) => String(s || '').replace(/\s+/g, '');
+  const q = norm(quote);
+  if (q.length >= 4) {
+    // 多命中取最短的那条：同样包含这句原话，短的那条才是最贴的出处，
+    // 长的多半是把好几句话拼在一起的那一条。
+    const hit = list.filter(m => norm(m.content).indexOf(q) >= 0)
+                    .sort((a, b) => String(a.content).length - String(b.content).length)[0];
+    if (hit) return hit.id;
+  }
+  const g = memoryGrams(text);
+  if (!g || !g.size) return '';
+  let best = '', bestScore = 0;
+  for (const m of list) {
+    const mg = memoryGrams(String(m.content || ''));
+    if (!mg || !mg.size) continue;
+    let inter = 0;
+    for (const k of g) if (mg.has(k)) inter++;
+    const score = inter / g.size;
+    if (score > bestScore) { bestScore = score; best = m.id; }
+  }
+  return bestScore >= 0.34 ? best : '';
+}
+
+/**
+ * 把模型提炼出来的一条变成能落库的记忆记录（0.6.0 §3 / §4.3）。
+ *
+ * 两条写入路径共用这一份 —— 以前它们各写一遍 mem.add 的字段，
+ * 字段一多必然有一边漏（untilHour 就漏过一次，成了永远读不到的死字段）。
+ *
+ * 这里做两件除了字段搬运之外的事：
+ *   ① 来源精确化：有原话就只认那一句，认不出退回整批（并标 sourceKind=summary）
+ *   ② 自动提交 vs 收件箱：不够确定的落成 draft，不进提示词，等用户点一下
+ * @param {any} it parseMemJson 出来的一条（字段是模型给的，类型上只能是 any）
+ * @param {{charId:string, char:object, chunk:Array, day:number, absText:string, sourceIds:string[], srcOne:string}} o
+ * @returns {any} 可以直接交给 mem.add 的记录（写 any 不写 object：object 会让 probe.id 这种属性访问报 TS2339）
+ */
+function memRecFromItem(it, o) {
+  const rec = {
+    id: uid(), charId: o.charId, text: o.absText,
+    kind: it.kind, key: it.key, subject: it.subject, scope: it.scope, quote: it.quote,
+    who: isGroup(o.char) ? attributeWho(o.absText, o.chunk) : '',
+    untilDay: it.untilDay,
+    untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
+    untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
+    freq: it.freq, ts: Date.now(), day: o.day,
+    sourceMsgIds: o.srcOne ? [o.srcOne] : o.sourceIds,
+    sourceKind: o.srcOne ? 'message' : 'summary',
+    status: MEMORY_STATUS.ACTIVE, legacy: false,
+  };
+  const gate = shouldAutoCommit(rec);
+  if (!gate.ok) rec.status = MEMORY_STATUS.DRAFT;
+  return rec;
 }
 
 async function summarizeIfNeeded(charId = null) {
@@ -7125,9 +7366,7 @@ async function summarizeIfNeeded(charId = null) {
       maxTokens: 2048,
       messages: [
         { role: 'system', content: memHead
-          + `【分两类】\n`
-          + `· fact = 关于他本人的稳定事实（喜好、习惯、经历、关系、忌讳、在意的东西），不会过期。\n`
-          + `· event = 有时限的事（假期、约定、某段时间的状态），要给出失效的那一天。\n\n`
+          + memSchemaBlock(day, true)
           + `【失效日】现在是剧情第 ${day} 天。他提到有时限的事（假期、约定、某段状态）时，`
           + `算出它到哪一天为止还算数，填进 untilDay；拿不准就填 null。\n\n`
           + memoryTimeRule(day)
@@ -7137,15 +7376,10 @@ async function summarizeIfNeeded(charId = null) {
           + `· 提过两三次的 → freq 填 "normal"。\n`
           + `· 只提过一次的 → freq 填 "once"。\n`
           + `· 他明确说过"记住这个""别忘"的 → freq 填 "pinned"，并且要写得具体。\n\n`
-          + `【槽位】下面这些是【会变的事】。要是这一条说的就是它们，填 key（只能填这十个词之一，别自己造）：\n`
-          + `  职业 / 住处 / 关系 / 称呼 / 年龄 / 身体 / 宠物 / 爱好 / 计划 / 物品\n`
-          + `  例：他在做程序员 → key="职业"；他搬去了城西 → key="住处"；他被裁员了 → key="职业"。\n`
-          + `  ⚠️ key 只在【和以前记的是同一件事、只是变了】时才填。情绪、喜好细节、一次性的事、\n`
-          + `     拿不准的，一律留空 —— 留空是安全的；乱填会让他以前的记忆被顶掉。\n\n`
           + `【去重】下面给你已经记得的。只写新的；意思重复的不要写。\n\n`
           + memQualityGuards(5)
           + `【输出】只输出 JSON 数组，不要别的话。最多 5 条（通常更少）；没有值得记的就输出 []。\n`
-          + `格式：[{"text":"...","kind":"fact","key":null,"untilDay":null,"untilHour":null,"untilMinute":null,"freq":"often"}]\n`
+          + MEM_OUTPUT_SHAPE
           // ⚠️ 小时/分钟要写进格式里（v1.21.29 修，复审 新4）——
           // 只有 kind="event" 且你知道【具体钟点】时才填，否则留 null。
           // 不写出来的话模型根本不知道能填，parseMemJson 那边加了字段也只收到 null。
@@ -7177,26 +7411,35 @@ async function summarizeIfNeeded(charId = null) {
       // 正文在写入时就绝对化：「他明天休息」→「他第 3 天休息」。
       // 这样即使注入层忘了带时间锚，模型也不会把「明天」按今天重新解释。
       const absText = absolutizeMemoryText(it.text, day);
+      // 来源精确化（0.6.0 §2）：认得出是哪一句就只认那一句。
+      const srcOne = findSourceMsgId(chunk, it.quote, absText);
+      const srcIds = srcOne ? [srcOne] : sourceIds;
       // 两条抽取路（实时总结 / 归档总结）看到的是同一段对话时，模型会给出同一条。
       // 以前会原样写两遍，占两个名额；这里先挡掉，并把来源合并到已有那条上。
       const curList = await mem.list(cid0);
-      const dup = curList.find(x => x.status !== 'superseded'
-        && sameMemory(x, { text: absText, kind: it.kind, untilDay: it.untilDay }));
+      // WARN 只在「还在算数 / 待确认」的记录里找重复（v0.5.2.2，外部评审 P1-5）。
+      // 原来只排除 superseded，于是 deleted / expired 的老条目也会被当成 dup：
+      // 来源并进那条死记录、新记忆不写 —— 看起来是记下了，其实一条都没新增。
+      // 比较也改成拿整条 rec 去比（sameMemory 现在还会比 subject / scope / mine），
+      // 否则同一句话换个主体或换个 scope 会被误判成同一条。
+      const probe = memRecFromItem(it, { charId: cid0, char: charT, chunk, day, absText, sourceIds, srcOne });
+      const dup = curList.find(x => x && x.id !== probe.id
+        && (isActiveMemory(x) || x.status === MEMORY_STATUS.DRAFT)
+        && sameMemory(x, probe));
       if (dup) {
-        await mem.add({ ...dup,
-          day: dup.day || day,
-          sourceMsgIds: [...new Set([...(dup.sourceMsgIds || []), ...sourceIds])],
-          status: 'active' });
+        // 同一条又被说了一遍：只并来源，不改原句（§4.4）。
+        // 顺带补两件事：老条目缺 key 的补上；停在收件箱里的，这次够确定就转正。
+        const merged = { ...dup, day: dup.day || day,
+          key: dup.key || it.key,
+          sourceMsgIds: [...new Set([...(dup.sourceMsgIds || []), ...srcIds])] };
+        if (dup.status === MEMORY_STATUS.DRAFT) {
+          const g2 = shouldAutoCommit({ ...merged, sourceKind: srcOne ? 'message' : 'summary' });
+          if (g2.ok) merged.status = MEMORY_STATUS.ACTIVE;
+        }
+        await mem.add(merged);
         continue;
       }
-      await mem.add({ id: uid(), charId: cid0, text: absText, kind: it.kind, key: it.key,
-                      who: isGroup(charT) ? attributeWho(absText, chunk) : '',
-                      untilDay: it.untilDay,
-                      untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
-                      untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
-                      freq: it.freq, ts: Date.now(),
-                      day, sourceMsgIds: sourceIds,
-                      status: 'active', legacy: false });
+      await mem.add(probe);
     }
     // ⚠️ 【单向门】还有第二处（v1.21.35 修）。
     //
@@ -7385,7 +7628,15 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
   const P = effSettings(charT, S);
   const protectMine = !P.allowEditMine;
   const mineList = protectMine ? listAll.filter(m => m.mine) : [];
-  const list = protectMine ? listAll.filter(m => !m.mine) : listAll;
+  // ⚠️ 只有 active 的才参加整理（0.6.0）。
+  //
+  // 整理是「全删重写」：送进去的每一条，模型都会吐回来、再被写成一条新的 active。
+  // 已过期 / 已被取代 / 已删除 / 待在收件箱里的旧条目一旦被送进去，
+  // 就会被"重写"成 active 复活 —— 而用户在「已删除」筛选里那条明明还躺着。
+  // 收窄到 active，下面那个「只删参与整理的」循环也就只删 active，
+  // 非 active 的一条都不碰。
+  const list = (protectMine ? listAll.filter(m => !m.mine) : listAll)
+    .filter(m => isActiveMemory(m));
   const deleted = (await kv.get('memDeleted:' + cidFor, [])) || [];
   // 只有当记忆够多、或者有被删的对话要清理时才值得跑一趟
   if (list.length < 3 && !deleted.length) { await kv.set('memDedupeAt:' + cidFor, listAll.length); await clearNeedTidy(cidFor); return 0; }
@@ -7427,6 +7678,12 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
     const src = JSON.stringify(list.map(m => ({
       text: m.text,
       kind: m.kind || 'fact',
+      // 0.6.0：槽位/主人/作用域也送进去，模型才知道「这几条说的是同一个槽位、
+      // 合并时该留哪一边」。但它们【不在输出白名单里】—— 合并后的 key 由代码
+      // 从最像的旧条目继承（见 nearestOld），不让模型现编一个。
+      ...(m.key ? { key: m.key } : {}),
+      ...(m.subject ? { subject: m.subject } : {}),
+      ...(m.scope && m.scope !== 'character' ? { scope: m.scope } : {}),
       untilDay: m.untilDay ?? null,
       // ⚠️ v1.21.39 修（复审第二轮 #5）：钟点必须跟着送出去。
       // 原来只送 untilDay，而输出白名单又写死「字段只有这四个」——
@@ -7825,14 +8082,21 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
         const prov = provenanceFor(it.text, list);
         // 模型偶尔会把绝对天数改回「明天」；provenance 给了 day 就再兜一次。
         const absText = absolutizeMemoryText(it.text, prov.day);
-        await mem.add({ id: uid(), charId: cidFor, text: absText, kind: it.kind, key: it.key,
+        // 0.6.0：槽位这些新字段从最像的旧条目继承（模型不回传，回了也不收）。
+        const near = nearestOld(it.text, list);
+        await mem.add({ id: uid(), charId: cidFor, text: absText, kind: it.kind,
+                        key: it.key || (near && near.key) || '',
+                        subject: (near && near.subject) || '',
+                        scope: (near && near.scope) || 'character',
+                        quote: (near && near.quote) || '',
+                        sourceKind: (near && near.sourceKind) || (prov.sourceMsgIds.length ? 'message' : 'summary'),
                         who: whoOfNearest(it.text, list),
                         untilDay: it.untilDay,
                         untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
                         untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
                         freq: it.freq, ts: Date.now(),
                         day: prov.day, sourceMsgIds: prov.sourceMsgIds,
-                        status: 'active', legacy: prov.legacy });
+                        status: 'active', legacy: (near && near.legacy === true) || prov.legacy });
       }
       // 只删【参与了整理】的那些。受保护的自定义记忆压根没进 list，所以不会被动。
       for (const m of list) await mem.del(m.id);
@@ -8072,24 +8336,18 @@ async function summarizeChunk(charId, chunk) {
         // ⚠️ 和 summarizeIfNeeded 共用同一份开场 + 人称规则（v0.4.1）。
         //    这两处历史上各漏过一次「我：」的坑，就是因为在各写各的。
         memPersonaHead(who, isGroup(char))
-        + `【分两类】\n`
-        + `· fact = 关于他本人的稳定事实（喜好、习惯、经历、关系、忌讳、在意的东西），不会过期。\n`
-        + `· event = 有时限的事（假期、约定、某段时间的状态），要给出失效的那一天。\n\n`
+        + memSchemaBlock(day, true)
         + `【失效日】现在是剧情第 ${day} 天。他提到有时限的事时，算出它到哪一天为止还算数，`
         + `填进 untilDay；拿不准就填 null。\n\n`
         + memoryTimeRule(day)
         + MEM_DONT_REMEMBER
         + `【频次】反复出现或他说过"经常/总是/每天"的填 "often"；提过两三次填 "normal"；`
         + `只提过一次填 "once"；他明确说过"记住这个"的填 "pinned" 并写具体。\n\n`
-        + `【槽位】下面这些是【会变的事】。要是这一条说的就是它们，填 key（只能填这十个词之一，别自己造）：\n`
-        + `  职业 / 住处 / 关系 / 称呼 / 年龄 / 身体 / 宠物 / 爱好 / 计划 / 物品\n`
-        + `  例：他在做程序员 → key="职业"；他搬去了城西 → key="住处"；他被裁员了 → key="职业"。\n`
-        + `  ⚠️ key 只在【和以前记的是同一件事、只是变了】时才填。情绪、喜好细节、一次性的事、\n`
-        + `     拿不准的，一律留空 —— 留空是安全的；乱填会让他以前的记忆被顶掉。\n\n`
         + `【去重】下面给你已经记得的。只写新的；意思重复的不要写。\n\n`
         + memQualityGuards(12)
         + `【输出】只输出 JSON 数组，最多 12 条；没有新的就输出 []。\n`
-        + `格式：[{"text":"...","kind":"fact","key":null,"untilDay":null,"freq":"often"}]\n\n`
+        + MEM_OUTPUT_SHAPE
+        + `（untilHour / untilMinute 只在 kind="event" 且你知道具体钟点时填，不知道就留 null）\n\n`
         + `已经记得的：\n${known}` },
       { role: 'user', content: txt }
     ]
@@ -8175,25 +8433,28 @@ async function summarizeChunk(charId, chunk) {
   for (const it of items) {
     // ⚠️ 同上（v1.21.25 修）——这是【最常走】的一条写回路径。
     const absText = absolutizeMemoryText(it.text, day);
+    // 来源精确化（0.6.0 §2）：同实时总结路径。
+    const srcOne = findSourceMsgId(chunk, it.quote, absText);
+    const srcIds = srcOne ? [srcOne] : sourceIds;
     // 与实时总结路径同一条规则：同一件事只留一条，来源合并。
     const curList = await mem.list(charId);
-    const dup = curList.find(x => x.status !== 'superseded'
-      && sameMemory(x, { text: absText, kind: it.kind, untilDay: it.untilDay }));
+    // WARN 同上（v0.5.2.2，外部评审 P1-5）：只和还在算数 / 待确认的比，且比整条 rec。
+    const probe = memRecFromItem(it, { charId, char, chunk, day, absText, sourceIds, srcOne });
+    const dup = curList.find(x => x && x.id !== probe.id
+      && (isActiveMemory(x) || x.status === MEMORY_STATUS.DRAFT)
+      && sameMemory(x, probe));
     if (dup) {
-      await mem.add({ ...dup,
-        day: dup.day || day,
-        sourceMsgIds: [...new Set([...(dup.sourceMsgIds || []), ...sourceIds])],
-        status: 'active' });
+      const merged = { ...dup, day: dup.day || day,
+        key: dup.key || it.key,
+        sourceMsgIds: [...new Set([...(dup.sourceMsgIds || []), ...srcIds])] };
+      if (dup.status === MEMORY_STATUS.DRAFT) {
+        const g2 = shouldAutoCommit({ ...merged, sourceKind: srcOne ? 'message' : 'summary' });
+        if (g2.ok) merged.status = MEMORY_STATUS.ACTIVE;
+      }
+      await mem.add(merged);
       continue;
     }
-    await mem.add({ id: uid(), charId, text: absText, kind: it.kind, key: it.key,
-                    who: isGroup(char) ? attributeWho(absText, chunk) : '',
-                    untilDay: it.untilDay,
-                    untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
-                    untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
-                    freq: it.freq, ts: Date.now(),
-                    day, sourceMsgIds: sourceIds,
-                    status: 'active', legacy: false });
+    await mem.add(probe);
   }
   return items.length;
 }
@@ -8500,24 +8761,94 @@ async function showInj(inj) {
   const secs = [];
   const sec = (title, rows) => {
     if (!rows || !rows.length) return;
-    secs.push('<h4 class="inj-h">' + esc(title) + '（' + rows.length + '）</h4>'
+    // 计数括注单独过一遍 tt：'剧情方向（2）' 这种「标题+数字」拼出来的串，
+    // 兜底扫文本节点只能整串查表，永远查不到（英文下会留一对全角括号）。
+    secs.push('<h4 class="inj-h">' + esc(tt(title)) + esc(tt('（' + rows.length + '）')) + '</h4>'
       + rows.map(t => '<div class="inj-row">' + esc(t) + '</div>').join(''));
   };
   if (inj.arc) {
-    secs.push('<h4 class="inj-h">剧情卡</h4><div class="inj-row">'
-      + esc((inj.arc.title ? inj.arc.title + ' · ' : '')
-        + '第 ' + ((Number(inj.arc.i) || 0) + 1) + '/' + (Number(inj.arc.n) || 1) + ' 拍'
-        + (inj.arc.beat ? '（' + inj.arc.beat + '）' : ''))
+    const ai = (Number(inj.arc.i) || 0) + 1;
+    const an = Number(inj.arc.n) || 1;
+    // 拍号是「固定词+数字」拼的，走 tt 的模式表；拍名放成独立节点 ——
+    // 不然两者粘在一个文本节点里（'…第 1/2 拍（试探）'）谁都查不到翻译。
+    secs.push('<h4 class="inj-h">' + esc(tt('剧情卡')) + '</h4><div class="inj-row">'
+      + esc((inj.arc.title ? inj.arc.title + ' · ' : '') + tt('第 ' + ai + '/' + an + ' 拍'))
+      + (inj.arc.beat ? '<i class="inj-why">' + esc(inj.arc.beat) + '</i>' : '')
       + '</div>');
   }
-  sec('长期记忆', (inj.mem || []).map(x => (x.key ? '[' + x.key + '] ' : '') + x.t));
+  // ---- 长期记忆（0.6.0 §5.4）----
+  // 每一条都说清三件事：为什么进来（why）、占多少 token、来源是哪条消息。
+  // 下面「没进来的」是这份清单的另一半 —— 被挤掉的记忆必须看得见，
+  // 否则用户只会觉得"她怎么又忘了"，永远找不到原因。
+  const memArr = Array.isArray(inj.mem) ? inj.mem : [];
+  if (memArr.length) {
+    const tk = Number(inj.memTk) || 0;
+    const cap = Number(inj.memLimit) || 0;
+    secs.push('<h4 class="inj-h">长期记忆（' + memArr.length + ' 条'
+      + (tk ? '，约 ' + tk + ' token' : '') + (cap && memArr.length >= cap ? '，条数已满' : '') + '）</h4>'
+      + memArr.map(x => {
+        const kindName = MEMORY_KIND_NAME[x.kind] || '';
+        const scopeName = (x.scope && x.scope !== 'character') ? (MEMORY_SCOPE_NAME[x.scope] || '') : '';
+        // 每段各自过一遍 tt：这一段是「类型 · 作用域 · 为什么 · 约 N token」拼起来的
+        // 整串，兜底扫文本节点只能整串查表，拼起来的串永远查不到（英文下会留一块中文）。
+        const tag = [tt(kindName), tt(scopeName)].filter(Boolean).join(' · ');
+        const tkTxt = Number(x.tk) ? '约 ' + x.tk + ' token' : '';
+        const note = [tag, tt(x.why), tt(tkTxt)].filter(Boolean).join(' · ');
+        const src = (Array.isArray(x.src) ? x.src : [])[0];
+        return '<div class="inj-row">'
+          + (x.key ? '<b class="inj-key">' + esc(x.key) + '</b> ' : '')
+          + esc(x.t)
+          + (note ? '<i class="inj-why">' + esc(note) + '</i>' : '')
+          + (x.needsSplit ? '<i class="inj-why">（这条包含不止一件事，建议去记忆页拆开）</i>' : '')
+          + (src ? ' <button class="inj-src" data-src="' + esc(src) + '">看原话</button>' : '')
+          + '</div>';
+      }).join(''));
+  }
+  const dropArr = Array.isArray(inj.memDrop) ? inj.memDrop : [];
+  if (dropArr.length) {
+    // 五条以内直接展开：用户点进来通常就是为了弄清"她怎么又忘了"，
+    // 还要再点一次才看得见原因，等于把答案关在抽屉里。
+    secs.push('<details class="inj-more"' + (dropArr.length <= 5 ? ' open' : '') + '><summary>没进来的（' + dropArr.length + ' 条）</summary>'
+      + dropArr.map(x => '<div class="inj-row dim">' + esc(x.t)
+          + '<i class="inj-why">' + esc(x.why || '') + '</i></div>').join('')
+      + '</details>');
+  }
   sec('剧情方向', inj.plot);
   sec('本轮更改', inj.dir);
   sec('世界书 · 命中', inj.wb);
   sec('世界书 · 常驻', inj.wbC);
   const html = (secs.length ? secs.join('') : '<p class="hint-text">这一轮除了人设和聊天记录，什么附加内容都没注入。</p>')
     + '<p class="hint-text">人设、聊天记录、滚动摘要每轮都在，这里不逐条列。</p>';
-  await infoBox('这一轮用了什么', html);
+  // 这里不用 infoBox：它只在点「知道了」时 resolve，而「看原话」要把弹层关掉再跳，
+  // 走 infoBox 的话那个 promise 会永远悬着（调用方还 await 着它）。
+  const box = $('modal');
+  $('modal-title').textContent = tt('这一轮用了什么');
+  $('modal-text').innerHTML = html;
+  $('modal-ok').textContent = tt('知道了');
+  $('modal-cancel').classList.add('hidden');
+  box.classList.remove('hidden');
+  const close = () => {
+    box.classList.add('hidden');
+    $('modal-cancel').classList.remove('hidden');
+    $('modal-ok').onclick = null;
+    $('modal-text').querySelectorAll('.inj-src').forEach(b => { b.onclick = null; });
+  };
+  $('modal-ok').onclick = close;
+  // 每条记忆的「看原话」—— 跳到当时那句话。归档/旁支/已删的找不到就直说，绝不静默。
+  $('modal-text').querySelectorAll('.inj-src').forEach(b => {
+    b.onclick = () => { const id = b.dataset.src; close(); jumpToMsg(id); };
+  });
+}
+
+/** 滚到某条消息并闪一下；不在当前画面里（归档 / 另一条线 / 已删）就说清楚 */
+function jumpToMsg(id) {
+  if (!id) return;
+  let el = null;
+  try { el = document.querySelector('#messages .msg[data-id="' + CSS.escape(id) + '"]'); } catch { el = null; }
+  if (!el) { toast(tt('那条已经不在这一屏（可能归档了，或在另一条线上）')); return; }
+  try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { el.scrollIntoView(); }
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1600);
 }
 
 /** 选图（v0.4.4：从输入行挪进「＋」抽屉，逻辑与原来一致） */
@@ -9502,6 +9833,35 @@ function attributeWho(text, chunk) {
   return '';
 }
 
+/**
+ * 整理/查重时把老条目的【整条】找出来（0.6.0）。
+ *
+ * 模型只被允许吐回 text / kind / 时限 / freq，key / subject / scope / quote /
+ * sourceKind 一律从最像的那条旧记忆继承。不继承的话：整理跑一次，槽位就全空，
+ * 「同槽位的新说法顶掉旧说法」（§6.1）从下一轮起整体失效 ——
+ * 而界面上看起来只是"整理了一下"，什么都没变，谁也不会想到去查这个。
+ * @param {string} text 新条目正文
+ * @param {Array} oldList 参与整理的旧条目
+ * @returns {any} 命中的那条旧记忆（直接用它的字段，别在类型上绕）
+ */
+function nearestOld(text, oldList) {
+  const t = String(text || '').trim();
+  if (!t || !Array.isArray(oldList) || !oldList.length) return null;
+  for (const m of oldList) if (m && String(m.text || '').trim() === t) return m;
+  const uniq = [...new Set((() => { const a = []; for (let i = 0; i + 1 < t.length; i++) a.push(t.slice(i, i + 2)); return a; })())];
+  if (uniq.length < 3) return null;
+  let best = null, bestS = 0;
+  for (const m of oldList) {
+    if (!m) continue;
+    const c = String(m.text || '');
+    let hit = 0;
+    for (const g of uniq) if (c.includes(g)) hit++;
+    if (hit > bestS) { bestS = hit; best = m; }
+  }
+  if (bestS >= 3 && bestS >= uniq.length / 3) return best;
+  return null;
+}
+
 /** 整理/查重时把老条目的 who 接过来（新写的条目模型不知道 who，丢了就再也回不来） */
 function whoOfNearest(text, oldList) {
   const t = String(text || '').trim();
@@ -10360,7 +10720,11 @@ async function openGroupMemory(gid) {
     box.querySelectorAll('[data-cdel]').forEach(b => {
       b.onclick = async (e) => {
         e.stopPropagation();
-        await mem.del(b.dataset.cdel);
+        // 同 bindMemItems（v0.5.2.2，外部评审 P0-3）：界面删除一律软删。
+        const ok = await confirmBox('删掉这条记忆？',
+          '它不再进提示词，但不会立刻消失 —— 在「已删除」里还能恢复。', '删掉');
+        if (!ok) return;
+        await mem.softDel(b.dataset.cdel);
         await draw();
       };
     });
@@ -12917,11 +13281,48 @@ async function maybeAutoJudgeArc(charId, P, text, userMsg) {
     // 判定读的上下文最多，result 只有它写得出来 —— 丢掉就等于白判一次。
     if (o.result) cb.result = String(o.result).replace(/\s+/g, ' ').trim().slice(0, 240);
     await kv.set(arcKey(charId), normalizeArc(cur));
+    // 这一拍实际发生了什么 → 记忆收件箱的候选（0.6.0 §8）。只进收件箱，不自动提交。
+    await seedArcMemory(charId, cur, cur.currentBeat);
     if (charId === curCharId) {
       await refreshArcBar();
       showArcInline(charId, cur.currentBeat, cb.result);
     }
   } catch { /* 判定失败无所谓：不标记，下一轮再判 */ }
+}
+
+/**
+ * 把「这一拍实际发生了什么」落成一条【待确认】记忆（0.6.0 §8）。
+ *
+ * 为什么只进收件箱：result 是判定器从正文里读出来的一句概括，不是用户说的原话。
+ * 直接当事实记下来，一旦判歪（把"差点发生"读成"发生了"），她以后就会一直
+ * 拿这句歪的当依据 —— 而用户根本不知道它是从哪冒出来的。收件箱等于当面问一句。
+ *
+ * 为什么不重不漏：同一句 result 只落一次（判过的拍被退回重演，可能又判一次）。
+ * @param {string} charId
+ * @param {any} a 剧情卡（normalizeArc 的结果，字段是动态的）
+ * @param {number} i 第几拍
+ */
+async function seedArcMemory(charId, a, i) {
+  try {
+    const b = a && Array.isArray(a.beats) ? a.beats[i] : null;
+    const result = b ? String(b.result || '').replace(/\s+/g, ' ').trim() : '';
+    if (!charId || !result) return;
+    const list = await mem.list(charId);
+    if (list.some(m => m && m.sourceKind === 'arc' && String(m.text) === result)) return;
+    // 挂在当前这条线的最后一条消息上：切到别的支后它自然不再注入（§5.2）。
+    let src = '';
+    try { const path = await curMsgsAll(charId); if (path.length) src = path[path.length - 1].id; } catch { src = ''; }
+    await mem.add({
+      id: uid(), charId, text: result,
+      kind: 'event', key: '', subject: 'world',
+      scope: src ? 'branch' : 'character', who: '',
+      quote: result.slice(0, 80), sourceKind: 'arc',
+      sourceMsgIds: src ? [src] : [], sourceSceneId: '',
+      status: MEMORY_STATUS.DRAFT,      // ← 绝不自动提交
+      legacy: false, needsSplit: false,
+      ts: Date.now(), day: (clockState && typeof clockState.day === 'number') ? clockState.day : null,
+    });
+  } catch { /* 候选写不进去不该影响剧情推进 */ }
 }
 
 /** 这一轮演完了：当前拍 turns +1（v0.5.0.3 的节奏计量）。和自动判定开不开无关。 */
@@ -13983,12 +14384,20 @@ function memItemHtml(m, opts = {}) {
   const dead = st === 'superseded';
   // 过期（v0.5.1.1）：不再是"删掉就算了"。灰掉、标一句过期，同样给「恢复」。
   const gone = st === 'expired';
+  // 已删除（0.6.0）：软删。不物理删 = 她"忘了"这件事有痕迹可查，也能撤回。
+  const isDel = st === 'deleted';
+  // 待确认（0.6.0 收件箱）：模型提炼出来但不够确定的，不进提示词，等用户点一下。
+  const isDraft = st === 'draft';
   const tags = [];
-  if (dead) {
+  if (isDraft) {
+    tags.push('<em class="mem-tag draft">待确认</em>');
+  } else if (isDel) {
+    tags.push('<em class="mem-tag sup">已删除</em>');
+  } else if (dead) {
     tags.push('<em class="mem-tag sup">已被取代</em>');
   } else if (gone) {
     tags.push('<em class="mem-tag exp">已过期</em>');
-  } else if (m.kind === 'event' && typeof m.untilDay === 'number') {
+  } else if (typeof m.untilDay === 'number') {
     // 有小时就显示到分钟（"第 4 天 15:00"），没有就还是"第 4 天"
     const t = (typeof m.untilHour === 'number')
       ? ' ' + String(m.untilHour).padStart(2, '0') + ':' + String(m.untilMinute || 0).padStart(2, '0')
@@ -14001,7 +14410,22 @@ function memItemHtml(m, opts = {}) {
     tags.push('<em class="mem-tag">记于第 ' + m.day + ' 天</em>');
   }
   if (m.key) tags.push('<em class="mem-tag key">' + esc(m.key) + '</em>');
+  // 旧记忆（0.6.0 §3）：v2 之前一条里塞了好几件事的 blob。它照常注入，
+  // 但会"一次全倒出来"，所以界面上要看得见、要给出拆开的入口。
+  const canSplit = (m.legacy === true || m.needsSplit === true);
+  if (canSplit) tags.push('<em class="mem-tag draft">建议拆开</em>');
   if (m.mine) tags.push('<em class="mem-tag mine">自定义</em>');
+  // 类型（0.6.0 §7.2）：事实之外的类型都要标出来，尤其是 belief ——
+  // 「她以为」和「事实」在注入时是两回事，界面上也必须一眼分得开，
+  // 否则用户会拿一条误解去纠正她，越纠越乱。
+  const kd = String(m.kind || '');
+  if (kd === 'belief') tags.push('<em class="mem-tag belief">她以为</em>');
+  else if (kd && kd !== 'fact' && kd !== 'event') tags.push('<em class="mem-tag kind">' + esc(MEMORY_KIND_NAME[kd] || kd) + '</em>');
+  // 作用域（0.6.0 §5.2）：只在这一条线上 / 只在小说里 —— 不标的话用户会以为
+  // 「明明有这条记忆，切了个走向她就不记得了」是 bug。
+  if (m.scope === 'branch' || m.scope === 'scene') {
+    tags.push('<em class="mem-tag scope">' + esc(MEMORY_SCOPE_NAME[m.scope] || '') + '</em>');
+  }
   // 来源（记忆回链）：点一下看这条是从哪几句话里抽出来的。
   // 只用已经存下来的 sourceMsgIds，不花 token、不额外请求。
   if (Array.isArray(m.sourceMsgIds) && m.sourceMsgIds.length) {
@@ -14010,14 +14434,23 @@ function memItemHtml(m, opts = {}) {
   // 结构：左列（正文 + 下面另起一行的标签）｜右列（✕ / 恢复）
   // 标签必须包在左列里才会"在文字下面"；直接和 .txt 平级的话，
   // .mem-item 是横排 flex，标签会被挤到文字右边去。
-  return '<div class="mem-item' + (clickable ? ' tap' : '') + (dead || gone ? ' sup' : '') + '" data-mid="' + esc(m.id) + '">'
+  return '<div class="mem-item' + (clickable ? ' tap' : '') + ((dead || gone || isDel) ? ' sup' : '') + '" data-mid="' + esc(m.id) + '">'
     + '<div class="mem-body">'
     +   '<div class="txt">' + esc(m.text) + '</div>'
     +   '<div class="mem-foot">' + tags.join('') + '</div>'
     + '</div>'
-    + (dead || gone
-        ? '<button class="restore" data-restore="' + esc(m.id) + '">恢复</button>'
-        : '<button class="del" data-cdel="' + esc(m.id) + '">✕</button>')
+    + (isDraft
+        // 收件箱里的条目：收下 = 变成正式记忆（下一轮就会注入）；不收 = 软删，留痕可撤回。
+        ? '<div class="mem-draft-acts">'
+          + '<button class="ok" data-accept="' + esc(m.id) + '">收下</button>'
+          + '<button class="del" data-reject="' + esc(m.id) + '">不收</button></div>'
+        : ((dead || gone || isDel)
+          ? '<button class="restore" data-restore="' + esc(m.id) + '">恢复</button>'
+          : (canSplit
+            ? '<div class="mem-acts2">'
+              + '<button class="split" data-split="' + esc(m.id) + '">拆</button>'
+              + '<button class="del" data-cdel="' + esc(m.id) + '">✕</button></div>'
+            : '<button class="del" data-cdel="' + esc(m.id) + '">✕</button>')))
     + '</div>';
 }
 
@@ -14034,8 +14467,22 @@ function openMemEditor(memId, charId) {
     const isEvent = m.kind === 'event' && typeof m.untilDay === 'number';
     const modal = $('modal');
     $('modal-title').textContent = '修改这条记忆';
+    // 类型 / 槽位 / 作用域（0.6.0 §7）：这三样决定「这条算不算同一个槽位的新说法」，
+    // 只给正文和期限的话，用户改不动"她现在是这么认为的"这件事本身。
+    const kindOpts = MEMORY_KINDS.map(k =>
+      '<option value="' + esc(k) + '"' + (String(m.kind || 'fact') === k ? ' selected' : '') + '>'
+      + esc(MEMORY_KIND_NAME[k] || k) + '</option>').join('');
+    const scopeOpts = MEMORY_SCOPES.map(s =>
+      '<option value="' + esc(s) + '"' + (String(m.scope || 'character') === s ? ' selected' : '') + '>'
+      + esc(MEMORY_SCOPE_NAME[s] || s) + '</option>').join('');
     $('modal-text').innerHTML =
       '<p><textarea id="mem-edit-text" rows="4" style="width:100%;resize:vertical"></textarea></p>'
+      + '<p style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+      + '<select id="mem-edit-kind" style="flex:1 1 46%">' + kindOpts + '</select>'
+      + '<select id="mem-edit-scope" style="flex:1 1 46%">' + scopeOpts + '</select></p>'
+      + '<p style="margin-top:8px"><input type="text" id="mem-edit-key" style="width:100%"'
+      + ' placeholder="' + esc(tt('槽位，比如 identity.job，可留空')) + '" value="' + esc(m.key || '') + '"></p>'
+      + '<p class="hint-text" style="margin-top:-6px">同一槽位的新说法会顶掉旧的（旧的留着能恢复）。留空 = 不归槽，照样注入。</p>'
       + '<p style="margin-top:10px"><label style="display:flex;gap:8px;align-items:center">'
       + '<input type="checkbox" id="mem-edit-hasexp"' + (isEvent ? ' checked' : '') + '>'
       + '<span>在某一天之后不再记着</span></label></p>'
@@ -14096,11 +14543,45 @@ async function saveMemEdit(memId, charId) {
       untilMinute = (mEl && mEl.value.trim() !== '' && isFinite(mv)) ? Math.min(59, Math.max(0, Math.floor(mv))) : 0;
     }
   }
-  // kind 跟着有效期走，两边必须一致：
-  //   · 有有效期 → event（pruneMemories 只删 event 型，不写 event 就永远不会过期）
-  //   · 没有效期 → fact（以前这里保留原 kind，会留下"event 但 untilDay=null"的
-  //     脏数据 —— 虽然不会误删，但语义不清、显示也不对）
-  await mem.add({ ...m, text, kind: untilDay === null ? 'fact' : 'event',
+  // 类型 / 作用域 / 槽位（0.6.0 §7）。这三样必须能改，否则用户看见一条
+  // 「她以为」记错了，只能删掉重加 —— 而删掉会丢来源和日期。
+  const kindRaw = String($('mem-edit-kind')?.value || '');
+  const scopeRaw = String($('mem-edit-scope')?.value || '');
+  const keyRaw = String($('mem-edit-key')?.value || '').trim();
+  let kind = MEMORY_KINDS.includes(kindRaw) ? kindRaw
+    : (MEMORY_KINDS.includes(m.kind) ? m.kind : 'fact');
+  const scope = MEMORY_SCOPES.includes(scopeRaw) ? scopeRaw : (m.scope || 'character');
+  const key = memoryKey(keyRaw);
+  // 槽位名不认【不能静默清空】（§11「没有静默改 key」）：先问一句再存。
+  if (keyRaw && !key) {
+    const go = await confirmBox('这个槽位名不认',
+      '<p>槽位要用 <code>identity</code> / <code>location</code> / <code>body</code> / <code>relationship</code>'
+      + ' / <code>address</code> / <code>goal</code> / <code>item</code> / <code>belief</code> 开头，'
+      + '后面跟一个名字，比如 <code>identity.job</code>。</p>'
+      + '<p>存下来会变成「没归槽」—— 照样注入，但不参与自动取代。</p>', '就这样存');
+    if (!go) return false;
+  }
+  // 「有有效期 → event」这条老规则只对 fact/event 成立。
+  // belief / goal / relationship / item / state 是【语义类型】，不能被
+  // 「到某天不算数」改写成 fact —— 那会让她以为的事编辑一下就变成事实。
+  if (!['belief', 'goal', 'relationship', 'item', 'state'].includes(kind)) {
+    kind = untilDay === null ? 'fact' : 'event';
+  }
+  // 改了槽位或类型 → 重跑一遍冲突检查（§7「改 key 后重跑冲突检查」）。
+  // 不提前说一声的话，点「保存」这一下会静默把另一条顶成「已被取代」。
+  if (key && (key !== memoryKey(m.key) || kind !== String(m.kind || 'fact')) && isActiveMemory(m)) {
+    const clash = all.find(x => x && x.id !== m.id && isActiveMemory(x)
+      && memoryKey(x.key) === key
+      && String(x.kind || 'fact') === kind
+      && String(x.subject || 'char') === String(m.subject || 'char'));
+    if (clash) {
+      const go = await confirmBox('这个槽位已经有说法了',
+        '<p>「' + esc(String(clash.text || '').slice(0, 80)) + '」现在是生效的那条。</p>'
+        + '<p>存下来会把它标成「已被取代」—— 不删，随时能恢复。</p>', '顶掉它');
+      if (!go) return false;
+    }
+  }
+  await mem.add({ ...m, text, kind, scope, key,
                   untilDay, untilHour, untilMinute, ts: m.ts });
   return true;
 }
@@ -14115,6 +14596,22 @@ async function restoreMemory(id, charId) {
   const all = await mem.list(charId);
   const m = all.find(x => x && x.id === id);
   if (!m) return false;
+  // WARN 同槽位已经有生效的说法时必须先问一句（v0.5.2.2，外部评审 P1-1 / 规格 6.2）。
+  // 原来直接 mem.add 恢复：那一句会跑冲突计划，当场把当前 active 顶掉，
+  // 用户点恢复的时候并不知道自己正在让另一条失效。
+  const key = memoryKey(m.key);
+  const cur = key ? all.find(x => x && x.id !== m.id && isActiveMemory(x)
+    && memoryKey(x.key) === key
+    && String(x.kind || 'fact') === String(m.kind || 'fact')
+    && String(x.subject || 'char') === String(m.subject || 'char')
+    && String(x.scope || 'character') === String(m.scope || 'character')
+    && ((x.mine === true) === (m.mine === true))) : null;
+  if (cur) {
+    const go = await confirmBox('这个槽位已经有说法了',
+      '现在生效的是：「' + String(cur.text).slice(0, 60) + '」' + '\n' + '\n' + '恢复这一条会把它标成「已被取代」—— 不删，随时能再恢复回来。',
+      '恢复并顶掉它');
+    if (!go) return false;
+  }
   const by = all.find(x => x && x.id === m.supersededBy);
   if (by && by.status !== 'superseded') {
     await mem.add({ ...by, status: 'superseded', supersededBy: m.id,
@@ -14124,10 +14621,14 @@ async function restoreMemory(id, charId) {
   // untilDay 还留着的话，下一轮 pruneMemories 立刻又把它标回 expired ——
   // 用户点了"恢复"、看着它变回正常，再发一句话又变灰了。
   // 语义上也说得通：既然要它回来，就是"从现在起一直记着"。
-  const rev = { ...m, status: 'active', supersededBy: null, supersededDay: null, supersededAt: 0 };
+  // WARN 但不再顺手把 kind 改成 fact（v0.5.2.2，外部评审 P1-1）。
+  // 原来那句 rev.kind = 'fact' 干了两件坏事：丢掉状态语义，
+  // 又因为 kind 不同而不再和当前 active 的 state 互相取代 ——
+  // 于是同槽两条同时 active、同时注入，检查器里两条都亮着。
+  const rev = { ...m, status: 'active', supersededBy: null, supersededDay: null, supersededAt: 0,
+                deletedAt: null, expiredBy: null, expiredDay: null, expiredAt: 0 };
   if (String(m.status || '') === 'expired') {
-    rev.kind = 'fact'; rev.untilDay = null; rev.untilHour = null; rev.untilMinute = null;
-    rev.expiredDay = null; rev.expiredAt = 0;
+    rev.untilDay = null; rev.untilHour = null; rev.untilMinute = null;
   }
   await mem.add(rev);
   return true;
@@ -14163,6 +14664,82 @@ async function showMemSources(id, charId) {
 }
 
 /**
+ * 按句子切开一条长记忆（0.6.0 §7 拆分）。
+ *
+ * 只在【用户点「拆」】时跑，不自动跑 —— 自动拆一句错的话，
+ * 用户要一条条去改；不拆只是"她一次全倒出来"。两害相权，宁可不拆。
+ */
+function splitSentences(text) {
+  return String(text || '')
+    .replace(/\r/g, '')
+    .split(/(?<=[。！？!?；;])|\n+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * 把一条旧 blob 拆成几条原子记忆（0.6.0 §7）。
+ *
+ * 两条硬规则：
+ *   ① 拆出来的每条【槽位一律清空】。留着原 key 的话，同 key 同 kind 的新条
+ *      会互相取代 —— 拆五条只剩一条，比不拆还糟。
+ *   ② 原条标 superseded 而不是删。拆错了能恢复，也还看得见"原来是哪一条"。
+ */
+async function splitMemory(id, charId) {
+  const all = await mem.list(charId);
+  const m = all.find(x => x && x.id === id);
+  if (!m) { toast('这条记忆找不到了', 1800); return false; }
+  const parts = splitSentences(m.text);
+  const modal = $('modal');
+  $('modal-title').textContent = '拆成几条';
+  $('modal-text').innerHTML =
+    '<p class="hint-text">一行一条，一条只说一件事。改完点保存 —— 原来那条会标成「已被取代」，随时能恢复。</p>'
+    + '<p><textarea id="mem-split-text" rows="9" style="width:100%;resize:vertical"></textarea></p>'
+    + '<p class="hint-text" id="mem-split-n"></p>';
+  $('modal-ok').textContent = '保存';
+  modal.classList.remove('hidden');
+  const ta = $('mem-split-text');
+  ta.value = parts.join('\n');
+  const cntEl = $('mem-split-n');
+  const refresh = () => {
+    const n = ta.value.split('\n').map(s => s.trim()).filter(Boolean).length;
+    cntEl.textContent = n + ' 条';
+  };
+  ta.addEventListener('input', refresh);
+  refresh();
+  const ok = await new Promise((resolve) => {
+    const done = (v) => {
+      modal.classList.add('hidden');
+      $('modal-ok').onclick = null;
+      $('modal-cancel').onclick = null;
+      resolve(v);
+    };
+    $('modal-ok').onclick = () => done(true);
+    $('modal-cancel').onclick = () => done(false);
+  });
+  if (!ok) return false;
+  const lines = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (lines.length < 2) { toast('至少要有两条才叫拆开', 2000); return false; }
+  for (const line of lines) {
+    await mem.add({
+      id: uid(), charId: m.charId, text: line,
+      kind: m.kind || 'fact', key: '',      // ← 见上面 ①
+      scope: m.scope || 'character', subject: m.subject || 'char',
+      who: m.who || '', quote: '', sourceKind: m.sourceKind || 'manual',
+      sourceMsgIds: Array.isArray(m.sourceMsgIds) ? m.sourceMsgIds.slice() : [],
+      sinceDay: m.sinceDay != null ? m.sinceDay : m.day,
+      untilDay: m.untilDay != null ? m.untilDay : null, untilHour: m.untilHour, untilMinute: m.untilMinute,
+      freq: m.freq, mine: m.mine === true,
+      status: MEMORY_STATUS.ACTIVE, legacy: false, needsSplit: false,
+      ts: typeof m.ts === 'number' ? m.ts : Date.now(), day: m.day,
+    });
+  }
+  await mem.mark(m.id, { status: MEMORY_STATUS.SUPERSEDED, supersededAt: Date.now(), legacy: false, needsSplit: false });
+  toast('拆成了 ' + lines.length + ' 条', 2000);
+  return true;
+}
+
+/**
  * 绑定一批记忆条目的交互：✕ 删除、点内容弹窗修改、来源、恢复。
  * 回调 after() 用来让调用方重绘自己那一块。
  *
@@ -14172,7 +14749,13 @@ async function showMemSources(id, charId) {
 function bindMemItems(box, charId, after) {
   box.querySelectorAll('[data-cdel]').forEach(b => b.onclick = async (e) => {
     e.stopPropagation();                 // 别连带触发"点开编辑"
-    await mem.del(b.dataset.cdel);
+    // 软删（v0.5.2.2，外部评审 P0-3）：db.js 的 mem.del 注释写着「界面上的删除按钮
+    // 一律走 softDel」，这里却调了物理删 —— 手滑一次这条记忆永久消失，
+    // 「已删除 / 恢复 / 30 天」那套设计在这条路径上完全不生效。
+    const ok = await confirmBox('删掉这条记忆？',
+      '它不再进提示词，但不会立刻消失 —— 在「已删除」里还能恢复。', '删掉');
+    if (!ok) return;
+    await mem.softDel(b.dataset.cdel);
     await after();
   });
   box.querySelectorAll('[data-restore]').forEach(b => b.onclick = async (e) => {
@@ -14185,12 +14768,42 @@ function bindMemItems(box, charId, after) {
     e.stopPropagation();
     await showMemSources(el.dataset.src, charId);
   });
+  // 拆分（0.6.0 §7）：旧 blob 里装着好几件事，用户点「拆」才进编辑态，不自动切。
+  box.querySelectorAll('[data-split]').forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    const did = await splitMemory(b.dataset.split, charId);
+    if (did) await after();
+  });
+  // 收件箱（0.6.0 §4.3）：模型自己落进来的"不够确定"的条目，收下才进提示词。
+  box.querySelectorAll('[data-accept]').forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    const aid = b.dataset.accept;
+    const dm = (await mem.list(charId)).find(x => x && x.id === aid);
+    // WARN 走 mem.add 而不是 mem.mark（v0.5.2.2，外部评审 P1-6）：
+    // mark 只改状态、不跑冲突计划。草稿躺着的这段时间里如果已经写进了同槽位的
+    // 新说法，收下之后同槽两条 active，检查器同时显示、提示词同时注入。
+    // 而 mem.add 现在只在生效的写入上跑计划（P0-1），正好该它上场。
+    if (dm) await mem.add({ ...dm, status: MEMORY_STATUS.ACTIVE });
+    else await mem.mark(aid, { status: MEMORY_STATUS.ACTIVE });
+    await after();
+    toast('收下了，下一轮起她会记得', 2000);
+  });
+  box.querySelectorAll('[data-reject]').forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    await mem.softDel(b.dataset.reject);
+    await after();
+    toast('没记这条（在「已删除」里还能撤回）', 2200);
+  });
   box.querySelectorAll('.mem-item.tap').forEach(el => el.onclick = async () => {
+    // WARN 死记录（已被取代 / 已过期 / 已删除）也允许打开编辑，但保存后必须说清楚
+    // （v0.5.2.2，外部评审 P1-7）：用户改完以为好了，其实改的是一条不生效的旧记录。
+    const dead = el.classList.contains('sup');
     const ok = await openMemEditor(el.dataset.mid, charId);
     if (!ok) return;
     const saved = await saveMemEdit(el.dataset.mid, charId);
     await after();
-    if (saved) toast('已保存', 1600);
+    if (!saved) return;
+    toast(dead ? '已保存 —— 不过这条已经不生效了，想让它重新算数得点「恢复」' : '已保存', dead ? 3600 : 1600);
   });
   // 时间线视图的行没有 .mem-item 的外壳（那是卡片样式），单独绑一条同样的"点开改"
   box.querySelectorAll('[data-tlmid]').forEach(el => el.onclick = async () => {
@@ -14308,6 +14921,9 @@ let _memDraft = {};           // charId -> 还没提交的输入内容
 // 记忆管理两种看法（v0.5.1.1）：列表按人分组，时间线按剧情天数排队。
 // 时间线只排【有天数的】条目 —— 没记过天的是老数据，排进去只会挤在最前面造谣。
 let _memView = 'list';
+// 「她以为」要不要一起摆出来（0.6.0 §7.2）。默认关：
+// 一屏全是推断的话，用户拿它当事实去纠正她，越纠越乱。
+let _memBelief = false;
 
 /** 时间线视图：把每个角色的事件型记忆按剧情天数升序排成一条线 */
 function memTimelineHtml(items) {
@@ -14326,6 +14942,84 @@ function memTimelineHtml(items) {
   }).join('') + '</div>';
 }
 
+
+/**
+ * 槽位（key）的中文名（0.6.0 §7.2 事实卡视图）。
+ *
+ * key 是【槽位不是标签】：同一个槽位上只能有一条 active，
+ * 新说法顶掉旧说法。所以界面必须按槽位分组，用户才能看见
+ * "她现在是这么认为的 / 她以前是那么认为的"。
+ */
+const KEY_HEAD_NAME = {
+  identity: '身份', location: '地方', body: '身体', relationship: '关系',
+  address: '称呼', goal: '打算', item: '东西', belief: '她以为',
+};
+const KEY_FULL_NAME = {
+  'identity.job': '他是做什么的', 'identity.name': '他叫什么', 'identity.age': '他多大',
+  'location.home': '他住哪', 'location.current': '他此刻在哪', 'location.work': '他在哪上班',
+  'body.state': '他身体怎么样',
+  'relationship.user_char': '他跟她算什么',
+  'address.user': '他怎么称呼她',
+  'goal.current': '她眼下想做什么',
+};
+function memKeyLabel(key) {
+  const k = String(key || '');
+  if (!k) return '没归槽的';
+  if (KEY_FULL_NAME[k]) return KEY_FULL_NAME[k];
+  // 老的中文白名单 key（职业/住处/关系…）本来就是人话，原样用
+  if (!k.includes('.')) return k;
+  const [head, tail] = k.split('.');
+  return (KEY_HEAD_NAME[head] || head) + (tail ? ' · ' + tail : '');
+}
+
+/**
+ * 事实卡视图：按槽位分组，当前说法 + 前任说法 + （可选）她以为的。
+ *
+ * 为什么单开一个视图而不是并进「按人看」：按人看是"她记了什么"，
+ * 事实卡问的是"她现在认为什么" —— 同一个槽位的旧说法必须紧挨着当前说法，
+ * 否则用户看到的永远是十几条并列的记忆，分不出哪条还算数。
+ *
+ * @param {Array} items 某个角色的全部记忆
+ * @param {boolean} showBelief 是否把「她以为」一起摆出来
+ */
+function memKeyCardsHtml(items, showBelief) {
+  // 已删除的不进事实卡（它在「已删除」筛选和收件箱里能找回来）
+  const live = (items || []).filter(m => m && String(m.status || '') !== 'deleted');
+  if (!live.length) return '<div class="sys-line">她还没记住什么。</div>';
+  const byKey = new Map();
+  for (const m of live) {
+    const k = memoryKey(m.key) || '';
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(m);
+  }
+  // 有槽位的排前面（按名字稳定排序），没归槽的殿后 —— 它们全是自动提炼出来的，
+  // 排前面会把这屏塞满，而用户点进事实卡是想看"关键的那几条"。
+  // (a ? 0 : 1) - (b ? 0 : 1) 而不是 (!a - !b)：布尔减法在 tsc 眼里不是算术，会报 TS2362。
+  const keys = [...byKey.keys()].sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a.localeCompare(b));
+  let html = '';
+  for (const k of keys) {
+    const arr = byKey.get(k);
+    const beliefs = arr.filter(m => m.kind === 'belief');
+    const facts = arr.filter(m => m.kind !== 'belief');
+    const cur = facts.filter(m => isActiveMemory(m));
+    const old = facts.filter(m => !isActiveMemory(m));
+    const showB = !!showBelief && beliefs.length > 0;
+    if (!cur.length && !old.length && !showB) continue;
+    html += '<div class="mem-keycard' + (k ? '' : ' nokey') + '">'
+      + '<div class="mem-key-h">' + esc(memKeyLabel(k))
+      + (k ? '<i>' + esc(k) + '</i>' : '<i>模型没归槽，不会自动顶替</i>') + '</div>';
+    html += cur.length
+      ? cur.map(m => memItemHtml(m)).join('')
+      : '<div class="sys-line">这一条现在没有在用的说法。</div>';
+    if (showB) html += '<div class="mem-sub">她以为（不一定真）</div>' + beliefs.map(m => memItemHtml(m)).join('');
+    if (old.length) {
+      html += '<details class="mem-old"><summary>以前的说法（' + old.length + '）</summary>'
+        + old.map(m => memItemHtml(m)).join('') + '</details>';
+    }
+    html += '</div>';
+  }
+  return html;
+}
 
 /** 群记忆：按"谁记得的"分组（v0.4.1.4）。没有 who 的是全群共识。 */
 function memBodyByWho(items) {
@@ -14354,12 +15048,36 @@ async function renderMem() {
 
   // 视图切换（v0.5.1.1）：按钮是 index.html 里的静态节点，用 onclick 赋值而不是
   // addEventListener —— renderMem 每删一条就重跑一次，监听器会越叠越多。
-  const vbL = $('mem-view-list'), vbT = $('mem-view-time');
+  const vbL = $('mem-view-list'), vbT = $('mem-view-time'), vbI = $('mem-view-inbox'), vbK = $('mem-view-key');
   if (vbL && vbT) {
     vbL.classList.toggle('on', _memView === 'list');
     vbT.classList.toggle('on', _memView === 'time');
+    if (vbI) vbI.classList.toggle('on', _memView === 'inbox');
+    if (vbK) vbK.classList.toggle('on', _memView === 'key');
     vbL.onclick = () => { if (_memView !== 'list') { _memView = 'list'; renderMem(); } };
     vbT.onclick = () => { if (_memView !== 'time') { _memView = 'time'; renderMem(); } };
+    if (vbI) vbI.onclick = () => { if (_memView !== 'inbox') { _memView = 'inbox'; renderMem(); } };
+    if (vbK) vbK.onclick = () => { if (_memView !== 'key') { _memView = 'key'; renderMem(); } };
+  }
+  // 「她以为」开关只在事实卡视图里露出来（其它视图没有这个维度，
+  // 摆在那儿只会让人以为它能筛别的东西）。
+  {
+    const sw = $('mem-belief-sw'), swIn = $('mem-belief-on');
+    if (sw) sw.classList.toggle('hidden', _memView !== 'key');
+    if (swIn && !swIn.onchange) {
+      swIn.checked = _memBelief;
+      swIn.onchange = () => { _memBelief = !!swIn.checked; renderMem(); };
+    }
+  }
+  // 待确认的数字挂在「收件箱」那个按钮上（0.6.0 §4.3）。
+  // 不做弹窗、不打断 —— 攒着，用户想看的时候点进来。
+  {
+    const nEl = $('mem-inbox-n');
+    const draftN = all.filter(m => m && m.status === 'draft').length;
+    if (nEl) {
+      nEl.textContent = draftN ? String(draftN) : '';
+      nEl.classList.toggle('hidden', !draftN);
+    }
   }
 
   const cnt = $('mem-count');
@@ -14390,7 +15108,41 @@ async function renderMem() {
     return;
   }
 
-  box.innerHTML = list.map(g => {
+  // ---- 收件箱视图（0.6.0 §4.3）----
+  // 只看 status=draft 的条目。它们一条都不进提示词 —— 收下才进。
+  // 这是"不每轮弹窗确认"和"不静默往她脑子里塞东西"之间唯一可行的折中。
+  if (_memView === 'inbox') {
+    const drafts = all.filter(m => m && m.status === 'draft');
+    if (!drafts.length) {
+      box.innerHTML = '<div class="sys-line">没有待确认的。她自动记下的都够确定，不用你操心。</div>';
+      return;
+    }
+    const nameOf = (id) => (cs.find(c => c.id === id) || {}).name || '已删除的角色';
+    const byCid = new Map();
+    for (const m of drafts) {
+      if (!byCid.has(m.charId)) byCid.set(m.charId, []);
+      byCid.get(m.charId).push(m);
+    }
+    box.innerHTML = '<div class="sys-line">模型拿不准的先落在这儿，不进提示词。收下才会进她的脑子。</div>'
+      + [...byCid].map(([cid, items]) => '<div class="mem-group open" data-cid="' + esc(cid) + '">'
+          + '<button class="fold-head sub" data-head="1"><span>' + esc(nameOf(cid)) + '</span>'
+          + '<em class="fold-num">' + items.length + ' 条</em><i class="fold-arrow">▾</i></button>'
+          + '<div class="fold-wrap open"><div class="fold-inner">'
+          + items.map(m => memItemHtml(m)).join('') + '</div></div></div>').join('');
+    box.querySelectorAll('.mem-group').forEach(gEl => {
+      bindMemItems(gEl, gEl.dataset.cid, async () => { await renderMem(); await renderMemHealth(); });
+    });
+    return;
+  }
+
+  // 旧 blob 横幅（0.6.0 §3 / §7）：v2 之前一条里塞好几件事的记忆照常注入，
+  // 但"一次全倒出来"正是她答非所问的来源。不阻塞、不弹窗，只在顶上提一句。
+  const splitN = all.filter(m => m && isActiveMemory(m) && (m.legacy === true || m.needsSplit === true)).length;
+  const banner = splitN
+    ? '<div class="mem-banner"><span>有 ' + splitN + ' 条旧记忆里装着好几件事，她一次全倒出来容易串味。</span>'
+      + '<button class="ghost-btn sm" id="mem-split-hint">怎么拆</button></div>'
+    : '';
+  box.innerHTML = banner + list.map(g => {
     const open = _memOpen.has(g.id);
     const n = g.items.length;
     const num = n ? `${n} 条` : '还没有';
@@ -14404,6 +15156,8 @@ async function renderMem() {
     const owner = cs.find(c => c.id === g.id);
     const body = (_memView === 'time')
       ? memTimelineHtml(g.items)
+      : (_memView === 'key')
+      ? memKeyCardsHtml(g.items, _memBelief)
       : ((owner && isGroup(owner) && g.items.some(m => m && m.who))
         ? memBodyByWho(g.items)
         : (g.items.map(m => memItemHtml(m)).join('') || '<div class="sys-line">她还没记住什么。</div>'));
@@ -14416,6 +15170,19 @@ async function renderMem() {
       + `<button class="ghost-btn sm" data-add="1">加</button></div>`
       + `</div></div></div>`;
   }).join('');
+
+  // 横幅上的「怎么拆」：展开第一个有旧 blob 的角色组，并滚到第一条带标记的。
+  // 不新开视图 —— 拆是逐条的手工活，用户本来就要在那一条上点「拆」。
+  const sh = $('mem-split-hint');
+  if (sh) sh.onclick = () => {
+    const first = all.find(m => m && isActiveMemory(m) && (m.legacy === true || m.needsSplit === true));
+    if (!first) return;
+    _memOpen.add(first.charId);
+    renderMem().then(() => {
+      const el = box.querySelector('.mem-item[data-mid="' + CSS.escape(first.id) + '"]');
+      if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  };
 
   // 逐条绑定：折叠、删、加、输入暂存
   box.querySelectorAll('.mem-group').forEach(gEl => {
@@ -15397,36 +16164,35 @@ async function applyImport(data, p, file) {
       // 对照：消息侧写的是 `if (!live.has(cid))`，没有这个短路。
       if (!_cid || !live.has(_cid)) { ghostMems++; continue; }
       try {
-        // ⚠️ 【白名单式重建】，少写一个字段就丢了。
-        // mine 尤其要紧：丢了之后你自己写的记忆会失去「自定义」标记，
-        // 保护开关就再也护不住它们（会被当成她记的一起交给模型改写/删除）。
-        await mem.add({ id: m.id || uid(), charId: _cid, text: String(m.text),
-                        // ⚠️ who = 这条记忆属于【谁的视角】（v0.4.1.4 群聊加的）。
-                        //    这一段是白名单式重建，漏一个字段就永久丢一个 ——
-                        //    漏了 who 的后果：整个群的记忆在恢复备份之后全部退化成
-                        //    "全群共识"，甲的私事会被读成大家都知道，而且【不可逆】。
-                        // ⚠️ who 也是【成员 charId】，认领后同样要翻（v0.4.1.6）。
-                        //    不翻的话：这条记忆既不是"当前发言人的"、也不是"全群共识"，
-                        //    于是【谁都不会被注入到】—— 记忆还在库里，但等于消失。
-                        //    翻完仍指向本机没有的人时【保持原样】（不改写成共识）：
-                        //    「把甲的私事读成大家都知道」比"她暂时想不起来"更糟。
-                        who: m.who ? String(remap(m.who)) : '',
-                        kind: m.kind === 'event' ? 'event' : 'fact',
-                        untilDay: typeof m.untilDay === 'number' ? m.untilDay : null,
-                        // ⚠️ 白名单式重建，少写一个字段就永久丢掉（v1.21.25 修，复审 ★4）。
-                        // 注释上面自己就写着这句话，却漏了这两个。
-                        untilHour: typeof m.untilHour === 'number' ? m.untilHour : null,
-                        untilMinute: typeof m.untilMinute === 'number' ? m.untilMinute : 0,
-                        day: typeof m.day === 'number' ? m.day : null,
-                        sourceMsgIds: Array.isArray(m.sourceMsgIds) ? m.sourceMsgIds : [],
-                        status: m.status === 'superseded' ? 'superseded' : 'active',
-                        // 0.5.2 之前导出的备份没有这三个字段 —— 那就是旧记忆，
-                        // 标记出来，进角色时才有机会用 story.day 反推日期。
-                        // 自己手写的（mine）不标：用户写「明天」是他的自由。
-                        legacy: m.legacy === true || (!m.mine && m.day == null && m.status == null && m.sourceMsgIds == null),
-                        mine: !!m.mine,
-                        freq: MEM_FREQ.has(m.freq) ? m.freq : 'normal',
-                        ts: typeof m.ts === 'number' ? m.ts : Date.now() });
+        // ⚠️ 这一段历史上是【白名单式重建】，教训是同一个：少写一个字段就永久丢一个。
+        //   · 漏 who（v0.4.1.4）→ 群记忆恢复后全退化成"全群共识"，甲的私事被读成大家都知道
+        //   · 漏 untilHour/untilMinute（v1.21.25）→ 到期时刻推迟 8 小时
+        //   · 0.6.0 又加了 key/subject/scope/quote/sourceKind/status 五态…
+        //     再抄一遍白名单等于把同一个坑留给下一个字段。
+        //
+        // 所以现在改成【整条交给 normalizeMemory】：它负责白名单校验 + 补默认值 +
+        // 老备份缺字段兜底，导入和运行时走的是同一套规则（不会再出现
+        // "库里是五态、导进来的却只有两态"这种事）。
+        // 只有三处必须在进 normalize 之前处理，因为 normalize 不知道本机情况：
+        //   ① charId 要按 remap 翻（认领成新角色 id）
+        //   ② who 是成员 charId，同样要翻；翻完仍指向本机没有的人时【保持原样】——
+        //      「把甲的私事读成大家都知道」比"她暂时想不起来"更糟
+        //   ③ legacy 判据要看【备份里原本有没有这些字段】，normalize 会补默认值，
+        //      补完就再也看不出是旧备份了
+        const _legacy = m.legacy === true
+          || (!m.mine && m.day == null && m.status == null && m.sourceMsgIds == null);
+        await mem.add(normalizeMemory({
+          ...m,
+          id: m.id || uid(), charId: _cid, text: String(m.text),
+          who: m.who ? String(remap(m.who)) : '',
+          // 0.5.2 之前导出的备份没有那些字段 —— 标记出来，
+          // 进角色时才有机会用 story.day 反推日期。
+          // 自己手写的（mine）不标：用户写「明天」是他的自由。
+          legacy: _legacy,
+          mine: !!m.mine,
+          freq: MEM_FREQ.has(m.freq) ? m.freq : 'normal',
+          ts: typeof m.ts === 'number' ? m.ts : Date.now(),
+        }));
       } catch { /* 单条坏掉不影响整体 */ }
     }
   }
@@ -16583,7 +17349,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.2';
+const WEB_VERSION_FALLBACK = '0.5.2.2';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

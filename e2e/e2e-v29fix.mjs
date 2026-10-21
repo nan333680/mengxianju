@@ -195,8 +195,11 @@ console.log('');
 console.log('=== 新4：parseMemJson 必须产出 untilHour/untilMinute ===');
 {
   const src = readCode(WWW + '/js/app.js');
-  t('parse 产出 untilHour', src.includes("untilHour: (x.kind === 'event' && x.untilHour !== null"));
-  t('parse 产出 untilMinute', src.includes("untilMinute: (x.kind === 'event' && x.untilMinute !== null"));
+  // 0.6.0 起 parseMemJson 先把 kind 归一化到局部变量（白名单校验），
+  // 所以判据从 x.kind 变成了 kind —— 断言跟着认这个形态，行为等价。
+  t('parse 产出 untilHour', /untilHour:\s*\(kind === 'event' && x\.untilHour !== null/.test(src));
+  t('parse 产出 untilMinute', /untilMinute:\s*\(kind === 'event' && x\.untilMinute !== null/.test(src));
+  t('kind 先按白名单归一化再当判据', src.includes("const kind = MEMORY_KINDS.includes("));
   t('提示词格式含两个字段', src.includes('untilHour":null,"untilMinute":null'));
 }
 

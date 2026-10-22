@@ -41,14 +41,22 @@ const dbCount = (st) => page.evaluate(s => new Promise(res => {
   o.onsuccess = () => { const db = o.result; const q = db.transaction(s).objectStore(s).count(); q.onsuccess = () => { const n = q.result; db.close(); res(n); }; };
 }), st);
 
-await page.goto('http://127.0.0.1:'+port+'/',{waitUntil:'networkidle0',timeout:40000});
+// 原来这里是 waitUntil:'networkidle0' + 40 秒超时。CI 上偶发
+// 「Navigation timeout of 40000 ms exceeded」（这一套前面的 menu 就已经跑了 36 秒，
+// 那台 runner 本来就慢），而 networkidle0 还要额外等 500ms 静默。
+// 改成 domcontentloaded + 显式等 app 渲染完空态：判据是 #messages 里有子节点，
+// 这和「页面真的起来了」是同义词，且不受网络空闲计时的影响。
+const URL='http://127.0.0.1:'+port+'/';
+const waitApp = () => page.waitForFunction(() => document.querySelectorAll('#messages *').length > 0, { timeout: 90000 }).catch(() => {});
+await page.goto(URL,{waitUntil:'domcontentloaded',timeout:90000});
+await waitApp();
 await sleep(1200);
 await page.evaluate(()=>indexedDB.deleteDatabase('ai-companion'));
-await page.reload({waitUntil:'networkidle0'}); await sleep(900);
+await page.reload({waitUntil:'domcontentloaded',timeout:90000}); await waitApp(); await sleep(900);
 // ⚠️ CI 的 runner 是 en-US，语言默认「跟随系统」→ 空态引导那类文案断言会读成英文。
 //    必须在【App 建好库之后】钉（也就是上面这次 reload 之后），钉完再 reload 一次让语言生效。
 await pinLang(page, 'zh');
-await page.reload({waitUntil:'networkidle0'}); await sleep(700);
+await page.reload({waitUntil:'domcontentloaded',timeout:90000}); await waitApp(); await sleep(900);
 
 console.log('=== 前置：一个角色都没有 ===');
 t('角色数 0', (await dbCount('characters')) === 0);

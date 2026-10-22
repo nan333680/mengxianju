@@ -156,7 +156,7 @@
         </label>
         <p class="hint-text" data-i18n-en-html="This one is <b>permanent</b> (sent every round, and it hits the cache). The “Scene” on the chat page is <b>temporary</b> and changes often.">这条是<b data-i18n-en="Always on">常驻</b>的（每轮都发、能命中缓存）。聊天页那个「场景」是<b data-i18n-en="Temporary">临时</b>的，改得勤。</p>
         <label class="field" data-i18n-nodes><span data-i18n-en="His place in this group (usually leave blank)">他在这个群里的住处（一般不填）</span>
-          <textarea id="g-home" rows="3" placeholder="留空 = 用 ⚙ 里全局那份「他的居处」。" data-i18n-en-ph="Leave blank to use the global "where he lives" from ⚙."></textarea>
+          <textarea id="g-home" rows="3" placeholder="留空 = 用 ⚙ 里全局那份「你的居处」。" data-i18n-en-ph="Leave blank to use the global "where he lives" from ⚙."></textarea>
         </label>
         <p class="hint-text" data-i18n-en-html="How it differs from the field above: that one says <b>where the group is</b>, this one says <b>what his place is like</b>. Leave it blank when the group is at his home — fill it only if the group is elsewhere and you still want his home described.">和上面那条的分工：上面写<b data-i18n-en="Where the group is">这个群在哪</b>，这条写<b data-i18n-en="What his place is like">他家什么样</b>。
           群就在他家的时候留空就行 —— 只有「群在别处、你还想写他家里的样子」时才要填。</p>
@@ -379,12 +379,12 @@
 
     <div class="hint-box" data-i18n-en="These settings apply to her only. Switch to another character and she has her own temper.">下面这些设置只对「她」生效。切到别的角色，她们各有各的脾气。</div>
 
-    <!-- 「他的设定」「他的居处」（v1.21.47）：原来在 ⚙ 里、全局共用一份，
+    <!-- 「你的设定」「你的居处」（v1.21.47）：原来在 ⚙ 里、全局共用一份，
          现在按角色分开 —— 每个角色对「你是谁、你住哪」可以有自己的理解。
          新建角色拿的是【出厂那份通用模板】（不是给你量身写的）；老角色由一次性迁移接手。 -->
     <section class="group">
       <button class="fold-head" id="e-mine-fold">
-        <span data-i18n-en="About you">他的设定</span>
+        <span data-i18n-en="About you">你的设定</span>
         <em class="fold-num" id="e-mine-brief">—</em>
         <i class="fold-arrow">▾</i>
       </button>
@@ -405,7 +405,7 @@
 
     <section class="group">
       <button class="fold-head" id="e-home-fold">
-        <span data-i18n-en="Where you live">他的居处</span>
+        <span data-i18n-en="Where you live">你的居处</span>
         <em class="fold-num" id="e-home-brief">—</em>
         <i class="fold-arrow">▾</i>
       </button>
@@ -424,8 +424,28 @@
       </div>
     </section>
 
+    <!-- 「后来补的设定」（v0.5.3 · 评审 E 条）：卡是开卡那一刻写的，但故事会往下长。
+         这一栏和「你的设定」不重复 —— 那份是自述，这份是【后来才定下来的事实】，
+         小说演完点「存进设定补记」会自动往这里加，聊天和小说都认。 -->
+    <section class="group">
+      <button class="fold-head" id="e-canon-fold">
+        <span data-i18n-en="Settings added later">后来补的设定</span>
+        <em class="fold-num" id="e-canon-brief">—</em>
+        <i class="fold-arrow">▾</i>
+      </button>
+      <div class="fold-wrap" id="e-canon-wrap">
+        <div class="fold-inner">
+          <p class="profile-tip" data-i18n-en-html="Things settled after the fact. <b>These override the card</b> when they conflict, and both chat and novels use them.<br>One item per line, up to 1200 characters. A finished scene can add to it — tap “save into settings” on the end page.">后来才定下来的事 —— 和角色卡冲突时<b data-i18n-en="These win">以这里为准</b>，聊天和小说都会用。<br>一行一条，最多 1200 字。小说演完也能往里加：结束页点「存进设定补记」。</p>
+          <textarea id="e-canon" rows="6" class="profile-box" maxlength="1200" placeholder="比如：她已经知道那件事了／那把钥匙一直在她那儿" data-i18n-en-ph="e.g. she already knows about it / that key has been with her all along"></textarea>
+          <div class="profile-foot" data-i18n-nodes>
+            <span class="cnt" id="e-canon-count">—</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- 「她怎么看你」（v0.5.2 · 小说模式的称谓层，聊天里也用）：
-         上面「他的设定」是你自述的一份材料，这里是她的认知 —— 她怎么称呼你、
+         上面「你的设定」是你自述的一份材料，这里是她的认知 —— 她怎么称呼你、
          她以为你是谁、她知道你什么、她对你什么态度。两者不重复，可以只填这里。 -->
     <section class="group">
       <button class="fold-head" id="e-addr-fold">

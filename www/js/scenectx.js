@@ -22,27 +22,31 @@ import { SCENE_CONTEXT_MAX } from './scene.js';
 /**
  * 每块的独立上限（字）。
  *
- * ⚠️ 这七块加起来（8700）**故意**比 SCENE_CONTEXT_MAX(8000) 多：
- *    真实长卡上本来就装不下 —— 与其假装装得下，不如让"装不下就整条丢"
- *    成为真的会发生的机制（第一版把两块调小、和刚好小于上限，
- *    那段丢弃代码永远走不到，等于写了一行自我安慰）。
+ * v0.5.3 重排：八块加起来 10900，**小于** SCENE_CONTEXT_MAX(11000)。
+ * 0.5.2.5 是反过来的 —— 七块合计 8700 > 总量 8000，满卡时先丢的就是世界书，
+ * 于是"你把设定写进世界书，小说里一个字没进去"。那不是"故意让丢弃发生"，
+ * 是预算表自己打架，评审说得对。
+ * 现在满卡不丢；真超了（人设特别长、记忆特别多）才丢，而且丢的结果会写进
+ * scene.ctxDropped，在结束页明说丢了哪几块。
  *
  * 分配的依据（按真实备份里 19 个角色量出来的量级，不是拍脑袋）：
- *   self 5800  —— 人设 5000 + 卡里的性格/场景/说明/记着 各 100 + 外貌 100
- *                （人设是主体，但卡字段整类被挤掉等于用户白填）
- *   voice 500  —— 卡里的对话范例，她"怎么说话"唯一的样本
- *   user 450   —— 你怎么称呼他，逐字排出来的 bullets
+ *   self 7000  —— persona 4000 + 性格 600 + 场景 600 + 说明 1100 + 记着 500 + 外貌 200
+ *                （0.5.2.5 把卡里四项各切 100 字，等于"用户填了卡字段，小说里只剩标题"）
+ *   canon 800  —— 后来补的设定（char.canonExtra），比通用世界设定更该被听见
+ *   voice 700  —— 卡里的对话范例，她"怎么说话"唯一的样本
+ *   user 450   —— 你怎么称呼他，逐字排出来的 bullets（不含指代，指代归 POV）
  *   profile 300 / env 200 —— 他那个人、他待的地方
- *   world 900 / mem 550 —— 可以整条丢的那两块
+ *   world 900 / mem 550 —— 真超了先丢这两块：世界书模型能编一半，
+ *                           记忆是"能编但会编错"，都比不上声音和关系要紧
  */
 export const SCENE_CTX_BLOCKS = [
-  { key: 'self', title: '她是谁', max: 5800, essential: true },
-  { key: 'voice', title: '她说话的样子', max: 500, essential: true },
+  { key: 'self', title: '她是谁', max: 7000, essential: true },
+  { key: 'canon', title: '后来补的设定', max: 800, essential: true },
+  { key: 'voice', title: '她说话的样子', max: 700, essential: true },
   { key: 'user', title: '你怎么称呼他、怎么看他', max: 450, essential: true },
   { key: 'profile', title: '关于对方', max: 300, essential: true },
   { key: 'env', title: '他住的地方', max: 200, essential: true },
-  // 下面两块可以整条丢：世界书模型能编一半，记忆是"能编但会编错"，
-  // 都比不上声音和关系要紧。
+  // 下面两块可以整条丢（见上面 world / mem 那句）。
   { key: 'world', title: '这个世界的底色', max: 900, essential: false },
   { key: 'mem', title: '你们之间已经这样了', max: 550, essential: false }
 ];
@@ -121,7 +125,11 @@ export function assembleSceneContext(parts = {}, cap = SCENE_CONTEXT_MAX) {
     chunks.push({ key: b.key, title: b.title, body, essential: b.essential === true });
   }
 
-  const size = () => chunks.reduce((n, c) => n + c.title.length + c.body.length + 3, 0);
+  // 每块是 '# ' + 标题 + 真实换行 + 正文（标题 2 字前缀 + 1 个换行 = 3），
+  // 块与块之间还有 '\n\n' 两个字符。0.5.3 之前漏算了这对分隔符，
+  // 于是「丢完刚好卡到上限」时实际会超 2×块数 —— 差几个字，但预算表不该说谎。
+  const size = () => chunks.reduce((n, c) => n + c.title.length + c.body.length + 3, 0)
+    + Math.max(0, chunks.length - 1) * 2;
 
   // ① 超了就整条丢非要紧的。从前往后找 —— world 排在 mem 前面，
   //    所以世界书先被丢，然后才是记忆（评审的取舍，我也认同）。

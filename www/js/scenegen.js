@@ -116,7 +116,9 @@ export async function genLog(o) {
       cast: arr(j.cast),
       change: String(j.change || '').trim(),
       openThreads: arr(j.openThreads),
-      keyLines: arr(j.keyLines).slice(0, 3)
+      keyLines: arr(j.keyLines).slice(0, 3),
+      // v0.5.3：这一场新确立的设定。不写进这里 = 提示词要了、模型给了、然后被丢掉。
+      newSettings: arr(j.newSettings).map(x => x.slice(0, 40)).slice(0, 3)
     },
     raw
   };

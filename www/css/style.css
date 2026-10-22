@@ -1882,6 +1882,19 @@ input[type="range"] { touch-action: pan-y; }
 .rv-row button:active, .rv-say button:active{ color:var(--pri); border-color:var(--pri); }
 .rv-fin{ margin:26px 0 10px; text-align:center; color:var(--fg3);
   font-size:12.5px; letter-spacing:2px; }
+/* 结束页的场记（v0.5.3）—— 这一场发生过什么、缺了哪几块底色、要不要记进正史 */
+.rv-log{ margin:10px 0 14px; padding:12px 14px; border-radius:12px;
+  background:var(--bg2); border:1px solid var(--line); text-align:left; }
+.rv-log-h{ font-size:13px; font-weight:600; color:var(--fg); margin-bottom:8px; }
+.rv-log-ev{ margin:0 0 8px; padding-left:18px; color:var(--fg2); font-size:13px; line-height:1.7; }
+.rv-log-ev li{ margin:2px 0; }
+.rv-log-line{ font-size:13px; color:var(--fg2); line-height:1.7; margin-bottom:6px; }
+.rv-log-line b{ color:var(--fg3); font-weight:500; margin-right:8px; }
+.rv-log-warn{ font-size:12px; line-height:1.6; color:#e8b339; margin-bottom:8px; }
+.rv-log-ck{ display:flex; align-items:center; gap:8px; font-size:13px;
+  color:var(--fg2); margin:10px 0 8px; }
+.rv-log-ck input{ width:18px; height:18px; flex:0 0 auto; }
+.rv-row button[disabled]{ opacity:.45; }
 .rv-say{ display:flex; gap:8px; margin:18px 0 6px; }
 .rv-say input{ flex:1 1 auto; min-width:0; font-family:inherit; font-size:14px; padding:9px 12px;
   border-radius:10px; background:var(--bg2); color:var(--fg); border:1px solid var(--line); outline:none; }

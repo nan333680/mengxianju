@@ -944,6 +944,13 @@ function refreshEditMineBrief() {
   if (mb) mb.textContent = p ? (p.split('\n').filter(x => x.trim()).length + ' 行') : '未填';
   const hb = $('e-home-brief');
   if (hb) hb.textContent = h ? '已填' : '未填';
+  // 「后来补的设定」（v0.5.3）：角标只报行数，字数放右边计数
+  const cv = ($('e-canon') ? $('e-canon').value : '') || '';
+  const cvt = cv.trim();
+  const cc = $('e-canon-count');
+  if (cc) cc.textContent = cvt ? tt('共 ' + cv.length + ' / 1200 字') : tt('（空的）');
+  const cb = $('e-canon-brief');
+  if (cb) cb.textContent = cvt ? (cvt.split('\n').filter(x => x.trim()).length + ' 行') : '未填';
   refreshEditAddrBrief();
 }
 
@@ -9064,6 +9071,8 @@ async function openCharEdit(id, presetKey) {
   // 不给她看空框（真生效的是 persona.js 里 char.myProfile ?? s.myProfile）。
   $('e-mine').value = (c && c.myProfile !== undefined) ? c.myProfile : (S.myProfile || '');
   $('e-home').value = (c && c.myEnv !== undefined) ? c.myEnv : (S.myEnv || '');
+  // 「后来补的设定」（v0.5.3）：只存角色级，不回落全局 —— 它是这个角色身上发生的事
+  $('e-canon').value = String((c && c.canonExtra) || '');
   // 「她怎么看你」（v0.5.2）：她那一侧的认知。和上面两份不同 —— 这里【不回落全局】，
   // 空就是空（= 她不知道），因为全局那份是"我的自我描述"的模板，不是"她怎么看我"。
   $('e-useraddr').value = (c && c.userAddress) || '';
@@ -9268,6 +9277,7 @@ async function saveCharEdit() {
     // 「他的设定 / 他的居处」（v1.21.47）：从全局搬到角色级，随角色一起存
     myProfile: $('e-mine').value,
     myEnv: $('e-home').value,
+    canonExtra: $('e-canon').value.trim(),
     // 「她怎么看你」（v0.5.2）：空串照存（不写 undefined），这样"清空"能真的存进去
     userAddress: $('e-useraddr').value.trim(),
     userPerception: $('e-userperc').value.trim(),
@@ -11840,12 +11850,13 @@ async function scChatSnapshot(charId) {
  *
  * @param {string} charId
  * @param {string} [sceneId] 当前这一场（scope='scene' 的记忆只认这一场自己产生的）
- * @param {Object} [scene] 场景卡本身 —— 只用它写的「地点 / 时间 / 导演指令」去匹配世界书
+ * @param {Object} [scene] 场景卡本身 —— 用它写的标题/地点/时间/天气/每一拍/前情摘录去匹配世界书
+ * @returns {Promise<{text: string, dropped: string[]}>} text 是快照正文，dropped 是装不下被丢掉的块 key
  */
 async function buildSceneContext(charId, sceneId, scene) {
   let ch = null;
   try { ch = await chars.get(charId); } catch { ch = null; }
-  if (!ch) return '';
+  if (!ch) return { text: '', dropped: [] };
 
   const cf = (ch.cardFields && typeof ch.cardFields === 'object') ? ch.cardFields : {};
   const parts = {};
@@ -11856,28 +11867,43 @@ async function buildSceneContext(charId, sceneId, scene) {
   //    于是 950 字的真实人设把整块顶满，性格/场景/说明一个字都进不来 ——
   //    用户填了卡字段、聊天里也生效，一到小说就整类消失，比少了更难受。
   //    每一项都按句截，不切半句。
+  // ⚠️ v0.5.3 按真实卡重分额度（评审 P0-1）：0.5.2.5 把卡里四项各切 100 字，
+  //    而聊天侧（persona.js 的 buildStablePrompt）是【整段注入】——
+  //    同一张卡在聊天里完整、在小说里只剩每项开头一句，那是两个人。
+  //    现在的分法：人设 4000 / 性格 600 / 场景 600 / 说明 1100 / 记着 500 / 外貌 200，
+  //    合计 7000，正好是 self 块的上限；长卡只砍尾巴，不会砍到只剩目录。
   const who = [];
   const cut = (v, n) => cutAtSentence(String(v == null ? '' : v), n);
-  const persona = cut(ch.persona, 5000);
+  const persona = cut(ch.persona, 4000);
   if (persona) who.push(persona);
-  if (cf.personality) who.push('【性格】' + cut(cf.personality, 100));
-  if (cf.scenario) who.push('【场景】' + cut(cf.scenario, 100));
-  if (cf.systemPrompt) who.push('【卡里给的角色说明】' + cut(cf.systemPrompt, 100));
-  if (cf.postHistory) who.push('【要一直记着的】' + cut(cf.postHistory, 100));
+  if (cf.personality) who.push('【性格】' + cut(cf.personality, 600));
+  if (cf.scenario) who.push('【场景】' + cut(cf.scenario, 600));
+  if (cf.systemPrompt) who.push('【卡里给的角色说明】' + cut(cf.systemPrompt, 1100));
+  if (cf.postHistory) who.push('【要一直记着的】' + cut(cf.postHistory, 500));
   const look = String(ch.appearance || (ch.params && ch.params.appearance) || '').trim();
-  if (look) who.push('【外貌】' + cut(look, 100));
+  if (look) who.push('【外貌】' + cut(look, 200));
   parts.self = who.join('\n');
+
+  // —— 后来补的设定（v0.5.3）——
+  // 和聊天侧同一个来源 char.canonExtra：设定不进记忆（记忆会被取代/过期/裁预算），
+  // 它单独一块、永远在，且比通用世界设定更该被听见。
+  const canonExtra = String(ch.canonExtra || '').trim();
+  if (canonExtra) parts.canon = cut(canonExtra, 800);
 
   // —— 她说话的样子（卡里的对话范例，聊天侧一直有、小说侧以前没有） ——
   if (cf.mesExample) {
-    const ex = cleanExample(cf.mesExample, 450);
+    const ex = cleanExample(cf.mesExample, 650);
     // 说明只学"怎么说话"，不学"说什么"：范例里的用户台词不该被当成她的口吻
     if (ex) parts.voice = '（这是她以前说话的样子。只学句长、停顿、动作和台词的比例；不要照抄内容，也别把「名字：」这种格式带进正文）\n' + ex;
   }
 
   // —— 你怎么称呼他、怎么看他（复用聊天侧那份结构化条目） ——
+  // ⚠️ v0.5.3：传 forScene —— 指代只由 scene.js 的 POV 一处决定。
+  //    0.5.2.5 把聊天侧那两行（「旁白里指他用「他」」「台词里永远说「你」」）
+  //    也塞进了小说，而小说 POV 说「旁白用她、对你用你」—— 两套规则同时生效，
+  //    用户一选「他」，旁白就一会儿「他」一会儿「你」。
   try {
-    const ul = userSideLines(ch, S);
+    const ul = userSideLines(ch, S, { forScene: true });
     if (ul && ul.length) parts.user = ul.join('\n');
   } catch { /* 拿不到就不带 */ }
 
@@ -11903,8 +11929,20 @@ async function buildSceneContext(charId, sceneId, scene) {
     const wbC = await worldbookConst(charId);
     let wbH = [];
     if (scene) {
-      const probe = [scene.setting && scene.setting.place, scene.setting && scene.setting.time,
-        scene.directive, scene.userLine].map(x => String(x || '')).join(' ').trim();
+      // ⚠️ v0.5.3 修正探针字段（评审 P0-4）：原来读 scene.directive / scene.userLine ——
+      //    这两个【不在 normalizeScene 里】，它们只是 writeScene 的运行时 opts，
+      //    场景卡上永远是 undefined，等于探针只剩「地点 + 时间」，白漏了一大半。
+      //    现在用卡上真有的：标题、地点/时间/天气、每一拍的起/变/止 + 守住不写，
+      //    再加前情摘录的前 800 字 —— 从聊天成章时，世界书条目基本都写在前情里被提到过。
+      const st = (scene.setting && typeof scene.setting === 'object') ? scene.setting : {};
+      const bits = [scene.title, st.place, st.time, st.weather];
+      for (const b of (Array.isArray(scene.beats) ? scene.beats : [])) {
+        if (!b || typeof b !== 'object') continue;
+        bits.push(b.start, b.change, b.stop);
+        if (Array.isArray(b.guardrails)) for (const gr of b.guardrails) bits.push(gr);
+      }
+      if (scene.source && scene.source.excerpt) bits.push(String(scene.source.excerpt).slice(0, 800));
+      const probe = bits.map(x => String(x || '')).join(' ').trim();
       if (probe) wbH = await worldbookSceneHits(charId, probe);
     }
     const picked = [];
@@ -11939,11 +11977,29 @@ async function buildSceneContext(charId, sceneId, scene) {
   try {
     const all = await mem.list(charId);
     const keep = all.filter(m => m && m.text && m.status !== 'deleted' && m.status !== 'draft');
-    let pathIds = null;
+    // ⚠️ v0.5.3（评审 P0-5）：原来用 curMsgsAll(charId) —— 那是【当前活动路径】，
+    //    和这一场从哪条支派生出来的无关。用户切了一条支再开戏，A 支的记忆就漏进来了。
+    //    现在：拿 scene.source.msgIds 的【末条】当支点，回溯它的完整祖先链当 pathIds。
+    //    空白开戏 / 来源消息已被删 → 保持空集（mempick 只放行 pinned），
+    //    绝不退回"当前活动路径"—— 那正是串线的来源。
+    let pathIds = new Set();
     try {
-      const path = await curMsgsAll(charId);
-      pathIds = new Set(path.map(m => m.id));
-    } catch { pathIds = null; }
+      const srcIds = (scene && scene.source && Array.isArray(scene.source.msgIds)) ? scene.source.msgIds : [];
+      const tip = srcIds.length ? String(srcIds[srcIds.length - 1] || '') : '';
+      if (!tip) {
+        // 空白开戏（没有来源消息）：按【当前这条线】收窄 —— 没有来源可回溯时，
+        // 「你现在在看的这条线」就是最接近的答案，这和"从 A 支成章却注入 B 支"不是一回事。
+        const path = await curMsgsAll(charId);
+        for (const m of path) if (m && m.id) pathIds.add(m.id);
+      } else {
+        const all = await msgs.list(charId, 0, true);
+        // 有来源但那条消息已经没了（删过）：保持空集，只放行 pinned ——
+        // 宁可不给，也不拿别的支的记忆顶上。
+        if (all.some(m => m && m.id === tip)) {
+          for (const m of pathTo(all, tip)) if (m && m.id) pathIds.add(m.id);
+        }
+      }
+    } catch { pathIds = new Set(); }
     const picked = pickMemories({
       list: keep, limit: 10, budgetTokens: 420,
       pathIds, forScene: true, sceneId: String(sceneId || ''),
@@ -11964,10 +12020,13 @@ async function buildSceneContext(charId, sceneId, scene) {
   } catch { /* 记忆读不到就不带 */ }
 
   const out = assembleSceneContext(parts);
-  if (out.dropped.length) {
-    try { console.info('[sceneCtx] 装不下，整条丢掉：' + out.dropped.map(d => d.key).join(',')); } catch { }
+  const dropped = out.dropped.map(d => String((d && d.key) || ''));
+  if (dropped.length) {
+    // 只 console 等于没人知道（评审 A 条）：丢掉的那几块要跟着场景卡存下来，
+    // 结束页会说「这一场没带上哪几块」。
+    try { console.info('[sceneCtx] 装不下，整条丢掉：' + dropped.join(',')); } catch { }
   }
-  return out.text;
+  return { text: out.text, dropped };
 }
 
 /** 弹窗里填的东西 → 一张场景卡（不落库）。char 读不到时也要能返回一张能用的空卡。 */
@@ -12179,6 +12238,108 @@ async function openRead(sc) {
   readProgress();
 }
 
+/**
+ * 结束页的「这一场的场记」（v0.5.3 · 评审 D 条）。
+ *
+ * 0.5.2.5 的问题：一场演完，events / change 只躺在 sc.log 里，全仓库没有一处
+ * sc.log → mem.add —— 下一场她完全不知道上一场发生过什么，「小说模式」和记忆是两条平行线。
+ * 这里给两个【明确的动作】，都不自动执行：
+ *   ① 「记进记忆」——写 draft（待确认），去「已记住的事」里由你点头才转正，
+ *      和剧情卡的 seedArcMemory 同一套规矩：模型判过的东西绝不自动进正史。
+ *      写进去的 scope 是 scene（只在小说里）+ sourceSceneId，聊天侧不会被这场戏污染。
+ *   ② 「存进设定补记」——把这一场新确立的设定追加到角色的「后来补的设定」（char.canonExtra）。
+ *      设定不进记忆：记忆会被取代、过期、裁预算，设定必须稳定。
+ *
+ * sc.canon（这一场算正史）是这个动作的闸门，默认关着 —— 演着玩的一场不该自动变成事实。
+ */
+function sceneLogHtml(sc) {
+  const lg = (sc && sc.log) || {};
+  const evs = (Array.isArray(lg.events) ? lg.events : []).map(x => String(x || '').trim()).filter(Boolean);
+  const ns = (Array.isArray(lg.newSettings) ? lg.newSettings : []).map(x => String(x || '').trim()).filter(Boolean);
+  const change = String(lg.change || '').trim();
+  const dropped = (sc && Array.isArray(sc.ctxDropped)) ? sc.ctxDropped.filter(Boolean) : [];
+  if (!evs.length && !ns.length && !change && !dropped.length) return '';
+  const CN = {
+    self: '她是谁', canon: '后来补的设定', voice: '她说话的样子', user: '你怎么称呼他',
+    profile: '关于对方', env: '他住的地方', world: '这个世界的底色', mem: '你们之间已经这样了'
+  };
+  let h = '<div class="rv-log">';
+  h += '<div class="rv-log-h">这一场的场记</div>';
+  if (dropped.length) {
+    h += '<div class="rv-log-warn">这一场没带上：'
+      + dropped.map(k => esc(CN[k] || k)).join('、')
+      + '（卡或设定太长，开戏时没装下 —— 想带全就精简角色卡，或把要紧的写进「后来补的设定」）</div>';
+  }
+  if (evs.length) h += '<ul class="rv-log-ev">' + evs.slice(0, 8).map(e => '<li>' + esc(e) + '</li>').join('') + '</ul>';
+  if (change) h += '<div class="rv-log-line"><b>变化</b>' + esc(change) + '</div>';
+  if (ns.length) h += '<div class="rv-log-line"><b>新设定</b>' + ns.map(x => esc(x)).join('；') + '</div>';
+  h += '<label class="rv-log-ck"><input type="checkbox" id="rv-log-reckon"'
+    + (sc.canon === true ? ' checked' : '') + '> 这一场算正史（可以记进记忆）</label>';
+  h += '<div class="rv-row">';
+  h += '<button id="rv-log-mem"' + (sc.canon === true ? '' : ' disabled') + '>记进记忆</button>';
+  if (ns.length) h += '<button id="rv-log-canon">存进设定补记</button>';
+  h += '</div></div>';
+  return h;
+}
+
+/** 场记 → 记忆（写成 draft，等你在「已记住的事」里确认） */
+async function commitSceneLogMem(sc) {
+  const lg = (sc && sc.log) || {};
+  const evs = (Array.isArray(lg.events) ? lg.events : [])
+    .map(x => String(x || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const change = String(lg.change || '').replace(/\s+/g, ' ').trim();
+  if (!evs.length && !change) { toast('这一场没有可记的事'); return; }
+  const day = (clockState && typeof clockState.day === 'number') ? clockState.day : null;
+  try {
+    const list = await mem.list(sc.charId);
+    const had = new Set(list.filter(m => m && m.sourceKind === 'scene'
+      && String(m.sourceSceneId || '') === String(sc.id || '')).map(m => String(m.text || '')));
+    const rows = [];
+    for (const e of evs.slice(0, 8)) if (!had.has(e)) rows.push(e);
+    if (change && !had.has(change) && !rows.includes(change)) rows.push(change);
+    if (!rows.length) { toast('这几条之前已经记过了'); return; }
+    for (const text of rows) {
+      await mem.add({
+        id: uid(), charId: sc.charId, text,
+        kind: 'event', key: '', subject: 'world',
+        scope: 'scene', who: '',
+        quote: text.slice(0, 80), sourceKind: 'scene',
+        sourceMsgIds: [], sourceSceneId: String(sc.id || ''),
+        status: MEMORY_STATUS.DRAFT,   // ← 绝不自动提交
+        legacy: false, needsSplit: false,
+        ts: Date.now(), day
+      });
+    }
+    toast('记下 ' + rows.length + ' 条，去「已记住的事」里确认');
+  } catch { toast('写记忆失败，稍后再试'); }
+}
+
+/** 场记的 newSettings → 角色的「后来补的设定」（char.canonExtra，上限 1200 字） */
+async function commitSceneLogCanon(sc) {
+  const ns = (sc && sc.log && Array.isArray(sc.log.newSettings) ? sc.log.newSettings : [])
+    .map(x => String(x || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (!ns.length) { toast('这一场没有新确立的设定'); return; }
+  try {
+    const ch = await chars.get(sc.charId);
+    if (!ch) { toast('读不到这个角色了'); return; }
+    const cur = String(ch.canonExtra || '').trim();
+    const add = ns.filter(x => !cur.includes(x));
+    if (!add.length) { toast('这些设定之前已经写过了'); return; }
+    const next = (cur ? cur + '\n' : '') + add.map(x => '· ' + x).join('\n');
+    if (next.length > 1200) {
+      toast('「后来补的设定」已经满了（1200 字），先去角色编辑页删几条', 4200);
+      return;
+    }
+    ch.canonExtra = next;
+    ch.updatedAt = Date.now();
+    await chars.put(ch);
+    // 内存里那份也得跟着改：聊天侧拼稳定提示词用的是 curChar（缓存对象），
+    // 只写库的话，回聊天要等重启或切角色才生效 —— 「写进去了但没用」是这一版最怕的形态。
+    if (curChar && curChar.id === ch.id) curChar.canonExtra = ch.canonExtra;
+    toast('写进「后来补的设定」了');
+  } catch { toast('写失败，稍后再试'); }
+}
+
 function renderReadEnd(sc) {
   const end = $('rv-end');
   if (!end) return;
@@ -12194,6 +12355,8 @@ function renderReadEnd(sc) {
       + '</div>';
   } else if (done) {
     h += '<div class="rv-fin">本场完</div>';
+    // 场记（v0.5.3）：只在演完之后出现 —— 演到一半还没什么可记的
+    h += sceneLogHtml(sc);
   }
   if (sc.userMode === 'actor') {
     h += '<div class="rv-say"><input id="rv-say" placeholder="你这一句 / 你的动作" autocomplete="off">'
@@ -12208,6 +12371,19 @@ function renderReadEnd(sc) {
     say.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); onReadSay(); } };
     $('rv-say-go').onclick = onReadSay;
   }
+  // 场记的两个动作（v0.5.3）
+  const rk = $('rv-log-reckon');
+  if (rk) rk.onchange = async () => {
+    const s = await reloadScene();
+    if (!s) return;
+    s.canon = !!rk.checked;
+    s.updatedAt = Date.now();
+    await scenes.put(s);
+    _scNow = s;
+    renderReadEnd(s);
+  };
+  if ($('rv-log-mem')) $('rv-log-mem').onclick = () => commitSceneLogMem(_scNow || sc);
+  if ($('rv-log-canon')) $('rv-log-canon').onclick = () => commitSceneLogCanon(_scNow || sc);
   if ($('rv-fix-continue')) $('rv-fix-continue').onclick = () => continueScene('继续这一段，别重复已经写过的');
   if ($('rv-fix-rewrite')) $('rv-fix-rewrite').onclick = () => rewriteLastBeat();
   if ($('rv-fix-accept')) $('rv-fix-accept').onclick = async () => {
@@ -12493,7 +12669,13 @@ async function beginScene(sc) {
   // 底色快照（v0.5.2.4）：只在这一刻算一次，之后这一场不再读角色卡 / 世界书 / 记忆。
   // 算不出来也要能开演 —— 没有底色顶多写得泛一点，卡在这儿就是完全写不了。
   if (!sc.context) {
-    try { sc.context = await buildSceneContext(sc.charId, sc.id, sc); } catch { sc.context = ''; }
+    // v0.5.3：顺手记下「哪几块装不下被整条丢了」—— 存在卡上，结束页会明说，
+    // 不再只往 console 里打一行（评审 A 条「真丢了要显示不能只 console」）。
+    try {
+      const r = await buildSceneContext(sc.charId, sc.id, sc);
+      sc.context = r.text || '';
+      sc.ctxDropped = (r.dropped || []).slice(0, 8);
+    } catch { sc.context = ''; sc.ctxDropped = []; }
   }
   sc.updatedAt = Date.now();
   sc.status = 'generating';
@@ -14686,7 +14868,12 @@ function openMemEditor(memId, charId) {
     const kindOpts = MEMORY_KINDS.map(k =>
       '<option value="' + esc(k) + '"' + (String(m.kind || 'fact') === k ? ' selected' : '') + '>'
       + esc(MEMORY_KIND_NAME[k] || k) + '</option>').join('');
-    const scopeOpts = MEMORY_SCOPES.map(s =>
+    // ⚠️ v0.5.3（评审 P0-6）：手动记的「只在小说里」是个死选项 —— 它需要 sourceSceneId
+    //    才生效，而手动添加时根本不知道在哪一场，选了永远不会被注入。
+    //    只有【已经有】scene 作用域的记忆（小说场记写进来的）才把这个选项照实显示，
+    //    否则编辑时会把它静默改成「一直算数」。
+    const scopeList = MEMORY_SCOPES.filter(s => s !== 'scene' || String(m.scope || '') === 'scene');
+    const scopeOpts = scopeList.map(s =>
       '<option value="' + esc(s) + '"' + (String(m.scope || 'character') === s ? ' selected' : '') + '>'
       + esc(MEMORY_SCOPE_NAME[s] || s) + '</option>').join('');
     $('modal-text').innerHTML =
@@ -17164,10 +17351,12 @@ function bindEvents() {
   // 角色页：「他的设定」「他的居处」（v1.21.47，从 ⚙ 里搬过来的）
   fold('e-mine-fold', 'e-mine-wrap', refreshEditMineBrief);
   fold('e-home-fold', 'e-home-wrap', refreshEditMineBrief);
+  fold('e-canon-fold', 'e-canon-wrap', refreshEditMineBrief);   // 角色页：后来补的设定（v0.5.3）
   fold('e-addr-fold', 'e-addr-wrap', refreshEditAddrBrief);
   fold('name-fold', 'name-wrap', refreshNameHint);
   $('e-mine').oninput = refreshEditMineBrief;
   $('e-home').oninput = refreshEditMineBrief;
+  $('e-canon').oninput = refreshEditMineBrief;
   // 「填回默认」和设置页原来那个一样：只填进框，不直接落库
   $('btn-e-mine-reset').onclick = async () => {
     const ok = await confirmBox('填回默认内容',
@@ -17178,8 +17367,8 @@ function bindEvents() {
     refreshEditMineBrief();
     toast('已填回默认，记得点右上角 ✓ 保存');
   };
-  $('btn-e-mine-apply').onclick = () => openPickChars('myProfile', '他的设定', $('e-mine').value);
-  $('btn-e-home-apply').onclick = () => openPickChars('myEnv', '他的居处', $('e-home').value);
+  $('btn-e-mine-apply').onclick = () => openPickChars('myProfile', '你的设定', $('e-mine').value);
+  $('btn-e-home-apply').onclick = () => openPickChars('myEnv', '你的居处', $('e-home').value);
   // 人设 / 开场白：入口行 + 弹窗（v1.21.58）。
   // 这里只负责"把弹窗打开、确定后写回源框"，保存链路（saveCharEdit）不用知道。
   $('e-greeting-open').onclick = () => openTextEditor({
@@ -17585,7 +17774,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.2.5';
+const WEB_VERSION_FALLBACK = '0.5.3';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

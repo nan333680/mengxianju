@@ -26,11 +26,14 @@ export const SCENE_VER = 2;
  * 而聊天侧一直把全量 persona 放在稳定前缀里（用户已经长期在付这笔钱），
  * 所以小说侧给 5000 字人设并不越界：19 个角色里 14 个能整份进去。
  *
- * 8000 字 ≈ 5200 token，是聊天侧稳定前缀（芙兰朵露那张卡约 13000 字）的一半不到；
- * 一个 3～4 次调用的中场多花几分钱，换「同一张卡在聊天里和小说里像同一个人」。
+ * v0.5.3 抬到 11000：8000 时七块上限加起来（8700）本来就超过总量，
+ * 满卡必丢「这个世界的底色」—— 用户把设定写进世界书，小说里一个字都进不去。
+ * 11000 字 ≈ 7100 token，仍是聊天侧稳定前缀的一半左右；多花的那点钱换
+ * 「设定不会因为预算表打架而静默消失」。真装不下时的丢弃会写进 scene.ctxDropped，
+ * 在结束页明说丢了哪几块，不再只进 console。
  * 具体怎么分块、装不下丢谁，见 www/js/scenectx.js 的块级预算。
  */
-export const SCENE_CONTEXT_MAX = 8000;
+export const SCENE_CONTEXT_MAX = 11000;
 
 /** 两档长度：字数 = 上限，不是任务（§3） */
 export const SCENE_LENGTHS = {
@@ -77,10 +80,13 @@ export function emptyScene(charId = '') {
     targetChars: [300, 600],
     beats: [emptyBeat()],
     blocks: [],
-    log: { events: [], cast: [], change: '', openThreads: [], keyLines: [] },
+    log: { events: [], cast: [], change: '', openThreads: [], keyLines: [], newSettings: [] },
     status: 'draft',
     canon: false,
     context: '',
+    // v0.5.3：开戏装配时哪几块装不下被整条丢了（'world' / 'mem' / 'self'）。
+    // 存进卡里而不是只打 console —— 结束页要明说"这次丢了什么"，不能让用户猜。
+    ctxDropped: [],
     quality: 'ok',
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -164,6 +170,8 @@ export function normalizeScene(raw) {
   // 聊天被改了、分支切了、记忆被整理掉了，这场戏读到的还是当初那一份 ——
   // 和 source.excerpt 的快照隔离是同一个原则。
   out.context = S(a.context, SCENE_CONTEXT_MAX);
+  out.ctxDropped = (Array.isArray(a.ctxDropped) ? a.ctxDropped : [])
+    .map(x => String(x || '').trim()).filter(Boolean).slice(0, 8);
   out.status = SCENE_STATUS.includes(a.status) ? a.status : 'draft';
   out.canon = a.canon === true;
   out.quality = (a.quality === 'warn') ? 'warn' : 'ok';
@@ -221,7 +229,11 @@ function normalizeLog(raw) {
     cast: LINES(o.cast, 40, TEMP_CAST_MAX + 2),
     change: S(o.change, 300),
     openThreads: LINES(o.openThreads, 200, 20),
-    keyLines: LINES(o.keyLines, 200, 3)
+    keyLines: LINES(o.keyLines, 200, 3),
+    // v0.5.3：这一场【新确立的设定】（她左手有旧伤 / 码头归黑帮管 / 她开始怕水）。
+    // 和 events 的区别：events 是"发生过什么"，newSettings 是"从现在起什么为真"。
+    // 场记只负责把它读出来，写不写进角色设定由用户在结束页点。
+    newSettings: LINES(o.newSettings, 40, 3)
   };
 }
 
@@ -296,7 +308,9 @@ export const PROSE_BAN = [
   '总结一下', '以下是', '如果需要', '随时告诉我', '祝你',
   '这段文字', '本段', '字数：', '未完待续',
   '让我们一起', '不得不说', '值得一提的是', '总而言之',
-  '空气中弥漫着', '仿佛时间静止', '心中五味杂陈'
+  '空气中弥漫着', '仿佛时间静止', '心中五味杂陈',
+  // v0.5.3：客服腔的两个固定句式（评审给的，确实最常见）
+  '需要我做什么', '有什么可以帮你'
 ];
 
 const AI_TELL = [
@@ -529,10 +543,13 @@ export function sceneLogPrompt(text) {
     '  "cast": ["实际开口或被写到的人"],',
     '  "change": "这一场结束时，什么和开始时不一样",',
     '  "openThreads": ["没解决的事"],',
-    '  "keyLines": ["最多 3 句关键台词"]',
+    '  "keyLines": ["最多 3 句关键台词"],',
+    '  "newSettings": ["这一场新确立的设定，最多 3 条，每条不超过 40 字；没有就 []"]',
     '}',
     '',
     '不要编造正文里没有的事。',
+    'newSettings 只收【这一场之后一直成立】的事实（她左手有旧伤 / 码头归黑帮管 / 她开始怕水），',
+    '不收"这一场发生了什么"（那是 events）。没有新设定就给空数组。',
     '不要写评价。',
     '只输出 JSON。',
     '',

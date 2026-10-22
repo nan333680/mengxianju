@@ -644,9 +644,19 @@ const PRONOUN_LABEL = { he: '「他」', she: '「她」', ta: '「TA」', it: '
  * （小说里这一段叫「你怎么称呼他、怎么看他」，跟聊天一致）。
  * 两处各拼一份字符串 = 以后加字段一定只改一处，最后又变成"聊天里有、小说里没有"。
  *
+ * v0.5.3：加 opts.forScene。小说侧【不再】从这里拿指代规则 ——
+ * 聊天里「旁白指他用「他」」这句是对的（聊天没有别的旁白规则），
+ * 但小说里旁白指代由 scene.js 的 POV 一处决定（旁白「她」/台词「我」/对你「你」）。
+ * 两套规则同时进提示词，写出来就是一会儿「他」一会儿「你」。
+ * 所以 forScene 时只保留称呼、认知、态度（这些跟指代无关），删掉指代那两行。
+ *
+ * @param {Object} char 角色
+ * @param {Object} s 设置
+ * @param {{forScene?: boolean}} [opts]
  * @returns {string[]} 每条一行（不带标题、不带小标题说明）；全空返回 []
  */
-export function userSideLines(char, s) {
+export function userSideLines(char, s, opts) {
+  const o = (opts && typeof opts === 'object') ? opts : {};
   const c = char || {}, st = s || {};
   const name = String(st.userName || '').trim();
   const pron = String(st.userPronoun || 'you');
@@ -665,7 +675,9 @@ export function userSideLines(char, s) {
     lines.push('- 你叫他「' + addr + '」。这是你对他的固定叫法，别换成别的称呼。');
   }
   const pl = PRONOUN_LABEL[pron];
-  if (pl) {
+  if (o.forScene) {
+    // 小说侧：指代交给 scene.js 的 POV，这里一个字都不说（连带 name 那半句）
+  } else if (pl) {
     lines.push('- 旁白里指他用 ' + pl + '（不要写成「你」以外的性别，也不要写成「用户」）。');
     lines.push('- 你的台词里永远说「你」，不要把旁白那个第三人称带进说出来。');
   } else if (pron === 'name') {
@@ -753,6 +765,19 @@ export function buildStablePrompt(char, s, constWb) {
     parts.push('# 基础设定\n'
       + '（这些是这个世界的底色，一直成立、不用复述；跟它们冲突时以它们为准。）\n\n'
       + body);
+  }
+
+  // —— 后来补的设定（v0.5.3）——
+  // 起因：用户问过「后续补的设定能不能进记忆」。答案是【不能】——
+  //   记忆会被取代（同槽位新说法顶掉旧的）、会过期、还会被预算裁掉，
+  //   而设定必须一直稳定成立。所以给它单独一个家：char.canonExtra。
+  // 位置：常驻世界书之后、「关于对方」之前 —— 它压在世界书上面，
+  //   因为它就是"这个角色后来改过的主张"，比通用世界设定更该被听见。
+  const canonExtra = String((char && char.canonExtra) || '').trim();
+  if (canonExtra) {
+    parts.push('# 后来补的设定\n'
+      + '（这些是后来补的；和角色卡冲突时以这里为准。只对当前角色生效。）\n\n'
+      + canonExtra);
   }
 
   // 「我的设定」：全局一份，所有角色共用。放在角色设定之后 ——

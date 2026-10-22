@@ -584,6 +584,9 @@ const MK_CARD_KEYS = [
   //    （scene 曾经也被错划进这一组，v1.21.53 挪回来了：它是【角色的】当前情境 c.scene，
   //     写在角色对象上、跟着角色走，和"我是谁/我住哪"不同类。这段注释当时没跟着改，
   //     一直写着"三项不进卡"，和上面 MK_CARD_KEYS 里的 'scene' 自相矛盾 —— v1.21.54 更正。）
+  // ⚠️ v0.5.3：「后来补的设定」也是【角色的】设定（小说里新确立、之后进聊天与小说两边），
+  //    和 scene / appearance 同一类。不进卡的话，换台机器导回来她就不认这些事了。
+  'canonExtra',
 ];
 
 function mkParams(char) {
@@ -609,7 +612,7 @@ const STR_KEYS = {
   reasoningEffort: 32, verbosity: 32, descLevel: 32,
   detailDrive: 32, povStyle: 8, searchPolicy: 8, clockPolicy: 8,
 };
-const TEXT_KEYS = { appearance: 8000, appearanceLive: 8000, scene: 8000 };
+const TEXT_KEYS = { appearance: 8000, appearanceLive: 8000, scene: 8000, canonExtra: 4000 };
 
 function sanitizeParam(k, v) {
   if (TEXT_KEYS[k]) return typeof v === 'string' ? v.slice(0, TEXT_KEYS[k]) : undefined;

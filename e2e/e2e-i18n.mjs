@@ -271,9 +271,24 @@ const uiCjk = () => page.evaluate(() => {
   }
   return [...new Set(out)];
 });
+// ⚠️ 切视图后的文案是 innerHTML 拼出来再插进 DOM 的，英文模式下靠 MutationObserver
+//    （i18n.js 里 200ms 防抖）补翻。CI 的 runner 慢，固定 sleep(700) 有时翻不完 ——
+//    实测 CI 上「事实卡」那一屏会剩下「有 1 条旧记忆里装着好几件事…」「怎么拆」「6 条」
+//    「长期」这几条，本地同代码恒绿。所以这里轮询到「中文消失」为止（最多 6 秒），
+//    而不是把断言放宽：真缺翻译条目的话，轮询到超时一样会红。
+const waitNoCjk = async (ms = 6000) => {
+  const t0 = Date.now();
+  let last = [];
+  while (Date.now() - t0 < ms) {
+    last = await uiCjk();
+    if (!last.length) return last;
+    await sleep(200);
+  }
+  return last;
+};
 for (const [v, label] of [['list', '按人看'], ['time', '时间线'], ['key', '事实卡'], ['inbox', '待确认']]) {
   await page.evaluate(v => { const b = document.getElementById('mem-view-' + v); if (b) b.click(); }, v); await sleep(700);
-  const bad = await uiCjk();
+  const bad = await waitNoCjk();
   t('★ 记忆页「' + label + '」英文下不留中文', bad.length === 0, bad.slice(0, 5).join(' | '));
 }
 // 各视图都点过一遍之后，确认【真的渲染出东西了】—— 否则上面四条全是空屏假绿。

@@ -36,6 +36,13 @@ export function defaultMemoryTokens(text) {
 const KIND_ORDER = { goal: 0, relationship: 1, state: 2, event: 3, item: 4, belief: 5, fact: 6 };
 const KIND_WHY = { goal: '她想做但还没做到', relationship: '两人关系', state: '当前状态', event: '最近发生的', item: '物品', belief: '她以为的', fact: '较早的事实' };
 
+// 小说模式（v0.5.2.5）单独一套顺序：写一场戏要的是【此刻的张力】，
+// 不是编年史。event 排到最后、belief / item 提到前面 ——
+// 「她以为他是谁」「他手上还戴着那枚戒指」比「三个月前他们去过哪」更能推动这一场。
+// relationship / state 仍然最前：一场戏里的关系与状态就是张力本身。
+// goal 不放在最后：她想做但没做到的事，正是这一场最该被推的东西。
+const KIND_ORDER_SCENE = { relationship: 0, state: 1, goal: 2, belief: 3, item: 4, event: 5, fact: 6 };
+
 function statusReason(m) {
   const st = String((m && m.status) || '');
   if (st === MEMORY_STATUS.SUPERSEDED) return '已被取代';
@@ -72,10 +79,15 @@ function recency(m) {
  * @param {number} [opts.budgetTokens] 记忆块最多占多少 token
  * @param {number} [opts.nowDay] 当前剧情天数
  * @param {(t: string) => number} [opts.estimate] 自定义 token 估算
+ * @param {boolean} [opts.forScene] 这次是给【小说】挑（v0.5.2.5）：
+ *   scope='scene' 的记忆只有它自己那一场才进；kind 顺序也换成场景那套。
+ * @param {string} [opts.sceneId] 当前这一场的 id（配 forScene 用）
  * @returns {{used: any[], dropped: any[], tokens: number, limit: number, budget: number, nowDay: number}}
  */
 export function pickMemories(opts = {}) {
   const list = Array.isArray(opts.list) ? opts.list : [];
+  const forScene = opts.forScene === true;
+  const sceneId = String(opts.sceneId || '');
   const rawPath = opts.pathIds;
   const pathIds = rawPath instanceof Set ? rawPath : (Array.isArray(rawPath) ? new Set(rawPath) : null);
   const limit = Math.max(1, Math.floor(Number(opts.limit) || 20));
@@ -102,7 +114,16 @@ export function pickMemories(opts = {}) {
     // status 缺失 = v2 之前的老记录 / 老备份导入（没走过 normalizeMemory）→ 当 active。
     if (m.status && m.status !== MEMORY_STATUS.ACTIVE) { dropped.push({ id: m.id, text, reason: statusReason(m) }); continue; }
     const scope = String(m.scope || 'character');
-    if (scope === 'scene') { dropped.push({ id: m.id, text, reason: '只在小说里用' }); continue; }
+    // scope='scene'（v0.5.2.5）：原来这里一律丢掉，理由写「只在小说里用」——
+    // 可小说那边调用的也是这个函数，没有开关，于是这个 scope 变成只写不读的死字段。
+    // 现在：给小说挑的时候，只有【这一场自己产生的】才进；聊天侧维持丢弃。
+    if (scope === 'scene') {
+      const own = forScene && sceneId && String(m.sourceSceneId || '') === sceneId;
+      if (!own && m.pinned !== true) {
+        dropped.push({ id: m.id, text, reason: forScene ? '不是这一场里的' : '只在小说里用' });
+        continue;
+      }
+    }
     if (scope === 'branch' && !inBranch(m, pathIds)) { dropped.push({ id: m.id, text, reason: '不在这条故事线上' }); continue; }
     // 同文本只留一条：去重是写入时该做的事，走到这里说明库里已经有重复
     // （比如老备份导入），这时静默合并比报错有用。
@@ -111,12 +132,13 @@ export function pickMemories(opts = {}) {
     candidates.push(m);
   }
 
+  const order = forScene ? KIND_ORDER_SCENE : KIND_ORDER;
   candidates.sort((a, b) => {
     const pa = a.pinned === true ? 0 : 1;
     const pb = b.pinned === true ? 0 : 1;
     if (pa !== pb) return pa - pb;
-    const ka = KIND_ORDER[String(a.kind || 'fact')];
-    const kb = KIND_ORDER[String(b.kind || 'fact')];
+    const ka = order[String(a.kind || 'fact')];
+    const kb = order[String(b.kind || 'fact')];
     const oa = ka == null ? 6 : ka;
     const ob = kb == null ? 6 : kb;
     if (oa !== ob) return oa - ob;

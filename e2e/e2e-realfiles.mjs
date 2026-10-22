@@ -280,7 +280,9 @@ const putKey = () => page.evaluate(async () => {
   db.close();
 });
 await putKey();
-await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
+await page.reload({ waitUntil: 'networkidle0' });
+await page.waitForFunction(() => document.querySelectorAll('#char-list .char-card').length > 0, { timeout: 30000 }).catch(() => {});
+await sleep(600);
 
 console.log('');
 console.log('=== F. 群聊提示词：用真实数据看谁真进了请求 ===');

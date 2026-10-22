@@ -1,6 +1,7 @@
 import { kv, chars, msgs, mem, wb, scenes, uid, wipeAll, dbAdmin } from './db.js';
 import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
-import { buildStablePrompt, buildTurnNote, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR } from './persona.js';
+import { buildStablePrompt, buildTurnNote, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR, userSideLines } from './persona.js';
+import { assembleSceneContext, cleanExample, cutAtSentence } from './scenectx.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
 import { t, tt, applyI18n, watchI18n, setLang, getLang, getActiveLang, refreshLang, LANGS } from './i18n.js';
 // 角色卡（实验，v1.21.40）：解析与 PNG 打包都在这个独立文件里，
@@ -31,7 +32,7 @@ import { parseStRegexList, applyStRegex, previewOne } from './stregex.js';
 import { parseStChat, toMessages } from './stchat.js';
 // 小说层（v0.5.2）：场景卡的数据形状与纯逻辑全在 scene.js，
 // 出正文 / 出分镜 / 出场记在 scenegen.js，两边都不碰 DOM 也不碰数据库。
-import { SCENE_LENGTHS, USER_MODES, USER_MODE_NAME, SCENE_STATUS, GUARDRAILS_MAX, TEMP_CAST_MAX, TRASH_DAYS, SCENE_CONTEXT_MAX, emptyScene, emptyBeat, beatCountFor, clampBeats, normalizeScene, sceneNames, countChars, checkQuality, sceneWordCount, sceneFilled, textToBlocks, dialogueToNarration, newSceneId } from './scene.js';
+import { SCENE_LENGTHS, USER_MODES, USER_MODE_NAME, SCENE_STATUS, GUARDRAILS_MAX, TEMP_CAST_MAX, TRASH_DAYS, emptyScene, emptyBeat, beatCountFor, clampBeats, normalizeScene, sceneNames, countChars, checkQuality, sceneWordCount, sceneFilled, textToBlocks, dialogueToNarration, newSceneId } from './scene.js';
 import { genProse, genBeatPlan, genLog, genTempCast } from './scenegen.js';
 
 // ⚠️ 这里绝对不能 import '@capacitor/xxx'！
@@ -3635,6 +3636,52 @@ async function worldbookConst(charId) {
       const solo = await wb.solo(id);
       if (solo) take(solo.entries, '单独设定');
     } catch (e) { /* 同上 */ }
+  }
+  return out;
+}
+
+/**
+ * 小说模式专用的世界书取用（v0.5.2.5，只读、不碰滞回）。
+ *
+ * 为什么另写一个而不直接调 worldbookHits：
+ *   worldbookHits 会写 _wbHold（续期表），小说侧调一次就会把聊天侧「这条还能留两轮」
+ *   的计数打乱 —— 聊天和小说是两条线，不能共用一张滞回表。
+ *
+ * 为什么还要它：
+ *   worldbookConst 只取 pos === 'always'。真实卡（芙兰朵露）39 条世界书 pos 全是空，
+ *   一条常驻都没有 → 小说底色里「这个世界的底色」整块是空的。这些条目是靠
+ *   「你是谁 / 能力 / 水 / 地下室」这类提问触发，而开戏时没有对话可匹配。
+ *   这里用【场景卡自己写的字】（地点、时间、导演指令）去匹配一遍，
+ *   填了「地下室」就能带出地下室那条 —— 有就赚，没有不影响别的块。
+ */
+async function worldbookSceneHits(charId, text) {
+  if (S.worldbookOn === false || !charId || !text) return [];
+  const out = [];
+  const seen = new Set();
+  const scan = (entries, title) => {
+    for (const e of (entries || [])) {
+      if (!e || e.on === false || !e.content) continue;
+      if (e.needsReview === true) continue;
+      if (e.pos === 'always') continue;              // 常驻已由 worldbookConst 取走
+      if (!(e.keys || []).length) continue;
+      const key = e.id || e.title || title;
+      if (seen.has(key)) continue;
+      if (!hitKeys(e.keys, text, {
+        useRegex: e.useRegex === true, excludeKeys: e.excludeKeys,
+        caseSensitive: e.caseSensitive === true, wholeWords: e.wholeWords === true,
+        selective: e.selective === true, secondary: e.secondary, logic: e.logic,
+      })) continue;
+      seen.add(key);
+      out.push({ title: e.title || title, content: e.content, key });
+    }
+  };
+  const ids = wbEffectiveIds(charId);
+  try {
+    const groups = await wb.groups();
+    for (const g of groups) if (ids.some(id => (g.members || []).includes(id))) scan(g.entries, g.name || '角色组');
+  } catch (e) { /* 读不到就当没有 */ }
+  for (const id of ids) {
+    try { const solo = await wb.solo(id); if (solo) scan(solo.entries, '单独设定'); } catch (e) { /* 同上 */ }
   }
   return out;
 }
@@ -11778,62 +11825,149 @@ async function scChatSnapshot(charId) {
 }
 
 /**
- * 开戏那一刻的「底色」快照（v0.5.2.4）。
+ * 开戏那一刻的「底色」快照（v0.5.2.4 起，v0.5.2.5 改成块级装配）。
  *
  * 之前小说提示词里【只有名字】：角色叫「八云紫」，模型就拿一个通用的「她」往上写 ——
  * 这是评审里那句「把一个单场草稿生成器叫小说模式」的根。
- * 这里拼三样，加起来封顶 SCENE_CONTEXT_MAX 字：
- *   她是谁（人设 + 卡里带的性格/场景/说明 + 外貌）
- *   世界是什么底色（常驻世界书）
- *   你们之间已经发生过什么（记忆里 state / relationship / event 这几类）
  * 拼完存进 scene.context，这一场之后不再读库 —— 和 source.excerpt 一样是快照隔离。
+ *
+ * v0.5.2.5 两处改动（评审 P0-1 / P0-2）：
+ *   ① 不再「先拼再 slice(0, 2400)」：真实长卡上「她是谁」+「世界」就已经 3500 字，
+ *      最后那块记忆永远被切掉，切点还落在半句中间。现在交给 scenectx.js 做块级装配。
+ *   ② 补齐聊天侧有、小说侧一项都没读的资料：对话范例 / 关于对方 / 他住的地方 /
+ *      你怎么称呼他 ── 评审那句「小说里的『你』是空白、她的『声音』缺失」。
+ *      复用 userSideLines() 而不是另拼一份，理由见 persona.js 里那两个函数的注释。
+ *
+ * @param {string} charId
+ * @param {string} [sceneId] 当前这一场（scope='scene' 的记忆只认这一场自己产生的）
+ * @param {Object} [scene] 场景卡本身 —— 只用它写的「地点 / 时间 / 导演指令」去匹配世界书
  */
-async function buildSceneContext(charId) {
-  const parts = [];
+async function buildSceneContext(charId, sceneId, scene) {
   let ch = null;
   try { ch = await chars.get(charId); } catch { ch = null; }
   if (!ch) return '';
-  // —— 她是谁 ——
-  const who = [];
-  const persona = String(ch.persona || '').trim();
-  if (persona) who.push(persona.slice(0, 900));
+
   const cf = (ch.cardFields && typeof ch.cardFields === 'object') ? ch.cardFields : {};
-  if (cf.personality) who.push('【性格】' + String(cf.personality).slice(0, 200));
-  if (cf.scenario) who.push('【场景】' + String(cf.scenario).slice(0, 200));
-  if (cf.systemPrompt) who.push('【卡里给的角色说明】' + String(cf.systemPrompt).slice(0, 200));
-  if (cf.postHistory) who.push('【要一直记着的】' + String(cf.postHistory).slice(0, 200));
+  const parts = {};
+
+  // —— 她是谁 ——
+  // ⚠️ 块内自己分配额度（v0.5.2.5 第二稿）：整块 1100 字，人设占 700，
+  //    卡里那四项各 80、外貌 60。第一稿是"人设全量、卡字段排在后面"，
+  //    于是 950 字的真实人设把整块顶满，性格/场景/说明一个字都进不来 ——
+  //    用户填了卡字段、聊天里也生效，一到小说就整类消失，比少了更难受。
+  //    每一项都按句截，不切半句。
+  const who = [];
+  const cut = (v, n) => cutAtSentence(String(v == null ? '' : v), n);
+  const persona = cut(ch.persona, 5000);
+  if (persona) who.push(persona);
+  if (cf.personality) who.push('【性格】' + cut(cf.personality, 100));
+  if (cf.scenario) who.push('【场景】' + cut(cf.scenario, 100));
+  if (cf.systemPrompt) who.push('【卡里给的角色说明】' + cut(cf.systemPrompt, 100));
+  if (cf.postHistory) who.push('【要一直记着的】' + cut(cf.postHistory, 100));
   const look = String(ch.appearance || (ch.params && ch.params.appearance) || '').trim();
-  if (look) who.push('【外貌】' + look.slice(0, 200));
-  if (who.length) parts.push('# 她是谁\n' + who.join('\n'));
+  if (look) who.push('【外貌】' + cut(look, 100));
+  parts.self = who.join('\n');
+
+  // —— 她说话的样子（卡里的对话范例，聊天侧一直有、小说侧以前没有） ——
+  if (cf.mesExample) {
+    const ex = cleanExample(cf.mesExample, 450);
+    // 说明只学"怎么说话"，不学"说什么"：范例里的用户台词不该被当成她的口吻
+    if (ex) parts.voice = '（这是她以前说话的样子。只学句长、停顿、动作和台词的比例；不要照抄内容，也别把「名字：」这种格式带进正文）\n' + ex;
+  }
+
+  // —— 你怎么称呼他、怎么看他（复用聊天侧那份结构化条目） ——
+  try {
+    const ul = userSideLines(ch, S);
+    if (ul && ul.length) parts.user = ul.join('\n');
+  } catch { /* 拿不到就不带 */ }
+
+  // —— 关于对方 / 他住的地方 ——
+  // 回落规则与 persona.js 的 buildStablePrompt 一致：角色级优先，没设过才用全局那份。
+  const profile = String((ch.myProfile !== undefined && ch.myProfile !== null)
+    ? ch.myProfile : (S.myProfile || '')).trim();
+  if (profile) parts.profile = profile;
+  const env = String((ch.myEnv !== undefined && ch.myEnv !== null)
+    ? ch.myEnv : (S.myEnv || '')).trim();
+  if (env) parts.env = env;
 
   // —— 世界的底色 ——
-  // 只收「基础设定」那一档（worldbookConst），不收关键词命中的：
-  // 命中的条目一场一变，塞进快照就会跟开戏那一刻看到的东西对不上。
+  // 两路来源，都进同一块：
+  //   ① 常驻（pos === 'always'）—— 聊天侧进稳定前缀的那一批；
+  //   ② 用场景卡自己写的字（地点 / 时间 / 导演指令）命中关键词的（v0.5.2.5）。
+  //      为什么补第 ② 路：真实卡（芙兰朵露）39 条世界书 pos 全是空、一条常驻都没有，
+  //      于是整个「世界底色」块是空的 —— 而那些条目全靠「你是谁 / 水 / 地下室」这类
+  //      提问触发，开戏时没有对话可匹配。填了「地下室」就带出地下室那条，有就赚。
+  // 场景命中的条目在开戏那一刻定下来、写进快照，之后不再变 ——
+  // 所以不存在「快照和这一刻看到的东西对不上」。
   try {
     const wbC = await worldbookConst(charId);
-    if (wbC && wbC.length) {
-      const body = wbC.slice(0, 6)
-        .map(h => '【' + (h.title || '设定') + '】\n' + String(h.content || '').slice(0, 260))
-        .join('\n\n');
-      if (body) parts.push('# 这个世界的底色\n' + body);
+    let wbH = [];
+    if (scene) {
+      const probe = [scene.setting && scene.setting.place, scene.setting && scene.setting.time,
+        scene.directive, scene.userLine].map(x => String(x || '')).join(' ').trim();
+      if (probe) wbH = await worldbookSceneHits(charId, probe);
+    }
+    const picked = [];
+    const seenW = new Set();
+    for (const h of (wbC || []).concat(wbH || [])) {
+      const k = h.key || h.title;
+      if (seenW.has(k)) continue;
+      seenW.add(k);
+      picked.push(h);
+    }
+    if (picked.length) {
+      // 整条装入：装不下就停下来，绝不留半条（半条世界书比没有更危险 ——
+      // 模型会拿"这一带的芦苇荡比人高，芦苇荡后面…"这半句自己往下编）。
+      // ⚠️ 单条【不截断】：截一条就等于喂了半条设定，模型会拿半句自己往下编。
+      //    装不下就整条跳过（连同它后面的），宁可少一条世界书。
+      const ws = [];
+      let wn = 0;
+      for (const h of picked.slice(0, 8)) {
+        const item = '【' + (h.title || '设定') + '】' + String(h.content || '').trim();
+        if (wn + item.length + 2 > 900) break;
+        ws.push(item);
+        wn += item.length + 2;
+      }
+      if (ws.length) parts.world = ws.join('\n\n');
     }
   } catch { /* 世界书读不到就不带 */ }
 
   // —— 已经发生过的事 ——
+  // v0.5.2.5：去掉 kind 白名单（原来只剩 state/relationship/event/goal/fact，
+  // 把 item / belief 两类整类丢了 —— 而"她的东西"「她以为的事」正是小说最抓人的素材）；
+  // 并且传 pathIds + forScene：原来 inBranch 收到 null 一律放行，A 支的记忆会漏到 B 支。
   try {
     const all = await mem.list(charId);
-    const keep = all.filter(m => m && m.text && m.status !== 'deleted' && m.status !== 'draft'
-      && ['state', 'relationship', 'event', 'goal', 'fact'].includes(String(m.kind || 'fact')));
+    const keep = all.filter(m => m && m.text && m.status !== 'deleted' && m.status !== 'draft');
+    let pathIds = null;
+    try {
+      const path = await curMsgsAll(charId);
+      pathIds = new Set(path.map(m => m.id));
+    } catch { pathIds = null; }
     const picked = pickMemories({
       list: keep, limit: 10, budgetTokens: 420,
+      pathIds, forScene: true, sceneId: String(sceneId || ''),
       estimate: t => estimateMsgTokens({ content: t })
     });
+    // 同样整行装入（memoryBlockText 一行一条）
     const txt = memoryBlockText(picked.used);
-    if (txt) parts.push('# 你们之间已经这样了\n' + txt);
+    if (txt) {
+      const ls = [];
+      let mn = 0;
+      for (const line of txt.split('\n')) {
+        if (mn + line.length + 1 > 550) break;
+        ls.push(line);
+        mn += line.length + 1;
+      }
+      if (ls.length) parts.mem = ls.join('\n');
+    }
   } catch { /* 记忆读不到就不带 */ }
 
-  const out = parts.join('\n\n').trim();
-  return out.length > SCENE_CONTEXT_MAX ? out.slice(0, SCENE_CONTEXT_MAX) : out;
+  const out = assembleSceneContext(parts);
+  if (out.dropped.length) {
+    try { console.info('[sceneCtx] 装不下，整条丢掉：' + out.dropped.map(d => d.key).join(',')); } catch { }
+  }
+  return out.text;
 }
 
 /** 弹窗里填的东西 → 一张场景卡（不落库）。char 读不到时也要能返回一张能用的空卡。 */
@@ -12359,7 +12493,7 @@ async function beginScene(sc) {
   // 底色快照（v0.5.2.4）：只在这一刻算一次，之后这一场不再读角色卡 / 世界书 / 记忆。
   // 算不出来也要能开演 —— 没有底色顶多写得泛一点，卡在这儿就是完全写不了。
   if (!sc.context) {
-    try { sc.context = await buildSceneContext(sc.charId); } catch { sc.context = ''; }
+    try { sc.context = await buildSceneContext(sc.charId, sc.id, sc); } catch { sc.context = ''; }
   }
   sc.updatedAt = Date.now();
   sc.status = 'generating';
@@ -17451,7 +17585,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.2.4';
+const WEB_VERSION_FALLBACK = '0.5.2.5';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

@@ -324,7 +324,7 @@ const ctxSaved = await page.evaluate(async () => {
   return (all[0] && all[0].context) || '';
 });
 t('底色快照存进了场景卡', ctxSaved.length > 20, JSON.stringify(ctxSaved.slice(0, 80)));
-t('快照不超过 2400 字上限', ctxSaved.length <= 2400, String(ctxSaved.length));
+t('快照不超过 8000 字上限', ctxSaved.length <= 8000, String(ctxSaved.length));
 
 // ---------- 9. 导演模式 ----------
 console.log('=== 9. 导演模式 ===');

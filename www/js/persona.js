@@ -636,7 +636,17 @@ const GROUP_USE = '（下面是这个场合和在场的人 —— 你是其中�
  *    默认必须与 v0.5.1 的提示词逐字相同，否则所有老角色的行为都会被动到。
  */
 const PRONOUN_LABEL = { he: '「他」', she: '「她」', ta: '「TA」', it: '「它」' };
-function userAddressBlock(char, s) {
+
+/**
+ * 「你怎么称呼他、怎么看他」的条目本身（v0.5.2.5 从 userAddressBlock 里拆出来）。
+ *
+ * 拆出来的理由：小说模式要用同一份内容，但标题要由自己那块来控制
+ * （小说里这一段叫「你怎么称呼他、怎么看他」，跟聊天一致）。
+ * 两处各拼一份字符串 = 以后加字段一定只改一处，最后又变成"聊天里有、小说里没有"。
+ *
+ * @returns {string[]} 每条一行（不带标题、不带小标题说明）；全空返回 []
+ */
+export function userSideLines(char, s) {
   const c = char || {}, st = s || {};
   const name = String(st.userName || '').trim();
   const pron = String(st.userPronoun || 'you');
@@ -669,6 +679,17 @@ function userAddressBlock(char, s) {
   if (perc) lines.push('- 你以为他是：' + perc);
   if (know) lines.push('- 关于他，你知道 / 不知道：' + know);
   if (att) lines.push('- 你对他：' + att);
+  return lines;
+}
+
+/**
+ * 聊天侧用的完整块（带标题与说明）。
+ *
+ * ⚠️ 全空返回空串（调用方据此决定要不要 push 这一段）：
+ *    默认必须与 v0.5.1 的提示词逐字相同，否则所有老角色的行为都会被动到。
+ */
+function userAddressBlock(char, s) {
+  const lines = userSideLines(char, s);
   if (!lines.length) return '';
   return '# 你怎么称呼他、怎么看他\n'
     + '（这一节只管措辞和认知，不改变任何情节。空着的事就是【你不知道】，不要替他补。）\n'

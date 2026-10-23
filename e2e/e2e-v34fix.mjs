@@ -228,7 +228,7 @@ console.log('=== 新4 描写档与驱动档各自独立（v0.4.3.3 起不再按�
   });
   await sleep(800);
   await send('测试降级');
-  const has8 = sysAll.includes('不超过 8 个字');
+  const has8 = sysAll.includes('不超过 20 个字');
   const hasChain = sysAll.includes('动作链');
   const hasDowngrade = sysAll.includes('按最低档执行');
   console.log('   8字上限=' + has8 + ' 动作链=' + hasChain + ' 降级说明=' + hasDowngrade);

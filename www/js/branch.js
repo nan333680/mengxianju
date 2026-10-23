@@ -40,9 +40,65 @@ export async function seedParents(charId) {
   // 一条都不缺的时候它就是一次 getAll + 一次遍历，没有任何写入。
   const all = await msgs.list(charId, 0, true);
   const sorted = all.slice().sort((a, b) => ts(a) - ts(b));
-  const missing = sorted.filter(m => typeof m.parentId !== 'string');
+  // ⚠️ parentId 是【空字符串】也算缺父（v0.5.3.1 修）。
+  //
+  // 起因（一份 40 条消息的真实备份）：这些消息其实有两个根 ——
+  // 一棵 29 条的子树，和一棵 11 条的子树的根，它的 parentId 是 ''（不是 undefined）。
+  // 老判据 typeof m.parentId !== 'string' 放过了空串，于是这 11 条永远接不回去：
+  // pathTo 走到那个空串就停，屏幕上只剩这 11 条，前 29 条「消失」（其实都在库里）。
+  // 空串是 send() 给【第一条消息】用的合法值，所以要留一个例外：
+  // ts 最早的那条【本来就该是根】，它的空 parentId 是对的，不修。
+  const rootId = sorted.length ? sorted[0].id : '';
+  // 两种「缺父」的接法【不一样】，混着用一种会出事：
+  //
+  // ① 假根（parentId 是空字符串，但不是最早那条）—— 时间位置是真的，只是链断了。
+  //    接【时间上紧邻的前一条】。
+  //    那份备份就是这一种：11 条子树的头挂着 ''，它前面那条（29 条链的末端）
+  //    才是它真正该接的地方。
+  //    ⚠️ 不能接「链末端」：那棵子树的头后面本来就接着自己的孩子（d4.parentId = d3），
+  //    再把它接到 d4 上就成环，pathTo 原地打转、屏幕只剩 2 条（e2e-branchui 的 bui2）。
+  // ② 孤儿（parentId 根本不是字符串）—— 从没写过父节点。接【已连好那条链的末端】
+  //    （v0.5.1.4 的结论，理由见下面那段）。
+  // 接点不能是自己的子孙（否则成环）。判据用的是【修之前】的父指针。
+  const rawParent = new Map(sorted.map(m => [m.id, m.parentId]));
+  const isDescendant = (candId, mId) => {
+    let cur = candId; const seen = new Set();
+    while (typeof cur === 'string' && cur && !seen.has(cur)) {
+      seen.add(cur); if (cur === mId) return true; cur = rawParent.get(cur);
+    }
+    return false;
+  };
+  // 断掉的父指针有两种形态，都算「假根」：空串，和指向一条已经不存在的消息（那条被删了）。
+  // 那份 253 条消息的备份里就有一条指着已删 id 的，80 条因此看不见。
+  const idMap = new Map(sorted.map(m => [m.id, m]));
+  const isFakeRoot = m => m.id !== rootId && (m.parentId === '' || (typeof m.parentId === 'string' && !idMap.has(m.parentId)));
+  const isOrphan = m => m.id !== rootId && typeof m.parentId !== 'string';
+  // 最早那条如果是 undefined（老数据 / 测试 seed 常见），补成空串。
+  // 三种「缺父」统一成字符串，siblings() 按 parentId 分组才分得对；
+  // 它本身是根，空串就是它该有的值（send() 给第一条消息写的也是这个）。
+  const rootFix = (sorted.length && typeof sorted[0].parentId !== 'string') ? sorted[0] : null;
+  const fakeRoots = [];
+  const orphans = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const m = sorted[i];
+    if (isFakeRoot(m)) fakeRoots.push(i);
+    else if (isOrphan(m)) orphans.push(m);
+  }
+  const missing = (rootFix ? [rootFix] : []).concat(fakeRoots.map(i => sorted[i]), orphans);
   if (missing.length) {
-    // ⚠️ 孤儿的接法：整串接在【已连好的链末端】，不要按 ts 往中间插（v0.5.1.4 修）。
+    if (rootFix) rootFix.parentId = '';
+    // ① 假根：接到时间上最靠近的前一条（按 ts 顺序，不是按链顺序）。
+    // 但不能接到自己的子孙上 —— 那会接成环。
+    // 同一份备份里还有 3 个空串假根，其中一个的前一条正好在它自己的子树里，
+    // 照直接过去就成了环，253 条里从末条只走得到 173 条。
+    for (const i of fakeRoots) {
+      let prev = '';
+      for (let k = i - 1; k >= 0; k--) {
+        if (!isDescendant(sorted[k].id, sorted[i].id)) { prev = sorted[k].id; break; }
+      }
+      sorted[i].parentId = prev;
+    }
+    // ② 孤儿：整串接在【已连好的链末端】，不要按 ts 往中间插（v0.5.1.4 修）。
     //
     // 起因（e2e-new 的「找到中间那条 AI 消息」一直是 idx=-1）：测试往库里塞的
     // rw-a/b/c 没有 parentId，而 ts 恰好落在两条老消息【之间】。按 ts 混排着串，
@@ -51,9 +107,12 @@ export async function seedParents(charId) {
     //
     // 语义上也不该按 ts 插：已经连好的链是【定型的】，孤儿是刚被直接写进库的东西
     // （导入旧备份 / 同步 / 测试 seed），它只可能是"接着往下发生的"。所以接在末端。
-    const linked = sorted.filter(m => typeof m.parentId === 'string');
+    // 末端要排除这一趟修过的假根（它们已经有父了，不该再算链接尾）。
+    const orphSet = new Set(orphans.map(m => m.id));
+    const fakeSet = new Set(fakeRoots.map(i => sorted[i].id));
+    const linked = sorted.filter(m => !orphSet.has(m.id) && !fakeSet.has(m.id));
     let prev = linked.length ? linked[linked.length - 1].id : '';
-    for (const m of missing) { m.parentId = prev; prev = m.id; }
+    for (const m of orphans) { m.parentId = prev; prev = m.id; }
     await msgs.addMany(missing);
     // 补完链还要把活动叶子跟到末端（v0.5.1.4）。
     // 缺 parentId = 刚被直接写进库的东西（导入 / 同步 / 测试 seed），它一定是【新的】；
@@ -70,9 +129,13 @@ export async function seedParents(charId) {
     // 边界：叶子停在【链尾】= 用户没手动选过旧分支（或者选的就是最新那条），
     // 跟上新补的这一串是本分；叶子停在链中间 = 用户明确切到了某一支，
     // 那就一条不许动 —— 补消息不该把人家正在看的分支抢走。
+    // ⚠️ 只有【孤儿】要把叶子推过去（v0.5.3.1）。
+    // 假根修完仍然长在链中间（上面有父、下面有孩子），叶子本来就指向它那条线的末端，
+    // 推了反而把用户的视线从最新那条挪走 —— e2e-branchui 的 bui2 就是这样：
+    // leaf=d4，若按 missing 末（d3）去写，屏幕上会从 4 条变成 3 条、最后一条消失。
     const cur = await kv.get(leafKey(charId), '');
     const tailOfLinked = linked.length ? linked[linked.length - 1].id : '';
-    if ((!cur || cur === tailOfLinked) && missing.length) await kv.set(leafKey(charId), missing[missing.length - 1].id);
+    if (orphans.length && (!cur || cur === tailOfLinked)) await kv.set(leafKey(charId), orphans[orphans.length - 1].id);
   }
   // 标记只用来回答"这个角色串过链没有"，不再当开关用（理由见上面）。
   if (missing.length && !(await kv.get(seededKey(charId), false))) await kv.set(seededKey(charId), true);

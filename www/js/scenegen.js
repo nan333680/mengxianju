@@ -13,7 +13,7 @@
 import { streamChat, onceChat } from './api.js';
 import {
   sceneProsePrompt, sceneBeatPlanPrompt, sceneLogPrompt, tempCastPrompt,
-  parseJsonLoose, checkQuality
+  parseJsonLoose, checkQuality, beatChars
 } from './scene.js';
 
 function baseOf(cfg) {
@@ -51,14 +51,17 @@ export async function genProse(o) {
     beatIdx, prevText, userLine, directive, context, log,
     fixup: (o && o.fixup) || ''
   });
-  const L = (scene && scene.targetChars) || [300, 600];
+  // 多拍时按【一拍】的额度要 token（v0.5.3.1）：整场 8000 字一次要一万八千 token，
+  // maxTokensFor 上限 8000 会把尾巴截断 —— 而后几拍本来就是另外几次请求。
+  const per = beatChars(scene && scene.length);
+  const capChars = Math.max(per.max, Number(scene && scene.targetChars && scene.targetChars[1]) || 600);
   let text = '';
   let finish = '';
   const it = streamChat({
     ...baseOf(cfg),
     messages: [{ role: 'system', content: prompt }],
     temperature: Number((cfg && cfg.temperature) || 0.9),
-    maxTokens: maxTokensFor(L[1] || 600),
+    maxTokens: maxTokensFor(capChars),
     reasoningEffort: 'none',
     signal,
     onFinish: fr => { finish = String(fr || ''); }
@@ -68,7 +71,7 @@ export async function genProse(o) {
     if (onDelta) { try { onDelta(text); } catch { /* 回调出错不该打断生成 */ } }
   }
   const trimmed = text.trim();
-  const quality = checkQuality(trimmed, scene);
+  const quality = checkQuality(trimmed, scene, beatIdx);
   return {
     text: trimmed,
     finish,
@@ -78,14 +81,14 @@ export async function genProse(o) {
   };
 }
 
-/** 中场：先出 1~2 拍分镜（JSON）。解析失败返回 null，由调用方决定重试还是让用户手写。 */
+/** 分镜：按档位出 1–5 拍（JSON）。解析失败返回 null，由调用方决定重试还是让用户手写。 */
 export async function genBeatPlan(o) {
   const { scene, cfg } = o || {};
   const raw = await onceChat({
     ...baseOf(cfg),
     messages: [{ role: 'system', content: sceneBeatPlanPrompt(scene) }],
     temperature: 0.7,
-    maxTokens: 1400,
+    maxTokens: 2200,   // 5 拍（整章档）的 JSON 也要装得下
     noThink: true,
     timeoutMs: 120000
   });

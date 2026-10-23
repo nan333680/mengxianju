@@ -15,11 +15,15 @@ let pass = 0, fail = 0;
 const t = (n, ok, ex = '') => { if (ok) { pass++; console.log('  OK   ' + n); } else { fail++; console.log('  FAIL ' + n + (ex ? '  -> ' + ex : '')); } };
 const readOr = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
 
-// www/js 下没有 package.json，.js 会被 node 当 CJS 解析 —— 复制成 .mjs 再 import。
-// api.js 是自包含的（无 import），所以放到临时目录也不会断依赖。
-const tmp = path.join(os.tmpdir(), 'e2e-ctxbudget-api-' + process.pid + '.mjs');
-fs.copyFileSync(path.join(R, 'www/js/api.js'), tmp);
-const api = await import(pathToFileURL(tmp).href);
+// 拷到临时目录再 import：相对 import 会按【临时目录】解析。
+// ⚠️ 原来只拷 api.js 一个文件（那时它是自包含的）；v0.5.3.2 起 api.js 多了
+//    `import { kindOfStatus } from './errorkit.js'` —— 只拷一个就 ERR_MODULE_NOT_FOUND，
+//    整套 0.2 秒退出码 1。所以整个 js 目录一起拷，以后再加相对 import 也不会崩。
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-ctxbudget-api-'));
+for (const f of fs.readdirSync(path.join(R, 'www/js'))) {
+  if (f.endsWith('.js')) fs.copyFileSync(path.join(R, 'www/js', f), path.join(tmpDir, f));
+}
+const api = await import(pathToFileURL(path.join(tmpDir, 'api.js')).href);
 
 console.log('=== 1. estimateTokens：中文贵、英文便宜、空的是 0 ===');
 t('空串 = 0', api.estimateTokens('') === 0);

@@ -607,7 +607,12 @@ const BY_ZH = {
   // v0.5.0.2：推进 / 状态 / 群聊各人的目的 / 删卡
   '现在演到': 'Now at',
   '还没拍': 'No beats yet',
-  '这一拍演完了 →': 'This beat is done →',
+  '演下一拍 →': 'Next beat →',
+  // ⚠️ v0.5.3.2（清单 §7.5）：剧情卡默认只露三个字段
+  '目标 · 卡点 · 转折 · 结果': 'Goal · obstacle · turn · result',
+  '更多设置': 'More settings',
+  '回聊天里看这句': 'Find it in the chat',
+  '这段叫什么、各人的目的、自动判定、删掉这张卡': 'Name, agendas, auto-detect, delete this card',
   '这一段演完了 →': 'This arc is done →',
   '点右边那颗 = 这一拍收尾、立刻保存、走到下一拍。每拍下面写的「结果」会进下一轮的提示词。':
     'Tap the one on the right to close this beat, save it right away and move on. What you write under Result feeds into the next turn.',
@@ -640,6 +645,12 @@ const BY_ZH = {
   '这段聊天还没什么内容，按空白开戏写': 'This chat has nothing to draw on yet - starting blank.',
   '短 · 300–600 字': 'Short · 300–600 chars',
   '中 · 600–1200 字': 'Medium · 600–1200 chars',
+  '长 · 2000–4000 字': 'Long · 2000–4000 chars',
+  '章 · 4000–8000 字': 'Chapter · 4000–8000 chars',
+  // v0.5.3.1：场记「记进记忆」灰着时旁边的说明。
+  '先勾上「这一场算正史」': 'Tick "this scene is canon" first',
+  '会写成待确认的记忆，去「已记住的事」里确认':
+    'Saved as a pending memory - confirm it under Things she remembers',
   '你在场：你自己那句由你写，她、旁白、临时人物由模型写。模型不替你说话。':
     'You are in the scene: you write your own lines; she, the narration and the temporary people are written by the model. It never speaks for you.',
   '你不在场：你输入的是导演指令（不进正文、不进记忆），正文里不出现「你」。':
@@ -671,6 +682,21 @@ const BY_ZH = {
   '分拍没成，先按一拍写': 'Could not split it — writing it as one beat',
   '在重新分拍…': 'Splitting again…',
   '还是没分好': 'Still could not split it',
+  // ⚠️ v0.5.3.2（清单 §3.2）：空状态 L1 / 配 Key sheet / 示例卡预览。
+  //    静态标注靠 index.html 的 data-i18n-en*，这里补的是 app.js 拼出来的那些
+  //    （空态是纯 JS 串，扫不到；ksResult 虽然会进 DOM，但先登记才翻得动）。
+  '导入一张角色卡': 'Import a character card',
+  '没有卡？': 'No card?',
+  '先试这张 →': 'Try this one →',
+  '也可以点左上角 ☰ → 角色列表 → 右上角 ＋ 自己建一个。':
+    'Or tap ☰ top-left → Characters → ＋ top-right to create one yourself.',
+  '示例角色': 'Sample character',
+  '先把 Key 粘进来': 'Paste the key first',
+  '正在连…': 'Connecting…',
+  '通了': 'Connected',
+  'Key 存好了，可以说话了': 'Key saved — you can start talking',
+  '建不了：': 'Could not create it: ',
+  '还没试过': 'Not tested yet',
   '删除这一场': 'Delete this scene',
   '删除': 'Delete',
   '已经和那段聊天断开了，正文还在': 'Detached from that chat; the prose stays',
@@ -931,6 +957,8 @@ const BY_PATTERN = [
   [/^第 (\d+) 拍$/, (m) => 'Beat ' + m[1]],
   [/^删掉第 (\d+) 拍？$/, (m) => 'Delete beat ' + m[1] + '?'],
   [/^演到第 (\d+) 拍$/, (m) => 'Now at beat ' + m[1]],
+  // v0.5.3.2：那一行摘要后面跟着「 · 已写 N 项」
+  [/^ · 已写 (\d+) 项$/, (m) => ' · ' + m[1] + ' filled'],
   // v0.5.0.4：下面这几条都是「固定词 + 数字」拼出来的完整句子，精确表里放不下
   [/^演了 (\d+) 轮 \/ 至少 (\d+) 轮$/, (m) => 'played ' + m[1] + (m[1] === '1' ? ' round' : ' rounds') + ' / at least ' + m[2]],
   [/^这一拍才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,

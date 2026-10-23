@@ -3,7 +3,7 @@
 // 覆盖规格 §13 的验收里【能自动化】的那些：
 //   1. 抽屉里两个入口（写一场戏 / 书架），没有「小说」标签页
 //   2. 书架空态
-//   3. 开戏弹窗：角色 / 两档长度 / 三种在场方式 / 临时人物上限 2
+//   3. 开戏弹窗：角色 / 四档长度 / 三种在场方式 / 临时人物上限 2
 //   4. 短场：1 次正文 + 1 次场记 -> status done，blocks 与 log 都落库
 //   5. 正文【不进 messages】（硬规则）
 //   6. 质量闸门：字数不够 -> 只自动重试一次，第二次把原因写进提示词
@@ -188,7 +188,12 @@ await click('[data-wb-drawer="scene"]');
 await sleep(500);
 t('弹窗打开', await visible('#scn-modal'));
 t('角色下拉里有红白', await page.evaluate(() => { const s = document.getElementById('sc-char'); return !!s && Array.from(s.options).some(o => o.textContent.indexOf('红白') >= 0); }));
-t('两档长度', await page.evaluate(() => document.querySelectorAll('#sc-len button').length === 2));
+// v0.5.3.1：300–600 / 600–1200 是片段，2000–4000 / 4000–8000 是分 3–5 拍分批写的。
+t('四档长度', await page.evaluate(() => document.querySelectorAll('#sc-len button').length === 4));
+t('长档和整章档都在', await page.evaluate(() => {
+  const v = [...document.querySelectorAll('#sc-len button')].map(b => b.textContent.trim()).join('|');
+  return v.includes('2000–4000') && v.includes('4000–8000');
+}));
 t('三种在场方式', await page.evaluate(() => document.querySelectorAll('#sc-mode button').length === 3));
 t('临时人物上限写着 0 / 2', (await page.evaluate(() => (document.getElementById('sc-temp-cnt') || {}).textContent || '')).replace(/\s/g, '') === '0/2');
 
@@ -406,14 +411,76 @@ await click('#sc-go');
 await page.waitForFunction(() => { const e = document.getElementById('rv-body'); return !!e && e.textContent.indexOf('雨还在下') >= 0; }, { timeout: 25000 }).catch(() => {});
 await sleep(600);
 const chatReq = await page.evaluate(() => (window.__fake.chat[0] || {}).sys || '');
-t('正文提示词里带上了【前情】段', chatReq.indexOf('【前情（从你们的聊天里截的，只当背景）】') >= 0);
+// v0.5.3.1：这段的口径从「只当背景」改成「当素材，把它写成正文」——
+// 当背景的结果是模型另起一件不相干的事来写，他要的是「把我选的这段写成小说」。
+t('正文提示词里带上了【素材】段', chatReq.indexOf('【素材：你们聊天里的一段】') >= 0);
 t('前情里是那段聊天的原文', chatReq.indexOf('钥匙还在你那儿吧') >= 0, chatReq.slice(0, 60));
-t('前情明写「不要复述它」', chatReq.indexOf('不要复述它') >= 0);
+t('前情明写这是素材、要铺成正文', chatReq.indexOf('把其中发生过的事写成正文') >= 0);
+t('前情明写不要另起一件无关的事', chatReq.indexOf('不要另起一件和它无关的事') >= 0);
 scs = await dbScenes();
 const chatScene = scs.find(s => s.status !== 'trashed');
 t('场景卡记着它是从聊天派生的', !!chatScene && chatScene.source.kind === 'chat' && chatScene.source.chatCharId === 'sc1', JSON.stringify(chatScene && chatScene.source));
 t('快照里存着截下来的消息 id', !!chatScene && chatScene.source.msgIds.length >= 1, chatScene ? String(chatScene.source.msgIds.length) : 'none');
 t('从聊天派生也不往聊天里写一个字', (await dbMsgCount()) === msgBefore3, 'before=' + msgBefore3 + ' after=' + (await dbMsgCount()));
+
+// ---------- 12e. 以这段写小说：选段 + 完整喂入（v0.5.3.1）----------
+console.log('=== 12e. 以这段写小说 ===');
+// 种 40 条、每条 ~75 字，总长 3000 字上下 —— 远超老实现那 1800 字的硬截线。
+// 老实现固定取「活动路径最后 30 条」再截 1800 字，他选的那段根本进不去，
+// 正文自然对不上（评审 P0-2）。
+// ⚠️ parentId 必须写死成一条链：交给 seedParents 去串是不可靠的 ——
+//    它按「孤儿整串接在已连好链的末端」补，而老的两条已经连好，
+//    新串接在它们后面，叶子却还指在中间，渲染出来的还是老的两条。
+//    ts 也放到未来：这样链末端才是 sel40，谁都不用去推叶子。
+const many = [];
+for (let i = 1; i <= 40; i++) {
+  many.push({ id: 'sel' + i, charId: 'sc1', role: (i % 2) ? 'user' : 'assistant',
+    parentId: i === 1 ? 'c2' : ('sel' + (i - 1)),
+    content: '第' + i + '条：' + '雨声很密，屋檐的水线一直没断，'.repeat(5), ts: Date.now() + i * 1000 });
+}
+await seed({ chars: [], kv: [], msgs: many });
+// 叶子推到末条 —— 不然活动路径还停在老的两条上，新种的 40 条一条都看不见。
+await page.evaluate(async () => { const b = await import('/js/branch.js'); await b.setLeaf('sc1', 'sel40'); });
+await page.reload({ waitUntil: 'networkidle0' });
+await sleep(1500);
+await page.evaluate(() => { const b = document.getElementById('btn-chars'); if (b) b.click(); });
+await sleep(700);
+await page.evaluate(() => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.textContent.includes('红白')); if (c) c.click(); });
+await sleep(1400);
+const msgShown = await page.evaluate(() => document.querySelectorAll('#messages .msg').length);
+t('40 条都在屏幕上（叶子指到了末条）', msgShown >= 40, String(msgShown));
+// 长按「第1条」那条 → 菜单里该有「以这段写小说」（contextmenu 是 app.js:1900 绑的那个）。
+// ⚠️ 不能用 .msg[0]：屏幕上第一条是开场白，它比「第1条」还早，选中的就成了开场白。
+const hit1 = await page.evaluate(() => { const el = [...document.querySelectorAll('#messages .msg')].find(x => (x.textContent || '').indexOf('第1条：') >= 0); if (!el) return 'no-el'; el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); return 'ok'; });
+console.log('  [probe] 长按: ' + hit1);
+console.log('  [probe] DB: ' + await page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion'); const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const all = await new Promise(r => { const q = db.transaction('messages').objectStore('messages').getAll(); q.onsuccess = () => r(q.result || []); });
+  const lf = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('branch:sc1'); q.onsuccess = () => r(q.result); });
+  db.close();
+  return JSON.stringify({ n: all.length, sel: all.filter(x => String(x.id).startsWith('sel')).length, leaf: lf && lf.v });
+}));
+await sleep(500);
+const menuTxt = await page.evaluate(() => Array.from(document.querySelectorAll('.msg-menu button')).map(b => b.textContent.trim()).join('|'));
+t('消息菜单里有「以这段写小说」', menuTxt.indexOf('以这段写小说') >= 0, menuTxt);
+await page.evaluate(() => { const b = [...document.querySelectorAll('.msg-menu button')].find(x => (x.textContent || '').indexOf('以这段写小说') >= 0); if (b) b.click(); });
+await sleep(900);
+t('点了它直接打开开戏弹窗', await page.evaluate(() => !document.getElementById('scn-modal').classList.contains('hidden')));
+const srcSel = await page.evaluate(() => { const b = [...document.querySelectorAll('#sc-src button')].find(x => (x.textContent || '').indexOf('从这段') >= 0); return b ? b.className : ''; });
+t('「从这段聊起来」是选中的', /on|active|sel/.test(srcSel), srcSel);
+const srcNote = await page.evaluate(() => (document.getElementById('sc-src-note') || {}).textContent || '');
+t('说明里写了从你选的那条起', srcNote.indexOf('从你选的那条起') >= 0, srcNote);
+const charsIn = Number((srcNote.match(/约 (\d+) 字/) || [])[1] || 0);
+t('带进去的不止 1800 字（旧的截断线）', charsIn > 1800, String(charsIn));
+await fakeReset([{ text: PROSE, finish: 'stop' }]);
+await click('#sc-go');
+// ⚠️ 不能等 rv-body 出现「雨还在下」—— 12 节留下的那一场正文就是它，条件立刻满足，
+//    会抢在请求发出之前去读 fake.chat[0]，拿到空串，两条断言假红。
+await page.waitForFunction(() => (window.__fake.chat || []).length > 0, { timeout: 25000 }).catch(() => {});
+await sleep(600);
+const selReq = await page.evaluate(() => (window.__fake.chat[0] || {}).sys || '');
+t('提示词里有选中的第一条', selReq.indexOf('第1条：') >= 0);
+t('提示词里有这条对话的最后一条', selReq.indexOf('第40条：') >= 0);
 
 // ---------- 12b. 删一拍可撤销（规格 §12） ----------
 console.log('=== 12b. 删一拍 ===');
@@ -568,7 +635,30 @@ await sleep(500);
 const scTxt = (await page.evaluate(() => (document.getElementById('scn-modal') || {}).textContent || '')).split('红白').join('');   // 角色名是数据，不算界面文案
 t('开戏弹窗在英文下不留中文', !CJK.test(scTxt), (scTxt.match(/[\u4e00-\u9fff]+/g) || []).slice(0, 6).join('|'));
 const segTxt = await page.evaluate(() => Array.from(document.querySelectorAll('#sc-len button')).map(b => b.textContent).join('|'));
-t('两档长度是英文', !CJK.test(segTxt), segTxt);
+t('四档长度是英文', !CJK.test(segTxt), segTxt);
+
+// ---------- 13b. 长档的分批算术（v0.5.3.1）----------
+// 多拍是分批写的：每一拍一次请求，所以字数、token 都得按【这一拍】算。
+// 拿整场的 2000–4000 去卡一拍，每一拍都会被判不合格然后白重试一次。
+console.log('=== 13b. 长档 ===');
+const arcv = await page.evaluate(async () => {
+  const S = await import('./js/scene.js');
+  const many = n => '字'.repeat(n);
+  return {
+    chapter: S.beatChars('chapter'),
+    long: S.beatChars('long'),
+    short: S.beatChars('short'),
+    perOk: S.checkQuality(many(1300), { length: 'long' }, 0).ok,
+    perShort: S.checkQuality(many(20), { length: 'long' }, 0).ok,
+    whole: S.checkQuality(many(1300), { length: 'long' }).ok
+  };
+});
+t('整章 5 拍，每拍 800–1600 字', arcv.chapter.min === 800 && arcv.chapter.max === 1600, JSON.stringify(arcv.chapter));
+t('长档 3 拍，每拍 667–1333 字', arcv.long.min === 667 && arcv.long.max === 1333, JSON.stringify(arcv.long));
+t('短场不分拍，还是整场 300–600', arcv.short.min === 300 && arcv.short.max === 600, JSON.stringify(arcv.short));
+t('一拍 1300 字在长档里算合格（按拍判）', arcv.perOk === true);
+t('一拍只写 20 字判不合格', arcv.perShort === false);
+t('不给拍号时仍按整场判（1300 字不到 2000）', arcv.whole === false);
 
 // ---------- 14. 无未捕获报错 ----------
 console.log('=== 14. 报错 ===');

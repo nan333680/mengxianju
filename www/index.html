@@ -34,6 +34,11 @@
             data-i18n-en="Plot" data-i18n-en-title="Where this story is going">剧情</button>
   </div>
 
+  <!-- 分支提示条（v0.5.3.1）：只有真的分过岔才出现。
+       起因（用户实测）：「分支之后既没提示，也没有界面能看分支内容 —— 以为前面的聊天没了」。
+       切支原来只能长按一条【有兄弟】的消息，而那条消息早就滚出屏幕了。 -->
+  <button class="branch-bar hidden" id="chat-branch"></button>
+
   <!-- 阅读模式（v0.5.1.5）：把气泡摊成小说段落时，顶部那三条操作条收起来，换成这一条。
        它只有"退出"一个动作 —— 阅读的时候不该还能点时间、点剧情。 -->
   <div class="read-bar hidden" id="read-bar">
@@ -534,6 +539,18 @@
         </div>
         <p class="hint-text" id="e-pov-note">—</p>
 
+        <div class="field" data-i18n-nodes><span data-i18n-en="Style sample (write a passage, she copies the voice)">风格样例（写一段，让她照着这个腔调）</span>
+          <textarea id="e-stylesample" rows="4" maxlength="800"
+            data-i18n-en-ph="Paste any passage you like - how long the sentences are, how talk and action are arranged, where a part stops. She will follow it."
+            placeholder="贴一段你喜欢的写法就行 —— 句子多长、话和动作怎么排、一段停在哪儿，她都会照着来。"></textarea>
+        </div>
+        <div class="field" data-i18n-nodes><span data-i18n-en="Never use these (one per line)">这几样别用（一行一条）</span>
+          <textarea id="e-styleban" rows="2"
+            data-i18n-en-ph="One per line, e.g. smooth filler lines, ending every message on the same word"
+            placeholder="一行一条，比如：太顺的套话、每句都收在同一个词上"></textarea>
+        </div>
+        <p class="hint-text" data-i18n-en="A sample beats a rule: she copies something real instead of a ban you wrote.">样例比规则管用 —— 她仿的是一段真东西，不是一串禁令。留空就完全不进提示词。</p>
+
         <div class="field" data-i18n-nodes><span data-i18n-en="Force chat mode">强制聊天模式</span>
           <div class="seg" id="e-think"></div>
         </div>
@@ -990,6 +1007,12 @@
       <div class="field row" id="balance-row" data-i18n-nodes>
         <span><span data-i18n-en="Balance">账户余额</span> <b id="s-balance">—</b></span>
         <button class="ghost-btn sm" id="btn-balance" data-i18n-en="Check">查询</button>
+      </div>
+      <!-- 测试连接（v0.5.3.2，清单 §3.2）：填完 key 不知道对不对，就去发一条消息试，
+           错了还得从错误卡上猜。这里发一个 1 token 的请求，直接说清是哪一类问题。 -->
+      <div class="field row" id="test-row" data-i18n-nodes>
+        <span><span data-i18n-en="Connection">连接</span> <b id="s-testconn" data-i18n-en="Not tested yet">还没试过</b></span>
+        <button class="ghost-btn sm" id="btn-testconn" data-i18n-en="Test">测试</button>
       </div>
       <!-- v1.21.54：上下文预算。
            以前只按「几条」截历史，撞爆模型窗口时把服务端的报错原样甩给用户；
@@ -1453,11 +1476,6 @@
     </div>
 
     <label class="arc-field">
-      <span>这段叫什么<em>（可空）</em></span>
-      <input id="arc-title" type="text" maxlength="60" placeholder="只有你自己看，随便起" data-i18n-en-ph="Just for you - name it anything">
-    </label>
-
-    <label class="arc-field">
       <span>想往哪走</span>
       <textarea id="arc-direction" rows="3" maxlength="1200" data-i18n-en-ph="Where this stretch should end up. One line is enough - no dialogue, no outline."
         placeholder="这段最后要走到哪儿。一句话就够，不用写台词，也不用写大纲。"></textarea>
@@ -1474,7 +1492,7 @@
         <span class="arc-now-l">现在演到</span>
         <b class="arc-now-b" id="arc-now-b">第 1 拍</b>
         <button class="arc-undo hidden" id="arc-undo" data-i18n-en="Undo">撤销</button>
-        <button class="arc-next" id="arc-next">这一拍演完了 →</button>
+        <button class="arc-next" id="arc-next">演下一拍 →</button>
       </div>
       <p class="arc-now-h">点右边那颗 = 这一拍收尾、立刻保存、走到下一拍。每拍下面写的「结果」会进下一轮的提示词。</p>
     </div>
@@ -1486,28 +1504,52 @@
     <div id="arc-beats" class="arc-beats"></div>
     <button class="ghost-btn arc-add" id="arc-add-beat">＋ 加一拍</button>
 
-    <div class="arc-aga hidden" id="arc-aga">
-      <div class="arc-beats-head">
-        <span>各人的目的</span>
-        <span class="arc-beats-cnt">群聊才用</span>
+    <!-- v0.5.3.2（清单 §7.5）：默认只露三个字段（往哪走 / 不能发生什么 / 几拍），
+         其余低频的东西收进这一层 —— 一张空卡先看见四个必填框是最劝退的。 -->
+    <details class="arc-adv" id="arc-adv">
+      <summary>更多设置<span class="arc-adv-hint">这段叫什么、各人的目的、自动判定、删掉这张卡</span></summary>
+
+      <label class="arc-field">
+        <span>这段叫什么<em>（可空）</em></span>
+        <input id="arc-title" type="text" maxlength="60" placeholder="只有你自己看，随便起" data-i18n-en-ph="Just for you - name it anything">
+      </label>
+
+      <div class="arc-aga hidden" id="arc-aga">
+        <div class="arc-beats-head">
+          <span>各人的目的</span>
+          <span class="arc-beats-cnt">群聊才用</span>
+        </div>
+        <p class="arc-now-h">这一场里每个人想要什么。只给名字的话，模型会让所有人替同一件事说话。</p>
+        <div id="arc-aga-list"></div>
       </div>
-      <p class="arc-now-h">这一场里每个人想要什么。只给名字的话，模型会让所有人替同一件事说话。</p>
-      <div id="arc-aga-list"></div>
-    </div>
 
-    <label class="arc-auto">
-      <input type="checkbox" id="arc-auto">
-      <span>自动判定这一拍演完没有<em>（beta，每轮多一次小请求）</em></span>
-    </label>
+      <label class="arc-auto">
+        <input type="checkbox" id="arc-auto">
+        <span>自动判定这一拍演完没有<em>（beta，每轮多一次小请求）</em></span>
+      </label>
 
-    <div class="arc-del-row">
-      <button class="arc-link" id="arc-del-card">删掉这张卡</button>
-    </div>
+      <div class="arc-del-row">
+        <button class="arc-link" id="arc-del-card">删掉这张卡</button>
+      </div>
+    </details>
 
     <div class="arc-foot">
       <button class="ghost-btn" id="arc-off" data-i18n-en="Turn off">关掉剧情</button>
       <button class="ghost-btn" id="arc-cancel" data-i18n-en="Cancel">取消</button>
       <button class="send-btn" id="arc-save" data-i18n-en="Save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 分支面板（v0.5.3.1）：同一句话后面可以有不同的发展，这里能看见、能跳。
+     不放在设置里 —— 它是聊天时随时要用的东西，进设置找一圈回来话题就断了。 -->
+<div id="branch-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box branch-box">
+    <h4 data-i18n-en="Story branches">剧情走向</h4>
+    <p class="arc-sub">同一句话后面可以有不同的发展。<br><b>这里列的是当前这条线上分过岔的地方</b> —— 点一下就跳过去，别的走向不会删，只是现在没在屏幕上。</p>
+    <div id="branch-list"></div>
+    <div class="arc-foot">
+      <button class="ghost-btn" id="branch-close" data-i18n-en="Close">关闭</button>
     </div>
   </div>
 </div>
@@ -1644,6 +1686,53 @@
     <div class="modal-btns" data-i18n-nodes>
       <button class="ghost-btn" id="pick-chars-cancel" data-i18n-en="Cancel">取消</button>
       <button class="send-btn" id="pick-chars-ok" data-i18n-en="Apply">应用</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 配 Key 的半屏 sheet（v0.5.3.2，清单 §3.2 L2）============ -->
+<!-- 为什么是 sheet 不是跳去设置页：新人第一次打开，最远的一步是「去哪拿钥匙」。
+     把他丢进设置页（二十多个折叠项）等于让他自己找第二、第三步。
+     这里只留三步 + 一个输入框 + 一个「测试连接」—— 走完就能说话。
+     模型/服务商沿用设置里已有的值，改的话走那个链接，不在这里再摆一遍。 -->
+<div id="key-sheet" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box ks-box">
+    <h4 data-i18n-en="Three steps to start">三步开始聊天</h4>
+    <ol class="ks-steps">
+      <li data-i18n-en="Open your provider's site and create an API key">打开服务商的网站，注册后创建一个 API Key</li>
+      <li data-i18n-en="Copy the string starting with sk-">复制那一串以 sk- 开头的字符</li>
+      <li data-i18n-en="Paste it below and tap Test connection">粘到下面，点「测试连接」</li>
+    </ol>
+    <input id="ks-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." data-i18n-en-ph="sk-...">
+    <div class="ks-model">
+      <span id="ks-model-txt"></span>
+      <button class="ks-link" id="ks-change" data-i18n-en="Change provider / model">换接口 / 模型</button>
+    </div>
+    <div class="ks-result hidden" id="ks-result"></div>
+    <div class="modal-btns">
+      <button class="ghost-btn" id="ks-test" data-i18n-en="Test connection">测试连接</button>
+      <button class="send-btn" id="ks-save" data-i18n-en="Save and start">保存并开始</button>
+    </div>
+    <div class="ks-foot">
+      <button class="ks-link" id="ks-demo" data-i18n-en="Not now? Try a sample instead">不想现在配？先看一段示例</button>
+      <button class="ks-link" id="ks-later" data-i18n-en="Later">稍后再说</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 示例卡预览（v0.5.3.2，清单 §3.2 L1）============ -->
+<!-- 一个角色都没有的人，第一屏除了「去导入一张卡」还该有一条【立刻能试】的路。
+     这张卡的内容在 js/starter.js 里，不联网、不占额外请求。
+     ⚠️ 开场白属于她的台词，不挂 data-i18n —— 翻译了就变味了。 -->
+<div id="demo-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box demo-box">
+    <div class="demo-av" id="demo-av">🎎</div>
+    <h4 id="demo-name" data-i18n-en="Sample character">示例角色</h4>
+    <p class="demo-hook" id="demo-hook"></p>
+    <div class="demo-say" id="demo-say"></div>
+    <div class="modal-btns">
+      <button class="ghost-btn" id="demo-cancel" data-i18n-en="Cancel">取消</button>
+      <button class="send-btn" id="demo-go" data-i18n-en="Start with her">就用她开始</button>
     </div>
   </div>
 </div>

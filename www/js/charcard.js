@@ -1,4 +1,5 @@
 import { parseDecorators, expandMacros, isZip, readCharx, findAsset, bytesToDataUrl, mimeOf } from './ccv3.js';
+import { normalizeStyleCard } from './stylecard.js';
 
 /**
  * 角色卡（Character Card V2 / V3）导入 / 导出 —— v1.21.40
@@ -587,11 +588,17 @@ const MK_CARD_KEYS = [
   // ⚠️ v0.5.3：「后来补的设定」也是【角色的】设定（小说里新确立、之后进聊天与小说两边），
   //    和 scene / appearance 同一类。不进卡的话，换台机器导回来她就不认这些事了。
   'canonExtra',
+  // ⚠️ v0.5.3.2：风格卡（样例段落 + 禁用词）也是这个角色的设定，跟 canonExtra 同一条理由 ——
+  //    不进卡的话，换台机器导回来她的腔调就变了。
+  'styleCard',
 ];
 
 function mkParams(char) {
   const o = {};
   for (const k of MK_CARD_KEYS) if (char && char[k] !== undefined) o[k] = char[k];
+  // 风格卡是对象，导出时再洗一遍：库里可能躺着早期写进去的脏数据（重复项 / 超长），
+  // 卡是要发出去的东西，带着脏数据传给别人不如在这里收干净。
+  if (o.styleCard !== undefined) o.styleCard = normalizeStyleCard(o.styleCard);
   return o;
 }
 
@@ -615,6 +622,8 @@ const STR_KEYS = {
 const TEXT_KEYS = { appearance: 8000, appearanceLive: 8000, scene: 8000, canonExtra: 4000 };
 
 function sanitizeParam(k, v) {
+  // 风格卡是对象，不是字符串/数字 —— 外来卡里的形状一概不信，一律重建。
+  if (k === 'styleCard') return normalizeStyleCard(v);
   if (TEXT_KEYS[k]) return typeof v === 'string' ? v.slice(0, TEXT_KEYS[k]) : undefined;
   if (BOOL_KEYS.includes(k)) return !!v;
   if (STR_KEYS[k]) return typeof v === 'string' ? v.slice(0, STR_KEYS[k]) : undefined;

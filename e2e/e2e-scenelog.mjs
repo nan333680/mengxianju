@@ -175,6 +175,9 @@ t('场记列出了变化', logText.indexOf('盒子从她那边到了桌子中间
 t('场记列出了新设定', logText.indexOf('那把钥匙一直在她那儿') >= 0, '');
 t('默认不算正史（按钮不可点）',
   await page.evaluate(() => { const b = document.getElementById('rv-log-mem'); return !!b && b.disabled === true; }), '');
+// v0.5.3.1：灰着的时候旁边必须说清先勾什么，否则它就是个死按钮。
+t('灰按钮旁边写明了先勾什么',
+  (await page.evaluate(() => { const e = document.getElementById('rv-log-tip'); return e ? e.textContent.trim() : ''; })).indexOf('先勾上') >= 0, '');
 
 // ---------- 3. 勾成「算正史」-> 记进记忆 ----------
 console.log('=== 3. 记进记忆 ----------');
@@ -185,6 +188,8 @@ await page.evaluate(() => {
 await sleep(900);
 t('勾上之后按钮可点',
   await page.evaluate(() => { const b = document.getElementById('rv-log-mem'); return !!b && b.disabled === false; }), '');
+t('勾上之后提示换成「会写成待确认的记忆」',
+  (await page.evaluate(() => { const e = document.getElementById('rv-log-tip'); return e ? e.textContent.trim() : ''; })).indexOf('待确认') >= 0, '');
 t('正史标记落库了', (await dbScenes())[0].canon === true, '');
 
 await click('#rv-log-mem');

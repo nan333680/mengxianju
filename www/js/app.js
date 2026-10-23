@@ -1,5 +1,5 @@
 import { kv, chars, msgs, mem, wb, scenes, uid, wipeAll, dbAdmin } from './db.js';
-import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
+import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, testConnection, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
 import { buildStablePrompt, buildTurnNote, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR, userSideLines } from './persona.js';
 import { assembleSceneContext, cleanExample, cutAtSentence } from './scenectx.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
@@ -9,7 +9,7 @@ import { t, tt, applyI18n, watchI18n, setLang, getLang, getActiveLang, refreshLa
 // ⚠️ 只 import 真用到的（v0.4.0 复查）：卡片现在是 parseCardAuto 一把抓
 //    （PNG / CHARX / JSON 三种容器都认，PNG 里还优先读 ccv3 块），
 //    isPng / parseCardJson / extractCardFromPng 在 app.js 里已经没人调了。
-import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entriesFromList, parseJsonSafe } from './charcard.js';
+import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entriesFromList, parseJsonSafe, normalizeCard } from './charcard.js';
 // 自动备份（v1.21.40）：纯逻辑，依赖全部注入，见该文件头部说明。
 import { autoBackupIfDue, verifyLatestBackup, readLatestBackup, BACKUP_DIRS, KEEP as BACKUP_KEEP, DAY_MS as BACKUP_DAY_MS } from './autobackup.js';
 // 导出 Markdown（v1.21.48）：纯函数，接一组消息吐一个字符串
@@ -17,7 +17,12 @@ import { buildChatMarkdown, markdownFileName } from './exportmd.js';
 import { activePath, pathTo, setLeaf, pickLeaf, seedParents, siblings, deepestIn, leafKey } from './branch.js';
 // 反复读检测（v0.5.5）：4-gram 重合率，阈值从真实备份量出来的，见该文件头。
 import { worstRepeat, REPEAT_WARN, REPEAT_LOOKBACK } from './prose.js';
+// 错误翻译（v0.5.3.2，清单 §3.1）：一句话原因 / 下一步 / 按钮 / 该不该重试。
+import { explain, diagText, shouldRetry } from './errorkit.js';
 import { normalizeArc, arcActive, arcFinished, atLastBeat, beatTurns, emptyArc, ARC_BEATS_MAX, ARC_CONSTRAINTS_MAX } from './storyarc.js';
+// 内置示例卡（v0.5.3.2，清单 §3.2 L1）：一个角色都没有时，让人【立刻能试】
+import { STARTER_CARD, STARTER_HOOK } from './starter.js';
+import { normalizeStyleCard } from './stylecard.js';
 // 记忆时间锚（0.5.2）：把「明天/昨天」换算成绝对剧情天数，并保留来源消息。
 import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMemory, memoryDay, memoryGrams, hasRelativeDay, MEMORY_KEYS, activeOnly, MEMORY_STATUS,
   MEMORY_KINDS, MEMORY_KIND_NAME, MEMORY_SCOPES, MEMORY_SCOPE_NAME, MEMORY_STATUS_NAME, normalizeMemory,
@@ -256,7 +261,10 @@ const CHAR_KEYS = [
   // 时间是否跟现实走（角色级三态，v1.20.21）：'' / undefined = 跟随全局，
   // 'on' = 这个角色强制跟现实走，'off' = 这个角色强制保持手动。
   // 和 searchPolicy 完全同构 —— 优先级：角色级 > 全局。
-  'clockPolicy'
+  'clockPolicy',
+  // 风格卡（v0.5.3.2 · 清单 §7.3）：{ sample, ban[] }。角色级 ——
+  // 每个角色的腔调不一样，全局一份没法用。只在填过的时候进提示词。
+  'styleCard'
   // 注意：记忆的节奏参数（总结间隔 / 条数上限）**不在这里** ——
   // 它们是全局统一的，改在「设置 → 记忆管理 → 记忆节奏」。查重整理没有单独旋钮，
   // 门槛由条数上限决定（见 app.js 里 dedupeIfNeeded 的注释）。
@@ -1179,14 +1187,21 @@ function _renderView(name) {
   // 右侧抽屉会把聊天页一起推走，就不是"拉出来"的手感了。
   const isDrawer = !!(target && (target.classList.contains('side-left')
                                  || target.classList.contains('side-right')));
+  // v0.5.3.1：只有【当前页的直接前驱】留在后面。
+  //
+  // 原来是「栈里出现过的页面全标 behind」。只要某个页面在栈里出现两次
+  // （书架 → 阅读页 → 返回时又 showView('shelf')），它就会和当前页一起停在 -28%，
+  // 屏幕上右侧露出半页书架 —— 用户报的就是这个。
+  // 栈是一摞纸，只有最上面那张下面那张该露出来，更下面的都在屏幕外。
+  const prev = _stack.length >= 2 ? _stack[_stack.length - 2] : '';
   document.querySelectorAll('.view').forEach(v => {
     const vn = v.id.slice(5);
     const isTop = vn === name;
-    const inStack = _stack.includes(vn);
+    const isPrev = !isTop && vn === prev;
     v.classList.toggle('active', isTop);
     // 抽屉推入时，下面的页面原地不动（stay）；普通推入时才向左让位（behind）
-    v.classList.toggle('stay', !isTop && inStack && isDrawer);
-    v.classList.toggle('behind', !isTop && inStack && !isDrawer);
+    v.classList.toggle('stay', isPrev && isDrawer);
+    v.classList.toggle('behind', isPrev && !isDrawer);
   });
 }
 
@@ -1456,6 +1471,89 @@ async function ensureChar() {
  * 聊天页是按"有个人在"设计的（头像、名字、时间条），空的时候要自己把这几处摆平，
  * 不能留着上一个人的残留。
  */
+// ================= 空状态 / 配 Key / 示例卡（v0.5.3.2，清单 §3.2）=================
+
+/**
+ * 示例卡预览。
+ * 为什么不直接建好塞进去：导入一张卡是【不可逆】的动作（角色列表里多一个人、
+ * 库里多一份世界书）。先给他看「她是谁、她开口第一句是什么」，再让他点
+ * 「就用她开始」—— 后悔的成本是点一下取消，不是去删一个角色。
+ */
+function openDemoCard() {
+  const c = (STARTER_CARD && STARTER_CARD.data) ? STARTER_CARD.data : {};
+  const nm = $('demo-name'); if (nm) nm.textContent = String(c.name || '');
+  const hk = $('demo-hook'); if (hk) hk.textContent = STARTER_HOOK;
+  const sy = $('demo-say'); if (sy) sy.textContent = String(c.first_mes || '');
+  const av = $('demo-av'); if (av) av.textContent = String(c.name || '').slice(0, 1) || '🎎';
+  $('demo-modal')?.classList.remove('hidden');
+}
+
+function closeDemo() { $('demo-modal')?.classList.add('hidden'); }
+
+async function startWithDemo() {
+  closeDemo();
+  try {
+    // ⚠️ 存的是【normalizeCard 之后】的那份：导入链路吃的是规范形状
+    //    （name / description / first_mes / entries…），直接喂 v2 的 {data:{…}}
+    //    会得到一张所有字段都是 undefined 的空卡。
+    const card = normalizeCard(STARTER_CARD);
+    await importCharacterCard(card, '');
+  } catch (e) {
+    toast('建不了：' + ((e && e.message) || e), 4200);
+  }
+}
+
+/** 编辑页那两个风格卡输入框 → 存档对象（v0.5.3.2）。空着就是空对象 = 没设过。 */
+function collectStyleCard() {
+  const a = $('e-stylesample');
+  const b = $('e-styleban');
+  return normalizeStyleCard({ sample: a ? a.value : '', ban: b ? b.value : '' });
+}
+
+/** 配 Key 的半屏 sheet。打开时把当前服务商/模型写出来 —— 他得知道自己连的是哪家。 */
+function openKeySheet() {
+  const el = $('ks-key'); if (el) el.value = '';
+  const rt = $('ks-result'); if (rt) { rt.className = 'ks-result hidden'; rt.textContent = ''; }
+  const mt = $('ks-model-txt');
+  if (mt) mt.textContent = providerSpec(S.provider).label + ' · ' + (S.model || '');
+  $('key-sheet')?.classList.remove('hidden');
+  // 抽屉/弹窗有动画，立刻 focus 会被动画带偏 —— 等它落位
+  setTimeout(() => { try { el && el.focus(); } catch { /* 老 WebView 不给焦点也就算了 */ } }, 260);
+}
+
+function closeKeySheet() { $('key-sheet')?.classList.add('hidden'); }
+
+function ksResult(ok, text) {
+  const rt = $('ks-result');
+  if (!rt) return;
+  rt.className = 'ks-result ' + (ok ? 'ok' : 'bad');
+  rt.textContent = text;
+}
+
+/** sheet 里那个「测试连接」：走 api.js 的 testConnection（只发 1 个 token）。 */
+async function testKeyFromSheet() {
+  const el = $('ks-key');
+  const key = String((el && el.value) || '').trim() || String(S.apiKey || '');
+  if (!key) { ksResult(false, '先把 Key 粘进来'); return; }
+  ksResult(true, '正在连…');
+  const r = await testConnection({ apiKey: key, baseUrl: S.baseUrl, model: S.model, provider: S.provider });
+  if (r.ok) { ksResult(true, tt('通了') + ' · ' + r.ms + 'ms'); return; }
+  // 失败要说清是【哪一类】：key 错了和余额空了，下一步完全不同（清单 §3.2 验收）
+  const info = explain({ kind: r.kind, status: r.status, detail: r.msg });
+  ksResult(false, info.title + (r.ms ? '（' + r.ms + 'ms）' : ''));
+}
+
+async function saveKeyFromSheet() {
+  const el = $('ks-key');
+  const key = String((el && el.value) || '').trim() || String(S.apiKey || '');
+  if (!key) { ksResult(false, '先把 Key 粘进来'); return; }
+  await saveSettings({ apiKey: key });
+  updateStatus();
+  try { refreshSearchHint(); } catch { /* 搜索那条提示不在这一屏 */ }
+  closeKeySheet();
+  toast('Key 存好了，可以说话了', 2600);
+}
+
 async function showEmptyChat() {
   curCharId = null;
   curChar = null;
@@ -1463,15 +1561,34 @@ async function showEmptyChat() {
   const nm = $('chat-name'); if (nm) nm.textContent = '还没有角色';
   const av = $('chat-avatar'); if (av) av.textContent = '🎎';
   const bar = $('chat-clock'); if (bar) bar.textContent = '';
+  // 有没有【任何】角色 —— 决定第一屏是「L1 什么都不用准备」还是「L2 只是这张聊完了」
+  let any = 0;
+  try { any = (await chars.all()).length; } catch { any = 0; }
   const box = $('messages');
   if (box) {
     // ⚠️ 这一屏原来没走 tt()（v0.3.1）：i18n.js 的 BY_ZH 里明明有「还没有角色。」，
     //    但这里是硬拼的中文字符串，英文用户看到的第一屏仍然是中文。
-    box.innerHTML = '<div class="empty-chat">' + esc(tt('还没有角色。')) + '<br>'
-      // ⚠️ 文案对齐实际位置（v0.3.1）：这个 ＋ 是 #btn-new-char，在角色列表页
-      //    .topbar 的【行尾】= 右上角（index.html:68）。原来写「右下角」，照着找的人
-      //    第一步就卡住 —— 而这是每个人看到的第一屏。
-      + esc(tt('点左上角 ☰ → 角色列表 → 右上角 ＋ 建一个。')) + '</div>';
+    if (!any) {
+      // L1（v0.5.3.2，清单 §3.2）：一个角色都没有的第一屏。
+      // 原来只有两行灰字指路（「☰ → 角色列表 → 右上角 ＋」），把第一步交给了一个
+      // 还要再找两步的地方。现在：一个立刻能按的大按钮 + 一条「什么都不用准备也能试」的退路。
+      box.innerHTML = '<div class="empty-chat">'
+        + '<div class="ec-title">' + esc(tt('还没有角色。')) + '</div>'
+        + '<button class="ec-main" id="ec-import">' + esc(tt('导入一张角色卡')) + '</button>'
+        + '<div class="ec-sub">' + esc(tt('没有卡？')) + ' <button class="ks-link" id="ec-demo">'
+        + esc(tt('先试这张 →')) + '</button></div>'
+        // ⚠️ 位置对齐实际入口（v0.3.1 的老坑）：那个 ＋ 是 #btn-new-char，在角色列表页
+        //    .topbar 的【行尾】= 右上角。写「右下角」的话照着找的人第一步就卡住。
+        + '<div class="ec-old">' + esc(tt('也可以点左上角 ☰ → 角色列表 → 右上角 ＋ 自己建一个。')) + '</div>'
+        + '</div>';
+      const bi = /** @type {HTMLButtonElement | null} */ ($('ec-import'));
+      if (bi) bi.onclick = () => { const f = /** @type {HTMLInputElement | null} */ ($('cc-import-file')); if (f) f.click(); };
+      const bd = /** @type {HTMLButtonElement | null} */ ($('ec-demo'));
+      if (bd) bd.onclick = () => openDemoCard();
+    } else {
+      box.innerHTML = '<div class="empty-chat">' + esc(tt('还没有角色。')) + '<br>'
+        + esc(tt('点左上角 ☰ → 角色列表 → 右上角 ＋ 建一个。')) + '</div>';
+    }
   }
   await renderClock();
 }
@@ -1482,6 +1599,17 @@ async function selectChar(id) {
   // 别让它在后台白跑）。
   if (busy && abortCtl && id !== curCharId) {
     try { abortCtl.abort(); } catch { /* 已经结束了 */ }
+  }
+  // 离开上一个角色前，先把它的草稿落一次（防抖可能还没到点）
+  if (curCharId && curCharId !== id) {
+    await saveDraftNow(curCharId);
+    // 落完就清空输入框。不清的话这半句话会【跟着人走】：restoreDraft 看到
+    // 输入框非空就不覆盖，于是上一个人的字原样留在新角色这里，下一次 input
+    // 事件（哪怕只是删一个字）就把它存成新角色的草稿了 —— 切换串味。
+    // v0.5.3.2 由 e2e-firstrun 第六节抓到。
+    const inp = $('input');
+    if (inp) inp.value = '';
+    syncInput();
   }
   curCharId = id;
   curChar = await chars.get(id);
@@ -1518,6 +1646,9 @@ async function selectChar(id) {
   syncInput();
   // 审计 F18：抽屉里挂着的是「给上一个角色挂的功能」的入口，切角色时收掉
   toggleCmdDrawer(false);
+  // v0.5.3.2（清单 §3.5）：这个角色上次没打完的字放回来。
+  // 放在最后 —— 它要写 input.value 并重算高度，前面那些重绘不能把它盖掉。
+  await restoreDraft(id);
 }
 
 function updateStatus() {
@@ -1843,6 +1974,9 @@ async function renderMessages() {
   };
   attachMsgActions();
   scrollBottom();
+  // 分支提示条（v0.5.3.1）：重绘完再看一眼有没有岔路口。不是 await 也行，
+  // 但这一行之后紧跟的就是用户操作，await 让「画完 = 提示条也对了」。
+  try { await refreshBranchBar(); } catch { /* 提示条坏了不该把聊天画不出来 */ }
 }
 
 // ===== 长按消息：复制 / 删除 / 重新生成 =====
@@ -2140,6 +2274,9 @@ async function showMsgMenu(el) {
     // 朗读（v1.21.56）：只给她的消息 —— 念自己打的那句没有意义。
     // 引擎不可用（系统没装中文语音包）时干脆不给这一项，免得点了没反应。
     if (!isMe && ttsAvailable()) acts.push({ k: 'tts', t: '朗读这条' });
+    // v0.5.3.1：从这一条起写小说。★ 放在 del 之前 —— 「写小说」比「删除」常用，
+    // 而且删除是最后一个位置（老手感），不该被新项挤动。
+    acts.push({ k: 'mknovel', t: '以这段写小说' });
     if (!locked) acts.push({ k: 'del', t: '删除这条' });
     const isLast = all[all.length - 1]?.id === m.id;
     // ⚠️ 首条 assistant 也要给 regen 入口（v1.21.27 修，复审 新1）。
@@ -2294,6 +2431,10 @@ async function showMsgMenu(el) {
       toast((after ? '后面 ' + after + ' 条也清掉了' : '已退回') + timeBack + '，改完点发送', 3200);
     } else if (k === 'tts') {
       speak(m.content);
+    } else if (k === 'mknovel') {
+      // 从这一条起写小说（v0.5.3.1）。以前只有开戏弹窗里的「截最近 30 条」，
+      // 想写哪一段全凭运气 —— 于是正文和想写的那段对不上，他以为是模型没读前情。
+      await openSceneModal({ src: 'chat', from: m.id });
     } else if (k === 'copy') {
       try { await navigator.clipboard.writeText(m.content || ''); toast('已复制'); }
       catch { toast('复制失败'); }
@@ -2685,21 +2826,18 @@ async function putUnarchSet(id, arr) {
   catch { /* 记账失败不该挡住切支本身 */ }
 }
 
-async function switchBranch(m) {
-  // ⚠️ 必须查【全量】（v0.5.1.6 修，外部评审 §二）。
+// v0.5.3.1：切支内核和菜单入口分开 —— 分支面板要「点哪个走哪个」，
+// 而菜单只有「轮转到下一个」。归档收回/放回的记账两边一模一样，
+// 复制一份的话以后改记账就要改两处。
+async function gotoBranch(all, m, tipText) {
+  // ⚠️ all 必须是【全量】（v0.5.1.6 修，外部评审 §二）。
   // 起因：msgs.list 默认不含归档，而旧版本归档收的是"所有分支按 ts 最老的一批"——
   // 旧分支的兄弟落在归档里时，这里 siblings 一个都找不到，「切到另一个走向」直接哑掉；
   // 就算找到一条活着的，deepestIn 也只能在未归档消息里走，切过去停在半截。
-  const all = await msgs.list(curCharId, 0, true);
-  const sibs = siblings(all, m);
-  if (!sibs.length) { toast('这条没有别的走向'); return; }
-  // 候选 = 兄弟 + 自己，按 ts 排 —— 兄弟里也可能有比自己更早的
-  const cand = sibs.concat([m]).sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
-  const idx = cand.findIndex(x => x.id === m.id);
-  const nextIdx = (idx + 1) % cand.length;
-  const nxt = cand[nextIdx];
+  // 由调用方传入：switchBranch 和分支面板本来就各读了一次，再读一遍是白跑。
+  if (!m || !m.id) return;
   // 切到那条的【末端】：分支应该带着它后面整段一起回来，而不是只切这一条
-  const leaf = deepestIn(all, nxt.id) || nxt.id;
+  const leaf = deepestIn(all, m.id) || m.id;
   // ── 先算【离开这条线】时要收回去的（v0.5.1.7 修，外部评审 §二-1）──
   //
   // 归档是【消息级】标记，而"这条线折叠到哪儿"是这条线自己的状态。
@@ -2726,7 +2864,150 @@ async function switchBranch(m) {
   if (backIds.length) await putUnarchSet(curCharId, (await unarchSet(curCharId)).concat(backIds));
   await setLeaf(curCharId, leaf);
   await renderMessages();
-  toast('切到第 ' + (nextIdx + 1) + ' 个走向（共 ' + cand.length + ' 个）', 3200);
+  if (tipText) toast(tipText, 3200);
+}
+
+async function switchBranch(m) {
+  const all = await msgs.list(curCharId, 0, true);
+  const sibs = siblings(all, m);
+  if (!sibs.length) { toast('这条没有别的走向'); return; }
+  // 候选 = 兄弟 + 自己，按 ts 排 —— 兄弟里也可能有比自己更早的
+  const cand = sibs.concat([m]).sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
+  const idx = cand.findIndex(x => x.id === m.id);
+  const nextIdx = (idx + 1) % cand.length;
+  await gotoBranch(all, cand[nextIdx], '切到第 ' + (nextIdx + 1) + ' 个走向（共 ' + cand.length + ' 个）');
+}
+
+// ===== 分支面板（v0.5.3.1）=====
+// 起因（用户实测）：「分支之后既没提示，也没有界面能看分支内容 —— 以为前面的聊天没了」。
+// 切支原来只有长按一条【有兄弟】的消息才会出现的菜单项，而那条消息多半已经滚出屏幕；
+// 数据断链的时候连兄弟都找不到 —— 功能等于没有入口。
+let _brAll = [];        // 面板打开那一刻的【全量】（含归档），切支要用
+
+/** 面板里那一行「她说了什么」。没正文的消息（纯图片）给个人话，别留空。 */
+function briefMsg(m, n = 16) {
+  const s = String((m && m.content) || '').replace(/\s+/g, ' ').trim();
+  if (!s) return (m && m.role === 'user') ? '（你这句）' : '（她那条）';
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+/**
+ * 当前这条线上所有的岔路口。
+ * 只列【活动路径真的经过】的 —— 别的岔路在别的支上，切过去也看不见它们。
+ * 返回 [{ pid, at, opts:[{ m, len, mine }] }]，at = 岔路口那层在路径里的下标。
+ */
+function forkGroups(all, path) {
+  const at = new Map(path.map((m, i) => [m.id, i]));
+  const kids = new Map();
+  for (const m of all) {
+    const p = (typeof m.parentId === 'string') ? m.parentId : '';
+    if (!kids.has(p)) kids.set(p, []);
+    kids.get(p).push(m);
+  }
+  const out = [];
+  for (const [pid, arr] of kids) {
+    if (arr.length < 2) continue;
+    const cur = arr.find(x => at.has(x.id));
+    if (!cur) continue;
+    const i = at.get(cur.id);
+    const opts = arr.slice().sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0)).map(x => {
+      const deep = deepestIn(all, x.id) || x.id;
+      // len = 这一支在岔路口【之后】还有几条（共享的前缀不算，免得每个选项都显示同一个大数）
+      return { m: x, len: Math.max(0, pathTo(all, deep).length - i - 1), mine: x.id === cur.id };
+    });
+    out.push({ pid, at: i, opts });
+  }
+  out.sort((a, b) => a.at - b.at);
+  return out;
+}
+
+/** 读一次库，算活动路径 —— 提示条和面板共用 */
+async function branchState() {
+  const all = await msgs.list(curCharId, 0, true);
+  let path = [];
+  try { path = pathTo(all, pickLeaf(all, await kv.get(leafKey(curCharId), ''))); } catch { path = []; }
+  return { all, path, forks: forkGroups(all, path) };
+}
+
+/** 顶栏下面那条提示：只有真的分过岔才出现 */
+async function refreshBranchBar() {
+  const el = $('chat-branch');
+  if (!el) return;
+  if (!curCharId) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  let st = null;
+  try { st = await branchState(); } catch { st = null; }
+  if (!st || !st.forks.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const en = getActiveLang() === 'en';
+  el.classList.remove('hidden');
+  el.innerHTML = '<span class="bb-t">' + (en
+      ? '<b>' + st.forks.length + '</b> fork' + (st.forks.length > 1 ? 's' : '') + ' in this conversation'
+      : '这条对话有 <b>' + st.forks.length + '</b> 个岔路口')
+    + '</span><span class="bb-go">' + (en ? 'View ›' : '查看 ›') + '</span>';
+}
+
+function renderBranchList(all, path) {
+  const box = $('branch-list');
+  if (!box) return;
+  const en = getActiveLang() === 'en';
+  const forks = forkGroups(all, path);
+  if (!forks.length) {
+    box.innerHTML = '<p class="arc-sub">' + (en
+      ? 'No forks yet. Long-press a message and pick “Rewind to here” to open one.'
+      : '还没有分岔。长按一条消息用「从这里重聊」就会分出一条。') + '</p>';
+    return;
+  }
+  let h = '';
+  for (const fk of forks) {
+    const parent = fk.pid ? all.find(x => x.id === fk.pid) : null;
+    const head = parent
+      ? (en ? 'after #' + (fk.at + 1) + ' · ' + briefMsg(parent) : '第 ' + (fk.at + 1) + ' 条之后 · ' + briefMsg(parent))
+      : (en ? 'The opening' : '开头');
+    h += '<div class="br-fork"><div class="br-fork-h"><b>' + esc(head) + '</b><span>'
+      + fk.opts.length + (en ? ' paths' : ' 个走向') + '</span></div>';
+    fk.opts.forEach((o, i) => {
+      h += '<button class="br-opt' + (o.mine ? ' on' : '') + '" data-goto="' + esc(o.m.id) + '">'
+        + '<span class="br-i">' + (o.mine ? (en ? 'now' : '当前') : (en ? '#' + (i + 1) : '走向 ' + (i + 1))) + '</span>'
+        + '<span class="br-t">' + esc(briefMsg(o.m, 22)) + '</span>'
+        + '<span class="br-n">' + o.len + (en ? ' left' : ' 条') + '</span></button>';
+    });
+    h += '</div>';
+  }
+  box.innerHTML = h;
+}
+
+async function openBranchModal() {
+  if (!curCharId) return;
+  let st = null;
+  try { st = await branchState(); } catch { st = null; }
+  if (!st) { toast('读不到这段对话'); return; }
+  _brAll = st.all;
+  renderBranchList(st.all, st.path);
+  $('branch-modal').classList.remove('hidden');
+}
+
+function closeBranchModal() {
+  const m = $('branch-modal');
+  if (m) m.classList.add('hidden');
+}
+
+function bindBranchUI() {
+  const bar = $('chat-branch');
+  if (bar) bar.onclick = () => { openBranchModal(); };
+  const cl = $('branch-close');
+  if (cl) cl.onclick = closeBranchModal;
+  const list = $('branch-list');
+  if (list) list.onclick = async (e) => {
+    const b = e.target.closest('[data-goto]');
+    if (!b) return;
+    const all = _brAll && _brAll.length ? _brAll : await msgs.list(curCharId, 0, true);
+    const m = all.find(x => x.id === b.dataset.goto);
+    if (!m) { toast('那一条已经不在了'); return; }
+    closeBranchModal();
+    await gotoBranch(all, m, getActiveLang() === 'en' ? 'Switched to that path' : '切到那一支了');
+  };
+  // 点弹窗外面也关（剧情卡那边只给取消按钮，这里多给一条路不吃亏）
+  const modal = $('branch-modal');
+  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeBranchModal(); });
 }
 
 async function regenerate() {
@@ -3655,7 +3936,7 @@ async function worldbookConst(charId) {
  *   的计数打乱 —— 聊天和小说是两条线，不能共用一张滞回表。
  *
  * 为什么还要它：
- *   worldbookConst 只取 pos === 'always'。真实卡（芙兰朵露）39 条世界书 pos 全是空，
+ *   worldbookConst 只取 pos === 'always'。那张 39 条世界书的大卡 pos 全是空，
  *   一条常驻都没有 → 小说底色里「这个世界的底色」整块是空的。这些条目是靠
  *   「你是谁 / 能力 / 水 / 地下室」这类提问触发，而开戏时没有对话可匹配。
  *   这里用【场景卡自己写的字】（地点、时间、导演指令）去匹配一遍，
@@ -5167,7 +5448,7 @@ function bindEntryIO() {
         //    【对象】不是数组。这里原来直接弹 toast 让用户自己转格式，现在【认它】。
         else if (data.entries && typeof data.entries === 'object') incoming = fromSillyTavern(data.entries);
         // ⚠️ 整份世界书文件（{groups, solo}）从这里进来时，按【当前在哪个页面】挑（v0.4.1.3）。
-        //    起因（用户实测）：在「博丽灵梦 的设定」页点 ⤓ 导入自己的世界书文件，
+        //    起因（用户实测）：在某个角色的「设定」页点 ⤓ 导入自己的世界书文件，
         //    进来的却是【角色组】那 8 条 —— 旧代码先命中 data.groups 那一支就返回了，
         //    solo 里那 34 条一条都进不来（实测：导入后 solo 仍是 34 条，等于白导）。
         else if (data.groups || data.solo) {
@@ -5866,6 +6147,8 @@ let namedInText = false;
     }
     input.value = '';
     syncInput();
+    // 发出去了，草稿就没有存在的必要（v0.5.3.2，清单 §3.5）
+    clearDraft(myCharId);
 
     // 1) 落库并渲染用户消息
     //
@@ -6218,7 +6501,7 @@ let namedInText = false;
       //    这是治"二人转"最直接的一刀：不改提示词，只改"这一幕几个人"。
       // ⚠️ v0.4.2.1：这里原来是 `&& sceneRoster.length > 1` —— 也就是【抽到一个人的
       //    那一轮，用户开着的「小说式一幕」被无声关掉】，提示词整段换成另一套。
-      //    实测后果（用户备份 大人带小孩 24 轮）：13 轮只有一个说话人 —— 用户看到的是
+      //    实测后果（一份 24 轮的群聊备份）：13 轮只有一个说话人 —— 用户看到的是
       //    "我明明开着小说式一幕，怎么隔一轮就不生效了"，也就是他记的「有延迟生效」。
       //    现在开关说了算：开着就一直按小说式那一套写，只是【这一轮点到名字的只有她】。
       narrative: !!(isGroup(myChar) && myChar.narrative !== false),
@@ -6489,6 +6772,14 @@ let namedInText = false;
           console.warn('[ctx] 上下文超长，但已经没有可再丢的历史了（额度 ' + histBudget + '）—— 不重发，直接报错');
           throw err;
         }
+        // ⚠️ 不能重试的错误别重试（v0.5.3.2，清单 §3.1）：
+        //    key 错、余额空、模型名打错、参数不支持、内容被拦 —— 再问一遍答案一样，
+        //    只是白花一次请求、多等 700ms，用户还看不出为什么没反应。
+        if (!shouldRetry(err)) throw err;
+        // ⚠️ 已经收到半段就【不再自动重发】：重发会把这半段清掉（下面 full = ''），
+        //    钱花了两次、屏幕上还是没影；而且半段本身可能正是他要的。
+        //    抛出去，交给外层把它存成「（已中断）」并给错误卡。
+        if (full.trim()) throw err;
         if (attempt >= 1) throw err;
         attempt++;
         full = '';
@@ -6682,7 +6973,9 @@ let namedInText = false;
     // 历史顺序变成「她说（半截）→ 他说 → 她说（完整）」，
     // 而且这个错序会一直作为历史喂给模型。已花的 token 也白花了。
     // （中断那条路故意【不回滚】：半截回复留着，是用户明确要的。）
-    if (e.name !== 'AbortError' && added.length) {
+    // 半段不为空时【不撤】：那是这一轮已经吐出来的内容，撤了就白花钱（见下面半段分支）。
+    const half = String(full || '').trim();
+    if (e.name !== 'AbortError' && added.length && !half) {
       for (const a of added) {
         try { await msgs.del(a.id); } catch { /* 单条删不掉不影响其余 */ }
       }
@@ -6695,6 +6988,25 @@ let namedInText = false;
     // 下一次发送也会以它的父为父、和它并列成兄弟分支。
     if (e.name !== 'AbortError' && umSaved && um) {
       try { await setLeaf(myCharId, um.id); } catch { /* 推不动也不该盖住真正的原因 */ }
+    }
+
+    // ⚠️ 半段不许丢（v0.5.3.2，清单 §3.1 第二条硬规则）：
+    //    已经吐了内容的，先把这半段落库成「（已中断）」再报错；
+    //    一个字都没收到的，才是真的「这条没发出去」。
+    //    以前非 Abort 的失败会把这半段连同 added 一起删掉 —— 钱花了两次，
+    //    屏幕上还是空的，用户以为是他手机的问题。
+    if (e.name !== 'AbortError' && half) {
+      const am = { id: uid(), charId: myCharId, role: 'assistant', content: half + '（已中断）',
+        ...sceneSnap(myChar), story: storyStamp(), ts: Date.now() };
+      am.parentId = (um && um.id) || _parent0;
+      try { await msgs.add(am); } catch { /* 落库失败也不该盖住真正的原因 */ }
+      if (curCharId === myCharId) {
+        $('messages').insertAdjacentHTML('beforeend', msgHtml(am));
+        markFresh($('messages').lastElementChild);
+        attachMsgActions();
+      }
+      try { await setLeaf(myCharId, am.id); } catch {}
+      ph?.remove();
     }
 
     if (e.name === 'AbortError') {
@@ -6718,28 +7030,19 @@ let namedInText = false;
       // 保留气泡并写明原因，方便定位；不再让现场凭空消失
       const bub = ph.querySelector('.bub');
       if (bub) {
-        bub.className = 'bub err-bub';
-        bub.textContent = '';
-        const line1 = document.createElement('div');
-        line1.className = 'err-title';
-        line1.textContent = '⚠ 这条没发出去';
-        const line2 = document.createElement('div');
-        line2.className = 'err-detail';
-        line2.textContent = String((e && e.message) || e).slice(0, 200);
-        const btn = document.createElement('button');
-        btn.className = 'retry-btn';
-        btn.textContent = '重试一次';
-        // ⚠️ v1.21.54（审计发现）：续写这一轮【没有用户消息】，um 恒为 undefined，
-        //    而 retrySend 遇到没指定 id 时会静默退回"最后一条用户消息"——
-        //    于是点这个按钮会把【上一条真实消息】删掉、再以新时间重发一次：
-        //    读出来成了「她先回答、他后提问」，正是下面那段注释明确要避免的错序，
-        //    而且这条错序会一直作为历史喂给模型。续写的"重试"应该是"再续一次"。
-        btn.onclick = () => { ph.remove(); if (cont) send({ cont: true }); else retrySend(um && um.id); };
-        bub.appendChild(line1); bub.appendChild(line2); bub.appendChild(btn);
+        // v0.5.3.2（清单 §3.1）：卡片由 paintErrCard 画 —— 一句话原因 + 步骤 +
+        // 动作按钮 + 折叠的技术详情；服务端原文不再顶在标题上。
+        // ⚠️ 续写这一轮【没有用户消息】，um 恒为 undefined，而 retrySend 遇到没指定
+        //    id 时会静默退回"最后一条用户消息"，把上一条真实消息删掉再重发 ——
+        //    读出来成了「她先回答、他后提问」，这条错序还会一直作为历史喂给模型。
+        //    所以续写的"重试"必须是"再续一次"。
+        paintErrCard(bub, e, {
+          onRetry: () => { ph.remove(); if (cont) send({ cont: true }); else retrySend(um && um.id); }
+        });
       }
       scrollBottom();
     } else {
-      toast('出错：' + ((e && e.message) || e), 4200);
+      toast('出错：' + explain(e).title, 4200);
     }
   } finally {
     busy = false;
@@ -8550,6 +8853,67 @@ function inputMinPx() {
  * 字数只在【回车是换行】时显示：设置页自己写着这句话。
  * 回车即发的人不需要字数 —— 他没机会写长，字数是纯噪音。
  */
+// ================= 输入草稿（v0.5.3.2，清单 §3.5）=================
+// 以前输一半退出、或者被系统杀掉后台，再回来输入框是空的 —— 只能重打。
+// 这里按角色存一份纯文本：kv 的 draft:<charId>。
+//   · 输入时 350ms 防抖写一次
+//   · pagehide / 切到后台时【强制再写一次】（Android 杀进程前基本只给这一下）
+//   · 只存文本，不存图片和「＋」里挂的功能 —— 恢复出来的是他自己打的字
+//   · 发送成功 / 清空聊天 / 删除角色时清掉
+const DRAFT_DEBOUNCE = 350;
+let _draftTimer = 0;
+
+const draftKey = (cid) => 'draft:' + cid;
+
+function draftText() {
+  const el = $('input');
+  return el ? String(el.value || '') : '';
+}
+
+/** 立刻写（不防抖）。cid 省略时用当前角色。 */
+async function saveDraftNow(cid) {
+  const id = cid || curCharId;
+  if (!id) return;
+  const t = draftText();
+  try {
+    if (t.trim()) await kv.set(draftKey(id), t);
+    else await kv.del(draftKey(id));
+  } catch { /* 存不下也不该挡住打字 */ }
+}
+
+function queueSaveDraft() {
+  const id = curCharId;
+  if (!id) return;
+  clearTimeout(_draftTimer);
+  _draftTimer = setTimeout(() => { saveDraftNow(id); }, DRAFT_DEBOUNCE);
+}
+
+/**
+ * 进入角色时把草稿放回输入框。
+ * ⚠️ 输入框里已经有字（「编辑重发」/「从这里重聊」恢复出来的，或从分享进来的）
+ *    就【不覆盖】：那是他此刻正要发的东西。草稿留在库里，不静默吞掉。
+ * ⚠️ 恢复不自动发送、不重复计费 —— 只是把字放回去。
+ */
+async function restoreDraft(cid) {
+  if (!cid) return;
+  let t = '';
+  try { t = String((await kv.get(draftKey(cid), '')) || ''); } catch { return; }
+  if (!t.trim()) return;
+  const el = $('input');
+  if (!el) return;
+  if (String(el.value || '').trim()) return;
+  el.value = t;
+  syncInput();
+  try { el.setSelectionRange(t.length, t.length); } catch { /* 光标放不到末尾也不算错 */ }
+}
+
+async function clearDraft(cid) {
+  const id = cid || curCharId;
+  if (!id) return;
+  clearTimeout(_draftTimer);
+  try { await kv.del(draftKey(id)); } catch { /* 清不掉不影响发送 */ }
+}
+
 function syncInput() {
   const el = $('input');
   if (!el) return;
@@ -8770,6 +9134,104 @@ function restoreTurn(m) {
 }
 
 /** 气泡上的「附加内容」：这条消息挂了什么功能、里面写了什么 */
+// ============================================================
+// 错误卡（v0.5.3.2，清单 §3.1）
+// ============================================================
+// 以前失败只留两行：⚠ 这条没发出去 + 服务端原文（"API 错误 400: Bad Request"）。
+// 那两行告诉他的信息量约等于零：是钱没了、key 错了、还是模型名打错了？
+// 现在卡片分三层，从上到下按「他要做什么」排：
+//   一句话原因 → 步骤 → 折叠的技术详情（排错用：provider/model/status，
+//   绝不含 key 与聊天正文）
+// 按钮由 errorkit 的 actions 决定，只放这一步用得上的。
+// ⚠️ 她本人不说系统话：错误一律走这张卡，不写进她的气泡。
+
+/** 把用户送到「我的设置 → 接口」，顺手展开 + 聚焦 Key 输入框 */
+function openApiSettings() {
+  try {
+    showView('mine');
+    const head = $('api-fold'), wrap = $('api-wrap');
+    if (wrap && !wrap.classList.contains('open')) {
+      wrap.classList.add('open');
+      if (head) head.classList.add('open');
+    }
+    if (wrap) wrap.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const k = $('s-apikey');
+    if (k) { try { k.focus({ preventScroll: true }); } catch { k.focus(); } }
+  } catch { /* 送不过去也不该盖住真正的原因 */ }
+}
+
+async function copyDiag(e) {
+  const txt = diagText(e, { provider: S.provider, model: S.model, baseUrl: S.baseUrl, version: WEB_VERSION_FALLBACK });
+  try { await navigator.clipboard.writeText(txt); toast('诊断信息已复制（不含 Key 和聊天内容）'); }
+  catch { toast('复制失败，展开「技术详情」长按手动复制', 3600); }
+}
+
+const ERR_ACT_NAME = {
+  fillkey: '去填 Key', provider: '换接口 / 模型', testconn: '测试连接',
+  retry: '重试一次', copy: '复制诊断', recharge: '去哪充值'
+};
+
+/**
+ * 把一个错误画成卡。
+ * @param {Element} bub 占用的那个气泡（.bub）—— addBubble 返回的是 Element
+ * @param {any} e 抛出来的错误
+ * @param {{onRetry?:Function}} [h]
+ */
+function paintErrCard(bub, e, h) {
+  const info = explain(e);
+  const opt = h || {};
+  bub.className = 'bub err-bub';
+  bub.textContent = '';
+
+  const title = document.createElement('div');
+  title.className = 'err-title';
+  title.textContent = '⚠ ' + info.title;
+  bub.appendChild(title);
+
+  if (info.steps && info.steps.length) {
+    const box = document.createElement('div');
+    box.className = 'err-steps';
+    for (const s of info.steps) {
+      const li = document.createElement('div');
+      li.className = 'err-step';
+      li.textContent = '· ' + s;
+      box.appendChild(li);
+    }
+    bub.appendChild(box);
+  }
+
+  const row = document.createElement('div');
+  row.className = 'err-btns';
+  const acts = (info.actions && info.actions.length) ? info.actions : ['retry', 'copy'];
+  for (const a of acts) {
+    const b = document.createElement('button');
+    // ⚠️ retry-btn 只留给「重试」那一个：e2e 与样式都拿它当"这条卡能重发"的标志，
+    //   全部按钮都挂这个类的话 $('.retry-btn') 会数出 2 个。
+    b.className = 'err-btn' + (a === 'retry' ? ' retry-btn' : '');
+    b.textContent = ERR_ACT_NAME[a] || a;
+    b.onclick = () => {
+      if (a === 'retry') { if (opt.onRetry) opt.onRetry(); }
+      else if (a === 'fillkey' || a === 'provider' || a === 'recharge' || a === 'testconn') openApiSettings();
+      else if (a === 'copy') copyDiag(e);
+    };
+    row.appendChild(b);
+  }
+  bub.appendChild(row);
+
+  // 技术详情默认折叠，原文一个字不改 —— 排错全靠它。
+  if (info.detail) {
+    const det = document.createElement('details');
+    det.className = 'err-more';
+    const sm = document.createElement('summary');
+    sm.textContent = '技术详情';
+    const pre = document.createElement('div');
+    pre.className = 'err-detail';
+    pre.textContent = info.detail.slice(0, 500);
+    det.appendChild(sm); det.appendChild(pre);
+    bub.appendChild(det);
+  }
+}
+
 async function showTurnTags(id) {
   const all = await msgs.list(curCharId, 0, true);
   const m = all.find(x => x.id === id);
@@ -8786,8 +9248,14 @@ async function showTurnTags(id) {
   await infoBox(tt('这一轮的附加内容'), rows);
 }
 
-/** 只读弹层：复用 #modal，临时把「取消」藏起来（confirmBox 会自己设回来） */
-function infoBox(title, html) {
+/**
+ * 只读弹层：复用 #modal，临时把「取消」藏起来（confirmBox 会自己设回来）。
+ *
+ * v0.5.3.2：第三个参数 onMount(root, close) 给"弹层里还要能点"的内容用
+ * （比如记忆来源里那句「回聊天里看看」）。不给它就没法在内容里挂事件 ——
+ * 函数返回的 Promise 要等弹层关掉才 resolve，那时候绑已经晚了。
+ */
+function infoBox(title, html, onMount) {
   return new Promise(resolve => {
     const box = $('modal');
     $('modal-title').textContent = title;
@@ -8795,12 +9263,16 @@ function infoBox(title, html) {
     $('modal-ok').textContent = tt('知道了');   // 审计 F20：硬编码中文在英文界面下不翻
     $('modal-cancel').classList.add('hidden');
     box.classList.remove('hidden');
-    $('modal-ok').onclick = () => {
+    const close = () => {
       box.classList.add('hidden');
       $('modal-cancel').classList.remove('hidden');
       $('modal-ok').onclick = null;
       resolve(true);
     };
+    $('modal-ok').onclick = close;
+    if (typeof onMount === 'function') {
+      try { onMount($('modal-text'), close); } catch { /* 挂不上不影响看内容 */ }
+    }
   });
 }
 
@@ -9142,6 +9614,14 @@ async function openCharEdit(id, presetKey) {
     renderPovNote(v);
   });
 
+  // 风格卡（v0.5.3.2 · 清单 §7.3）：样例段落 + 禁用词。
+  // ⚠️ 直接读角色自己的字段（c.styleCard），不走 P —— 理由同上面 povStyle 那段。
+  {
+    const sc = normalizeStyleCard(c && c.styleCard);
+    $('e-stylesample').value = sc.sample;
+    $('e-styleban').value = sc.ban.join('\n');
+  }
+
   // 「表达预设」（v1.21.48）：陪伴 / 作家，点一下把一组值填进表单。
   //
   // ⚠️ 它【不新增任何字段】，只是几行赋值的快捷方式 —— 这正是设计建议里明确要求那条：
@@ -9283,6 +9763,10 @@ async function saveCharEdit() {
     userPerception: $('e-userperc').value.trim(),
     userKnowledge: $('e-userknow').value.trim(),
     userAttitude: $('e-useratt').value.trim(),
+    // 风格卡（v0.5.3.2）：两个 textarea 合成一个对象存。
+    // ⚠️ 组装放在 collectStyleCard() 里，不在这里写 { sample: …, ban: … } ——
+    //    e2e-ccsync 靠正则从这段 data 字面里抓字段名，内联写会被当成两个新字段。
+    styleCard: collectStyleCard(),
     typingDelay: num('e-delay', S.typingDelay),
     hesitation: $('e-hesit').checked,
     showTyping: $('e-showtyping').checked,
@@ -11805,6 +12289,9 @@ const SC_MODE_NOTE = {
 let _scCharId = '';    // 开戏弹窗当前选中的角色
 let _scSrc = 'blank';  // 从哪儿起：blank（空白开戏）/ chat（从聊天成章）
 let _scChat = null;    // 「从聊天成章」的前情快照 { msgIds, excerpt }，切换角色时清掉重抓
+// v0.5.3.1：能指定从哪条起（长按消息 → 以这段写小说）。空 = 老规矩，取最后 30 条。
+let _scFrom = '';      // 起点消息 id（含）
+let _scTo = '';        // 终点消息 id（含），空 = 到这条对话为止
 let _scLen = 'short';
 let _scMode = 'actor';
 let _scCharName = '';
@@ -11814,10 +12301,23 @@ let _scCharName = '';
  * 取活动路径最后 30 条、拼成几行存进场景卡 —— 之后聊天被删被改被切支，这场戏读到的还是当初那段。
  * 只有 chat 模式才用；空白开戏一个字都不读。
  */
-async function scChatSnapshot(charId) {
+async function scChatSnapshot(charId, range) {
   try {
     const list = await curMsgsAll(charId);
-    const tail = list.filter(m => m && m.content && !m.archived).slice(-30);
+    const from = String((range && range.from) || '').trim();
+    const to = String((range && range.to) || '').trim();
+    let seg = list.filter(m => m && m.content && !m.archived);
+    // 他选了一段，就按他选的来（v0.5.3.1）。选不到（那条在别的支上 / 被归档了）
+    // 就退回「最后 30 条」—— 给了起点却拿到空串，比退回更难受。
+    if (from) {
+      const i = seg.findIndex(m => m.id === from);
+      if (i >= 0) seg = seg.slice(i);
+    }
+    if (to) {
+      const j = seg.findIndex(m => m.id === to);
+      if (j >= 0) seg = seg.slice(0, j + 1);
+    }
+    if (!from && !to) seg = seg.slice(-30);
     const allChars = await chars.all();
     const me = String((S && S.userName) || '').trim() || '你';
     const nameOf = (m) => {
@@ -11828,16 +12328,18 @@ async function scChatSnapshot(charId) {
       }
       return _scCharName || '她';
     };
-    let txt = tail.map(m => nameOf(m) + '：' + String(m.content).replace(/\s+/g, ' ').trim()).join('\n');
-    if (txt.length > 1800) txt = '…' + txt.slice(-1800);
-    return { msgIds: tail.map(m => m.id), excerpt: txt };
+    let txt = seg.map(m => nameOf(m) + '：' + String(m.content).replace(/\s+/g, ' ').trim()).join('\n');
+    // v0.5.3.1：取消 1800 字的硬截。选了一段却只喂进去 1800 字，正文自然「牛头不对马嘴」——
+    // 模型没读到的东西它写不出来。改成按 8000 字兜底（真超了留最近的那部分）。
+    if (txt.length > 8000) txt = '（前面还有一段，这里只留最近的部分）\n' + txt.slice(-8000);
+    return { msgIds: seg.map(m => m.id), excerpt: txt };
   } catch { return { msgIds: [], excerpt: '' }; }
 }
 
 /**
  * 开戏那一刻的「底色」快照（v0.5.2.4 起，v0.5.2.5 改成块级装配）。
  *
- * 之前小说提示词里【只有名字】：角色叫「八云紫」，模型就拿一个通用的「她」往上写 ——
+ * 之前小说提示词里【只有名字】：只给角色一个名字，模型就拿一个通用的「她」往上写 ——
  * 这是评审里那句「把一个单场草稿生成器叫小说模式」的根。
  * 拼完存进 scene.context，这一场之后不再读库 —— 和 source.excerpt 一样是快照隔离。
  *
@@ -11920,7 +12422,7 @@ async function buildSceneContext(charId, sceneId, scene) {
   // 两路来源，都进同一块：
   //   ① 常驻（pos === 'always'）—— 聊天侧进稳定前缀的那一批；
   //   ② 用场景卡自己写的字（地点 / 时间 / 导演指令）命中关键词的（v0.5.2.5）。
-  //      为什么补第 ② 路：真实卡（芙兰朵露）39 条世界书 pos 全是空、一条常驻都没有，
+  //      为什么补第 ② 路：那张 39 条世界书的大卡 pos 全是空、一条常驻都没有，
   //      于是整个「世界底色」块是空的 —— 而那些条目全靠「你是谁 / 水 / 地下室」这类
   //      提问触发，开戏时没有对话可匹配。填了「地下室」就带出地下室那条，有就赚。
   // 场景命中的条目在开戏那一刻定下来、写进快照，之后不再变 ——
@@ -12092,10 +12594,18 @@ function refreshSceneNote() {
   const n = $('sc-mode-note');
   if (n) n.textContent = SC_MODE_NOTE[_scMode] || '';
   const s = $('sc-src-note');
-  if (s) s.textContent = SC_SRC_NOTE[_scSrc] || '';
+  if (!s) return;
+  let txt = SC_SRC_NOTE[_scSrc] || '';
+  // 选了起点就把「这次到底带进去多少」写出来（v0.5.3.1）：
+  // 不写的话他没法判断模型是不是真的读到了他选的那一段。
+  if (_scSrc === 'chat' && _scChat && _scChat.msgIds && _scChat.msgIds.length) {
+    txt += ' 这次带进去 ' + _scChat.msgIds.length + ' 条、约 ' + _scChat.excerpt.length + ' 字'
+      + (_scFrom ? '（从你选的那条起）' : '') + '。';
+  }
+  s.textContent = txt;
 }
 
-async function openSceneModal() {
+async function openSceneModal(opts) {
   const list = await chars.all();
   if (!list.length) { toast('先建一个角色，再来开戏'); return; }
   const pick = (curCharId && list.some(c => c.id === curCharId)) ? curCharId : list[0].id;
@@ -12103,7 +12613,10 @@ async function openSceneModal() {
   _scCharName = (list.find(c => c.id === pick) || {}).name || '';
   _scLen = 'short';
   _scMode = 'actor';
-  _scSrc = 'blank';
+  // opts 只有「长按某条 → 以这段写小说」这条入口会传：src='chat' + from=<那条 id>。
+  _scSrc = (opts && opts.src) || 'blank';
+  _scFrom = (opts && opts.from) || '';
+  _scTo = (opts && opts.to) || '';
   _scChat = null;
   _scTemps = [];
   _scBeats = null;
@@ -12116,20 +12629,31 @@ async function openSceneModal() {
       _scCharId = sel.value;
       _scCharName = (list.find(c => c.id === sel.value) || {}).name || '';
       _scChat = null;   // 换了角色，前情也得重截
+      _scFrom = '';     // 起点是上一个角色的消息，换人就作废
     };
   }
   renderSeg('sc-src', [
     { label: '空白开戏', value: 'blank' },
     { label: '从这段聊起来', value: 'chat' }
   ], _scSrc, v => { _scSrc = String(v); refreshSceneNote(); });
+  // 四档（v0.5.3.1）：短/中 是一口气写完的片段，长/章 是分 3–5 拍分批写的。
+  // 长档不是「把上限调大」—— 一次要 4000–8000 字会被 token 上限截断、越往后越潦草，
+  // 所以拆成几拍，每拍一次请求、中间跑场记接力（见 scene.js 的 beatChars）。
   renderSeg('sc-len', [
     { label: '短 · 300–600 字', value: 'short' },
-    { label: '中 · 600–1200 字', value: 'medium' }
+    { label: '中 · 600–1200 字', value: 'medium' },
+    { label: '长 · 2000–4000 字', value: 'long' },
+    { label: '章 · 4000–8000 字', value: 'chapter' }
   ], _scLen, v => { _scLen = String(v); });
   renderSeg('sc-mode', USER_MODES.map(m => ({ label: USER_MODE_NAME[m], value: m })), _scMode, v => {
     _scMode = String(v);
     refreshSceneNote();
   });
+  // 从聊天起的话，先把前情算一次：说明里要写「带进去几条几字」，
+  // 也得让他看见选的起点确实是那条（v0.5.3.1）。
+  if (_scSrc === 'chat') {
+    try { _scChat = await scChatSnapshot(_scCharId, { from: _scFrom, to: _scTo }); } catch { _scChat = null; }
+  }
   refreshSceneNote();
 
   // 地点/时间/天气每次都清空：自动带上一场的值会让他没注意就把上一场的地点又用了一遍。
@@ -12275,9 +12799,14 @@ function sceneLogHtml(sc) {
   if (ns.length) h += '<div class="rv-log-line"><b>新设定</b>' + ns.map(x => esc(x)).join('；') + '</div>';
   h += '<label class="rv-log-ck"><input type="checkbox" id="rv-log-reckon"'
     + (sc.canon === true ? ' checked' : '') + '> 这一场算正史（可以记进记忆）</label>';
+  // 灰着的时候必须说清「先勾什么」—— 否则它就是个死按钮（v0.5.3.1）。
+  const memLocked = sc.canon !== true;
   h += '<div class="rv-row">';
-  h += '<button id="rv-log-mem"' + (sc.canon === true ? '' : ' disabled') + '>记进记忆</button>';
+  h += '<button id="rv-log-mem"' + (memLocked ? ' disabled' : '') + '>记进记忆</button>';
   if (ns.length) h += '<button id="rv-log-canon">存进设定补记</button>';
+  h += '<span class="rv-log-tip" id="rv-log-tip">'
+    + (memLocked ? '先勾上「这一场算正史」' : '会写成待确认的记忆，去「已记住的事」里确认')
+    + '</span>';
   h += '</div></div>';
   return h;
 }
@@ -12632,26 +13161,26 @@ function openBeatModal(sc) {
  */
 async function startScene() {
   // 「从聊天成章」要读库，放到点下去这一刻再抓：弹窗里选一下不该就为了它去翻 200 条消息。
-  if (_scSrc === 'chat' && !_scChat) _scChat = await scChatSnapshot(_scCharId);
+  if (_scSrc === 'chat' && !_scChat) _scChat = await scChatSnapshot(_scCharId, { from: _scFrom, to: _scTo });
   const sc = scDraftScene();
   if (!sc) { toast('先选一个角色'); return; }
   if (_scSrc === 'chat' && !(sc.source && sc.source.excerpt)) toast('这段聊天还没什么内容，按空白开戏写', 3500);
   $('scn-modal').classList.add('hidden');
   _scStarting = true;
   if (!S.apiKey) { toast('还没填 API Key'); return; }
-  if (sc.length === 'medium') {
+  if (sc.length !== 'short') {
     toast('在分拍…', 4000);
     let r = null;
     try { r = await genBeatPlan({ scene: sc, cfg: sceneCfg() }); } catch (e) { r = null; }
     if (r && r.ok && r.beats.length) {
-      const arr = r.beats.slice(0, beatCountFor('medium')).map(b => ({
+      const arr = r.beats.slice(0, beatCountFor(sc.length)).map(b => ({
         start: String((b && b.start) || '').slice(0, 300),
         change: String((b && b.change) || '').slice(0, 300),
         stop: String((b && b.stop) || '').slice(0, 300),
         guardrails: (Array.isArray(b && b.guardrails) ? b.guardrails : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, GUARDRAILS_MAX),
         turns: 0, done: false, doneBy: '', result: ''
       }));
-      _scBeats = clampBeats(arr, 'medium');
+      _scBeats = clampBeats(arr, sc.length);
       sc.beats = _scBeats;
       openBeatModal(sc);
       return;
@@ -12703,7 +13232,8 @@ async function trashScene(s) {
   _scNow = null;
   _scTrash = false;
   await renderShelf();
-  showView('shelf');
+  // 删除是「退回书架」，不是「再进一次书架」—— 理由同 rv-back（v0.5.3.1）。
+  if (!goBack()) resetTo('shelf');
 }
 
 /** 从回收站拿回来。原来回收站只能看不能捞，「30 天内还能找回」就成了空话。 */
@@ -12884,7 +13414,7 @@ function bindSceneUI() {
   };
 
   // 书架
-  $('btn-shelf-back').onclick = () => { showView('chat'); };
+  $('btn-shelf-back').onclick = () => { if (!goBack()) resetTo('chat'); };
   $('btn-shelf-new').onclick = () => { openSceneModal(); };
 
   // 阅读页
@@ -12892,7 +13422,10 @@ function bindSceneUI() {
     if (_scBusy) { toast('还在写，写完再走'); return; }
     _scNow = null;
     await renderShelf();
-    showView('shelf');
+    // ⚠️ 必须是【退栈】，不能 showView('shelf')（v0.5.3.1 修）。
+    // 返回再压一次栈会变成 ['chat','shelf','read','shelf']：read 留在栈里被标成
+    // behind(-28%)，屏幕上右侧就露出半页书架 —— 用户报的横向错位就是这个。
+    if (!goBack()) resetTo('shelf');
   };
   $('rv-exit').onclick = () => { $('rv-ctrl').classList.add('hidden'); $('rv-back').onclick(); };
   $('rv-theme').onclick = () => {
@@ -13025,12 +13558,16 @@ async function refreshArcBar() {
   // 现在都只认 status 一个来源，不再各自再算一遍。
   const off = a.status === 'off' && !!(a.direction || n);
   const zh = getActiveLang() === 'zh';
+  // v0.5.3.2（清单 §7.5）：一张空卡不该在顶栏占一个像"有内容"的位置 ——
+  // 没有方向也没有拍时写「＋剧情」，读起来就是"这儿可以新建"，不是"这儿有个空卡"。
   const zhTxt = fin ? '剧情 · 完'
     : off ? '剧情 · 关'
-    : (on && n ? '剧情 · ' + (a.currentBeat + 1) + '/' + n : '剧情');
+    : (on && n ? '剧情 · ' + (a.currentBeat + 1) + '/' + n
+    : ((a.direction || n) ? '剧情' : '＋剧情'));
   const enTxt = fin ? 'Plot · done'
     : off ? 'Plot · off'
-    : (on && n ? 'Plot ' + (a.currentBeat + 1) + '/' + n : 'Plot');
+    : (on && n ? 'Plot ' + (a.currentBeat + 1) + '/' + n
+    : ((a.direction || n) ? 'Plot' : '+ Plot'));
   btn.textContent = zh ? zhTxt : enTxt;
   // ⚠️ v0.5.0.1：这颗按钮【同时】归 applyI18n 管（index.html 上有 data-i18n-en）。
   //    英文下观察者 200ms 后会拿 dataset.i18nEn（初始是 'Plot'）把 textContent 覆盖掉，
@@ -13054,7 +13591,12 @@ function renderArcBeats() {
     // ⚠️ v0.5.0.2：加了两样状态 ——「演完没有」（done）和「演完实际发生了什么」（result）。
     //    没有 result，推进到下一拍之后模型完全不知道上一拍结果：卡上的「转折」写的是
     //    【预期】怎么结束，不等于真的那么发生了（它可能压根没发生）。
-    box.innerHTML = beats.map((b, i) => `
+    box.innerHTML = beats.map((b, i) => {
+      // v0.5.3.2（清单 §7.5）：四个细节字段收进「目标 · 卡点 · 转折 · 结果」，
+      // 默认只看得到"第几拍 + 名字 + 状态"。当前拍如果已经写过东西就【展开】它 ——
+      // 那是他正在演的那一拍，藏起来反而要多点一次。
+      const filled = [b.goal, b.obs, b.turn, b.result].filter(x => String(x || '').trim()).length;
+      return `
       <div class="arc-beat${i === cur ? ' cur' : ''}${b.done ? ' done' : ''}" data-i="${i}">
         <div class="arc-beat-head">
           <span class="arc-beat-no">${esc(tt('第 ' + (i + 1) + ' 拍'))}</span>
@@ -13066,11 +13608,15 @@ function renderArcBeats() {
           <button class="arc-flag${i === cur ? ' on' : ''}" data-act="set">${esc(i === cur ? tt('当前') : tt('设为当前'))}</button>
           <span class="arc-turns${i === cur && !b.done && (b.turns || 0) < _arcEdit.minTurns ? ' thin' : ''}">${esc(tt('演了 ' + (b.turns || 0) + ' 轮 / 至少 ' + _arcEdit.minTurns + ' 轮'))}</span>
         </div>
-        <div class="arc-beat-row"><label>${esc(tt('要到'))}</label><input data-f="goal" maxlength="200" placeholder="${esc(tt('这一拍要达到的地方'))}" value="${esc(b.goal)}"></div>
-        <div class="arc-beat-row"><label>${esc(tt('卡在'))}</label><input data-f="obs" maxlength="200" placeholder="${esc(tt('卡在哪、谁不肯让'))}" value="${esc(b.obs)}"></div>
-        <div class="arc-beat-row"><label>${esc(tt('终点'))}</label><input data-f="turn" maxlength="200" placeholder="${esc(tt('到这一拍结束才该发生的事'))}" value="${esc(b.turn)}"></div>
-        <div class="arc-beat-row"><label>${esc(tt('结果'))}</label><input data-f="result" maxlength="240" placeholder="${esc(tt('演完之后实际发生了什么（可空）'))}" value="${esc(b.result)}"></div>
-      </div>`).join('');
+        <details class="arc-beat-more"${(i === cur && (b.goal || b.obs || b.turn || b.result)) ? ' open' : ''}>
+          <summary>${esc(tt('目标 · 卡点 · 转折 · 结果'))}${filled ? esc(tt(' · 已写 ' + filled + ' 项')) : ''}</summary>
+          <div class="arc-beat-row"><label>${esc(tt('要到'))}</label><input data-f="goal" maxlength="200" placeholder="${esc(tt('这一拍要达到的地方'))}" value="${esc(b.goal)}"></div>
+          <div class="arc-beat-row"><label>${esc(tt('卡在'))}</label><input data-f="obs" maxlength="200" placeholder="${esc(tt('卡在哪、谁不肯让'))}" value="${esc(b.obs)}"></div>
+          <div class="arc-beat-row"><label>${esc(tt('终点'))}</label><input data-f="turn" maxlength="200" placeholder="${esc(tt('到这一拍结束才该发生的事'))}" value="${esc(b.turn)}"></div>
+          <div class="arc-beat-row"><label>${esc(tt('结果'))}</label><input data-f="result" maxlength="240" placeholder="${esc(tt('演完之后实际发生了什么（可空）'))}" value="${esc(b.result)}"></div>
+        </details>
+      </div>`;
+    }).join('');
   }
   $('arc-beats-cnt').textContent = beats.length + ' / ' + ARC_BEATS_MAX;
   $('arc-add-beat').disabled = beats.length >= ARC_BEATS_MAX;
@@ -13097,8 +13643,10 @@ function renderArcNow() {
   // 按钮亮着却点不动，是最难看的一种「没反应」。
   const offNow = _arcEdit.status === 'off' && !!(_arcEdit.direction || n);
   btn.disabled = offNow || (!n && !fin);
+  // v0.5.3.2（清单 §7.5）：说的是「下一步做什么」，不是「这一拍完了没有」——
+  // 原来那句读起来像在问他确认，实际是往前推一拍。
   btn.textContent = fin ? tt('开新一段')
-    : (atLastBeat(_arcEdit) ? tt('这一段演完了 →') : tt('这一拍演完了 →'));
+    : (atLastBeat(_arcEdit) ? tt('这一段演完了 →') : tt('演下一拍 →'));
   const hint = $('arc-now-h');
   if (hint) {
     hint.textContent = offNow
@@ -15056,12 +15604,28 @@ async function showMemSources(id, charId) {
       + picked.map(x => {
           const day = x.story && typeof x.story.day === 'number' ? x.story.day : null;
           const who = x.role === 'user' ? '你说的' : (x.who ? String(x.who) + '说的' : '她说的');
+          // v0.5.3.2（清单 §7.1「每条记忆能点回原话」）：光看摘出来的 400 字还不够 ——
+          // 得能跳回那句话在聊天里的位置，才说得上"核对过"。
           return '<div class="mem-src"><div class="mh">' + esc(who)
             + (day ? ' · 第 ' + day + ' 天' : '')
-            + '</div><div class="mb">' + esc(String(x.content || '').slice(0, 400)) + '</div></div>';
+            + '</div><div class="mb">' + esc(String(x.content || '').slice(0, 400)) + '</div>'
+            + '<button class="mem-src-go" data-src="' + esc(x.id) + '">' + esc(tt('回聊天里看这句')) + '</button></div>';
         }).join('')
     : '<p class="hint-text">这条没有来源记录。要么是旧版本记下的，要么是整理/导入之后剩下来的 —— 那时候还没存来源。</p>';
-  await infoBox('这条记忆从哪来', body);
+  await infoBox('这条记忆从哪来', body, (root, close) => {
+    root.querySelectorAll('.mem-src-go').forEach(b => {
+      b.onclick = async () => {
+        close();
+        // 记忆页看的是"任意一个角色"，聊天屏显示的是"当前那个" —— 不是同一个就先切过去，
+        // 否则 jumpToMsg 找不到元素只会说一句「那条已经不在这一屏」。
+        if (charId && charId !== curCharId) {
+          try { await selectChar(charId); } catch { /* 切不过去就按找不到处理 */ }
+        }
+        try { showView('chat'); } catch { /* 老路径没有这个视图就留在原地 */ }
+        jumpToMsg(b.dataset.src);
+      };
+    });
+  });
 }
 
 /**
@@ -15694,6 +16258,11 @@ const BACKUP_EXACT_KEYS = ['stRegex'];
  *  就是备份表去掉 arc：那几个全是「这段对话的记账」，对话没了它们毫无意义。
  *  剧情卡不一样 —— 它是【这段剧情】本身，清聊天不该顺手删掉用户手写的东西。 */
 const WIPE_CHAT_PREFIXES = BACKUP_KV_PREFIXES.filter(p => p !== 'arc:');
+// v0.5.3.2（清单 §3.5）：输入草稿随「清空聊天」一起清 —— 草稿就是这一轮没说出口的话，
+// 对话都清空了，它再冒出来只会让人莫名其妙。
+// ⚠️ 它【不进】备份表（BACKUP_KV_PREFIXES）：备份该还原「记得什么」，
+//    不该把「上次在另一台手机打了一半的字」也搬过来。
+WIPE_CHAT_PREFIXES.push('draft:');
 
 function isBackupKey(k) {
   const s = String(k || '');
@@ -16973,14 +17542,33 @@ function bindEvents() {
   // 引导条：点一下直接进设置，并滚到 / 聚焦到 API Key 输入框（v1.21.40）。
   // 那次 setTimeout 是必须的 —— 抽屉有 .34s 的滑出动画（见 style.css 的 .view），
   // 立刻 scrollIntoView 算的还是旧布局，会滚不到位。
-  $('setup-banner').onclick = () => {
-    openDrawer();
-    setTimeout(() => {
-      const el = $('s-apikey');
-      if (!el) return;
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      el.focus();
-    }, 400);
+  // v0.5.3.2（清单 §3.2 L2）：不再直接把人丢进设置页 —— 二十多个折叠项里自己
+  // 找第二、第三步，等于把「怎么配」这道题留给他。先给一个只讲三步的半屏 sheet，
+  // 里面就能粘、能测、能存；要换服务商才去设置页。
+  $('setup-banner').onclick = () => { openKeySheet(); };
+
+  // 配 Key sheet / 示例卡（v0.5.3.2，清单 §3.2）
+  if ($('ks-test')) $('ks-test').onclick = () => { testKeyFromSheet(); };
+  if ($('ks-save')) $('ks-save').onclick = () => { saveKeyFromSheet(); };
+  if ($('ks-later')) $('ks-later').onclick = () => { closeKeySheet(); };
+  if ($('ks-change')) $('ks-change').onclick = () => { closeKeySheet(); openApiSettings(); };
+  if ($('ks-demo')) $('ks-demo').onclick = () => { closeKeySheet(); openDemoCard(); };
+  if ($('ks-key')) $('ks-key').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); testKeyFromSheet(); }
+  });
+  if ($('demo-cancel')) $('demo-cancel').onclick = () => { closeDemo(); };
+  if ($('demo-go')) $('demo-go').onclick = () => { startWithDemo(); };
+
+  // 设置页里那个「测试连接」（v0.5.3.2，清单 §3.2）——
+  // 和 sheet 里的是同一个 testConnection，只是把结果写在 #s-testconn 上。
+  if ($('btn-testconn')) $('btn-testconn').onclick = async () => {
+    const out = $('s-testconn');
+    if (out) { out.textContent = '正在连…'; }
+    const r = await testConnection({ apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider });
+    if (r.ok) { if (out) out.textContent = tt('通了') + ' · ' + r.ms + 'ms'; return; }
+    const info = explain({ kind: r.kind, status: r.status, detail: r.msg });
+    if (out) out.textContent = info.title;
+    toast(info.title, 3600);
   };
 
   // 数据对账引导条（v0.4.0）：发现"记账还在、记录没了"时点它直达数据那一栏。
@@ -17032,7 +17620,10 @@ function bindEvents() {
   // 按下去等于什么都没发生，时间一到照样发。
   $('btn-stop').onclick = () => { cancelChain('自动续写已停'); if (abortCtl) abortCtl.abort(); };
 
-  $('input').addEventListener('input', () => syncInput());
+  $('input').addEventListener('input', () => { syncInput(); queueSaveDraft(); });
+  // 切到后台 / 离开页面时强制写一次（防抖还没到点就被杀掉的情况）。
+  window.addEventListener('pagehide', () => { saveDraftNow(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) saveDraftNow(); });
   $('input').addEventListener('keydown', e => {
     if (e.isComposing || e.keyCode === 229) return;   // 输入法选词中，回车是在选候选词
     if (e.key !== 'Enter' && e.key !== 'Return') return;
@@ -17774,7 +18365,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.3';
+const WEB_VERSION_FALLBACK = '0.5.3.2';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
@@ -17835,6 +18426,7 @@ async function init() {
   // 小说层（v0.5.2）：书架/阅读页/开戏弹窗的绑定。
   // 和 bindEvents 分开是为了让这块能独立复跑（E2E 会重复进 init 的路径）。
   bindSceneUI();
+  bindBranchUI();
   bindBackButton();
   renderAppVersion();   // 关于页版本号（v1.21.45）：真机读原生，不再写死 v0.1.0
   // ⚠️ updateStatus 必须在这里补一次（v1.21.40）。

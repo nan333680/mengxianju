@@ -20,8 +20,7 @@ export const SCENE_VER = 2;
  * 所以必须封顶。
  *
  * 这个数不是拍的：v0.5.2.5 拿一份真实的 19 个角色的备份量过 ——
- *   芙兰朵露 12478 / 八云紫 8892 / 冴月麟 6887 / 早苗 5583 / 普拉娜 5000 /
- *   小恶魔 4664 / 幽幽子 4348 / 海涅 3741，其余更短。
+ *   最长 12478 / 其次 8892 / 6887 / 5583 / 5000 / 4664 / 4348 / 3741，其余更短。
  * 第一版按评审建议写 3200，等于「最大那张卡的人设只进前 5%」，写出来必然不像她。
  * 而聊天侧一直把全量 persona 放在稳定前缀里（用户已经长期在付这笔钱），
  * 所以小说侧给 5000 字人设并不越界：19 个角色里 14 个能整份进去。
@@ -35,10 +34,22 @@ export const SCENE_VER = 2;
  */
 export const SCENE_CONTEXT_MAX = 11000;
 
-/** 两档长度：字数 = 上限，不是任务（§3） */
+/**
+ * 四档长度：字数 = 上限，不是任务（§3）。
+ *
+ * v0.5.3.1 补 long / chapter 两档。原来只有 300–600 和 600–1200，「从聊天写小说」
+ * 这件事在几千字的需求上根本没法用 —— 用户选了现成的一大段对话，给回来的
+ * 是三百字片段，看着像模型没读前情，其实是档位上限就写到那里。
+ *
+ * beats 是【分批发写的批数】：长档不能一次让模型吐 8000 字（会被 token 上限截断，
+ * 而且越往后越潦草），所以拆成几拍写、每拍一次请求、中间跑场记接力。
+ * 每拍的字数由 beatChars() 从总长除出来，不要在这里写死。
+ */
 export const SCENE_LENGTHS = {
   short: { min: 300, max: 600, beats: 1, label: '短' },
-  medium: { min: 600, max: 1200, beats: 2, label: '中' }
+  medium: { min: 600, max: 1200, beats: 2, label: '中' },
+  long: { min: 2000, max: 4000, beats: 3, label: '长' },
+  chapter: { min: 4000, max: 8000, beats: 5, label: '章' }
 };
 
 /** 在场方式（§10）。每场开时选一次，写进场景卡。 */
@@ -98,10 +109,23 @@ export function emptyBeat() {
   return { start: '', change: '', stop: '', guardrails: [] };
 }
 
-/** 这一场最多几拍：短场 1，中场 2（§5） */
+/** 这一场最多几拍：短场 1，中场 2，长场 3，整章 5（v0.5.3.1） */
 export function beatCountFor(length) {
   const L = SCENE_LENGTHS[length] || SCENE_LENGTHS.short;
   return L.beats;
+}
+
+/**
+ * 一拍该写多少字：总长按拍数除。
+ *
+ * 多拍是【分批写】的 —— 每一拍一次请求，只带着前面几拍的尾巴和场记。
+ * 所以提示词和质检都得以「这一拍」的字数为准，拿整场的 4000–8000 去卡一拍，
+ * 每一拍都会被判不合格然后白重试一次。
+ */
+export function beatChars(length) {
+  const L = SCENE_LENGTHS[length] || SCENE_LENGTHS.short;
+  const b = Math.max(1, L.beats);
+  return { min: Math.round(L.min / b), max: Math.round(L.max / b) };
 }
 
 /**
@@ -139,7 +163,9 @@ export function normalizeScene(raw) {
     msgIds: LINES(src.msgIds, 80, 400),
     // 「从聊天成章」派生时把前情【快照】进来存着（规格 §2「派生但快照隔离」）：
     // 之后聊天被改了、分支被切了，这场戏读到的还是当初那段。
-    excerpt: S(src.excerpt, 2000)
+    // v0.5.3.1：原来截 2000 字。他选了一段长对话让它改写，后半段在落库这一刻就被砍了 ——
+    // 截断点在 prompt 之前，看上去像模型没读到。放到 8000（app.js 的 scChatSnapshot 同一条线）。
+    excerpt: S(src.excerpt, 8000)
   };
   // 导入冲突时保留原 id（§12），不是内部字段，照实存着。
   out.sourceSceneId = S(a.sourceSceneId, 80);
@@ -337,15 +363,21 @@ export function narrationOnly(text) {
  * 质量闸门（§9.3）。返回 { ok, reasons, chars }。
  * reasons 里的每一条都是给人看的一句话，会原样显示在界面上（§8「显示原因」）。
  */
-export function checkQuality(text, scene) {
+export function checkQuality(text, scene, beatIdx) {
   const t = String(text || '');
   const reasons = [];
   const L = SCENE_LENGTHS[(scene && scene.length) || 'short'] || SCENE_LENGTHS.short;
   const n = countChars(t);
+  // 多拍是分批写的（v0.5.3.1）：字数要按【这一拍】判，不能拿整场的区间。
+  // medium 侥幸过是因为 600/2 = 300，正好等于下限；long 3 拍、chapter 5 拍
+  // 每一拍都只有总长的几分之一，按整场判就永远「字数不在区间内」，白重试一次。
+  const per = (L.beats > 1 && Number.isInteger(beatIdx)) ? beatChars(scene && scene.length) : null;
+  const lo = per ? per.min : L.min;
+  const hi = per ? per.max : L.max;
 
   if (!t.trim()) reasons.push('这一版是空的');
-  if (n && (n < L.min * 0.8 || n > L.max * 1.2)) {
-    reasons.push('字数 ' + n + '，不在 ' + L.min + '–' + L.max + ' 之间');
+  if (n && (n < lo * 0.8 || n > hi * 1.2)) {
+    reasons.push('字数 ' + n + '，不在 ' + lo + '–' + hi + ' 之间');
   }
   const want = S(scene && scene.beats && scene.beats[0] && scene.beats[0].change, 200);
   if (want && n > 0 && EMPTY_CHANGE.some(x => t.includes(x))) {
@@ -424,13 +456,22 @@ export function sceneProsePrompt(scene, opts = {}) {
   p.push(MODE_NOTE[a.userMode].join('\n'));
   p.push('这一拍要改变什么：' + (beat.change || '把这一段往前推一步，让某件事不一样'));
   if (beat.guardrails.length) p.push('不能出现什么：' + beat.guardrails.join('；'));
-  p.push('长度：' + L.min + '–' + L.max + ' 字（上限，不是任务）');
+  // 多拍时给的是【这一拍】的字数（v0.5.3.1）：写整场的 4000–8000 会让第一拍
+  // 就把整场铺开写掉，后面几拍无处可去。
+  const per = beatChars(a.length);
+  p.push(L.beats > 1
+    ? '这一场一共 ' + L.beats + ' 拍，这一拍只写 ' + per.min + '–' + per.max + ' 字（上限，不是任务）'
+    : '长度：' + L.min + '–' + L.max + ' 字（上限，不是任务）');
   p.push('');
-  // 「从聊天成章」时把那段聊天的快照带上：只当背景，不让它复述（§2）。
+  // 「从聊天成章」时把那段聊天的快照带上（§2）。
+  // v0.5.3.1 改了这里的口径：以前写「只当背景，接着它往下走」，结果模型拿它当人物关系表，
+  // 另起一件不相干的事来写 —— 他要的是「把我选的这段写成小说」。改成【素材】。
   if (a.source.kind === 'chat' && a.source.excerpt) {
-    p.push('【前情（从你们的聊天里截的，只当背景）】');
+    p.push('【素材：你们聊天里的一段】');
     p.push(a.source.excerpt);
-    p.push('上面这段是【以前发生过的】，不是这一场要写的内容：不要复述它，不要照抄原话，只让这一场接着它的关系往下走。');
+    p.push('这是【素材】不是概述：这一场要把其中发生过的事写成正文 —— 挑出里面真正发生的那几件事，一件一件铺开，让它具体到能看见。');
+    p.push('不要另起一件和它无关的事，也不要原话照抄对话（把「她说」写成旁白和动作）。');
+    p.push('素材里没写到、但这一场需要的东西（天气、声音、手上的动作）可以补，但不能改写素材里已经定下的事实。');
     p.push('');
   }
   p.push('【这一拍】');
@@ -458,7 +499,7 @@ export function sceneProsePrompt(scene, opts = {}) {
   p.push('- 下面这些说法一个都不许出现：' + PROSE_BAN.join('、') + '。');
   p.push('');
   p.push('【长度】');
-  p.push('写到这一场自然结束，但不超过上限。');
+  p.push(L.beats > 1 ? '这一拍自然停下就停，后面还有几拍，不要替它们把事做完。' : '写到这一场自然结束，但不超过上限。');
   p.push('接近上限时，停在完整句子，不要半句截断。');
   p.push('');
   if (opts.prevText) {
@@ -513,7 +554,7 @@ export function sceneProsePrompt(scene, opts = {}) {
   return p.join('\n');
 }
 
-/** 中场分镜提示词（§8）：先出 1~2 拍，他确认/改拍，再按拍写正文 */
+/** 分镜提示词（§8）：按档位出 1–5 拍，他确认/改拍，再按拍写正文（v0.5.3.1 起长档要 3、整章要 5） */
 export function sceneBeatPlanPrompt(scene) {
   const a = normalizeScene(scene);
   const L = SCENE_LENGTHS[a.length];
@@ -524,7 +565,7 @@ export function sceneBeatPlanPrompt(scene) {
   p.push('这一场要改变什么：' + (S(a.beats[0] && a.beats[0].change, 300) || '（没填）'));
   if (a.setting.place) p.push('地点：' + a.setting.place);
   if (main) p.push('主视角：' + main.name);
-  p.push('总长：' + L.min + '–' + L.max + ' 字，分 ' + L.beats + ' 拍。' + (L.beats > 1 ? '第二拍必须有一个小转折。' : ''));
+  p.push('总长：' + L.min + '–' + L.max + ' 字，分 ' + L.beats + ' 拍。' + (L.beats > 1 ? '从第二拍起，每一拍都要有一个小转折。' : ''));
   p.push('');
   p.push('每拍的格式：');
   p.push('{ "start": "从哪个动作或哪句话开始", "change": "这一拍结束时什么和开始时不一样", "stop": "停在哪句话或哪个动作", "guardrails": ["不能出现什么"] }');

@@ -3,6 +3,8 @@
 // v1.21.47 起不再是"只服务 DeepSeek"：任何说 OpenAI 兼容协议的服务商都能接，
 // 差异（推理强度档位、用量字段、思考字段名、余额接口）收进下面的档案表。
 
+import { kindOfStatus } from './errorkit.js';
+
 // ============================================================
 // 服务商档案
 // ============================================================
@@ -115,6 +117,39 @@ export function providerList() {
  * 读过的原文存在这里，下游优先取它。
  */
 const bodyTextCache = new WeakMap();
+
+/**
+ * 把 HTTP 层失败包成一个【带结构】的错误（v0.5.3.2，清单 §3.1）。
+ * message 仍是老格式（e2e 与日志靠它 grep），多出来的是 status / detail / kind：
+ * 界面拿 kind 去翻成人话，日志拿 detail 去排错，谁也不吃掉谁。
+ * @param {number} status
+ * @param {string} detail
+ */
+function apiErr(status, detail) {
+  // 抛给界面的对象要多挂几个字段（status/detail/kind），Error 的类型里没有它们
+  const e = /** @type {any} */ (new Error('API 错误 ' + status + (detail ? ': ' + detail : '')));
+  e.status = status;
+  e.detail = detail || '';
+  e.kind = kindOfStatus(status, detail);
+  return e;
+}
+
+/** 读失败响应体。400/422 的 body 已被 postChat 读走，必须用缓存那份。 */
+async function readErrDetail(res) {
+  const cached = bodyTextCache.get(res);
+  if (cached !== undefined) return errorMessageOf(cached);
+  try { return errorMessageOf(await res.text()); } catch { return ''; }
+}
+
+/** 可被打断的等待（用户按停止时立刻结束，不留一个睡着的定时器） */
+function nap(ms, signal) {
+  return new Promise(done => {
+    const t = setTimeout(done, ms);
+    if (!signal) return;
+    const bail = () => { clearTimeout(t); done(undefined); };
+    if (signal.aborted) bail(); else signal.addEventListener('abort', bail, { once: true });
+  });
+}
 
 /** 从错误响应里挑出人话：优先 JSON 的 error.message，退回落原文。 */
 function errorMessageOf(text) {
@@ -356,20 +391,23 @@ export async function* streamChat(opts) {
   // 以前只有 [DONE] 和正常扫完才 clearTimeout：API 报错、网络中断、用户点停止
   // 这几条路径上，那个 60 秒的看门狗会一直挂到最后，再对废弃的 controller 调 abort。
   try {
-    const res = await postChat(joinUrl(baseUrl, '/chat/completions'), apiKey, body, ctl.signal);
-
-    if (!res.ok) {
-      // ⚠️ 先看 postChat 有没有把 body 读走（400/422 会）——
-      // 读走了就必须用缓存，否则 res.text() 只会返回空串，
-      // 用户看到的就是没信息量的「Bad Request」（v1.21.54 修）。
-      let detail = '';
-      const cached = bodyTextCache.get(res);
-      if (cached !== undefined) {
-        detail = errorMessageOf(cached);
-      } else {
-        try { detail = errorMessageOf(await res.text()); } catch {}
-      }
-      throw new Error('API 错误 ' + res.status + ': ' + (detail || res.statusText));
+    // ⚠️ 限流与 5xx 在【HTTP 层】退避重试（v0.5.3.2，清单 §3.1）。
+    //    为什么放在这里而不是上层：此刻一个字都还没吐出去，重试没有任何副作用；
+    //    上层重试时已经分不清「这是第二次」还是「用户又发了一条」。
+    //    429 只重试【限流】，额度用完（quota）重试一百次也不会变。
+    //    401/402/403/404/400/422 一律不重试 —— 换一秒再问一遍，答案还是一样。
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      res = await postChat(joinUrl(baseUrl, '/chat/completions'), apiKey, body, ctl.signal);
+      if (res.ok) break;
+      const detail = await readErrDetail(res);
+      const kind = kindOfStatus(res.status, detail);
+      const retryable = (kind === 'rate' || kind === 'server') && attempt < 2;
+      if (!retryable) throw apiErr(res.status, detail || res.statusText);
+      const waitMs = (kind === 'rate' ? 1500 : 900) * (attempt + 1);
+      console.warn('[api] ' + res.status + ' ' + kind + '，' + waitMs + 'ms 后重试（第 ' + (attempt + 1) + ' 次）');
+      await nap(waitMs, ctl.signal);
+      bump();
     }
 
     const reader = res.body.getReader();
@@ -487,10 +525,8 @@ export async function onceChat(opts) {
   if (!res.ok) {
     // 同 streamChat：400/422 的 body 已被 postChat 读走，取缓存那份；
     // 这里以前只报状态码，服务端说了什么一概看不到（v1.21.54 修）。
-    const cached = bodyTextCache.get(res);
-    let detail = '';
-    try { detail = cached !== undefined ? errorMessageOf(cached) : errorMessageOf(await res.text()); } catch {}
-    throw new Error('API 错误 ' + res.status + (detail ? ': ' + detail : ''));
+    // v0.5.3.2：附带 status / detail / kind，界面才能翻成人话（清单 §3.1）。
+    throw apiErr(res.status, await readErrDetail(res));
   }
   const j = await res.json();
   const msg = j.choices?.[0]?.message || {};
@@ -510,6 +546,47 @@ export async function onceChat(opts) {
  * 直接给一句人话，而不是让用户去猜那个 404 是什么意思（设置页那边也会把
  * 这一行藏起来，这里只是兜底）。
  */
+/**
+ * 试一下这个 Key / 地址 / 模型能不能用（v0.5.3.2，清单 §3.2 L2）。
+ *
+ * ⚠️ 只发 1 个 token 的hello，不写提示词、不落聊天记录 —— 点一下最多花掉几厘钱。
+ * ⚠️ 失败时要把「是 key 的问题、是余额的问题、是模型名不对、还是根本连不上」
+ *    分出来。全都报「请求失败」等于什么都没说，用户只能挨个猜。
+ * 返回 { ok, kind, status?, msg, ms }；kind 与 errorkit 的 ERR_KIND 同一套词。
+ * @param {{apiKey:string, baseUrl:string, model:string, provider?:string, timeoutMs?:number}} opts
+ */
+export async function testConnection(opts) {
+  const { apiKey, baseUrl, model, provider, timeoutMs = 20000 } = opts || {};
+  if (!apiKey) return { ok: false, kind: 'auth', msg: '还没填 Key', ms: 0 };
+  if (!model) return { ok: false, kind: 'notfound', msg: '还没选模型', ms: 0 };
+  const spec = providerSpec(provider);
+  const ctl = new AbortController();
+  const timer = setTimeout(() => { try { ctl.abort(); } catch { /* 已结束 */ } }, timeoutMs);
+  const t0 = Date.now();
+  let res;
+  try {
+    res = await postChat(joinUrl(baseUrl, '/chat/completions'), apiKey, {
+      model,
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1,
+      stream: false,
+      ...(spec.thinkOff || {}),
+    }, ctl.signal);
+  } catch (e) {
+    const aborted = !!(e && (e.name === 'AbortError' || ctl.signal.aborted));
+    return {
+      ok: false,
+      kind: aborted ? 'timeout' : 'net',
+      msg: aborted ? ('等了 ' + Math.round(timeoutMs / 1000) + ' 秒没回话') : String((e && e.message) || e),
+      ms: Date.now() - t0,
+    };
+  } finally { clearTimeout(timer); }
+  const ms = Date.now() - t0;
+  if (res.ok) return { ok: true, kind: '', msg: '通了', ms };
+  const detail = await readErrDetail(res);
+  return { ok: false, kind: kindOfStatus(res.status, detail), status: res.status, msg: detail, ms };
+}
+
 export async function fetchBalance(opts) {
   const { apiKey, baseUrl, provider } = opts;
   if (!apiKey) throw new Error('还没填 API Key');

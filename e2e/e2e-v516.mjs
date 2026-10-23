@@ -39,10 +39,15 @@ console.log('');
 console.log('=== 2. 切分支不会把归档消息落下 ===');
 const sw = bodyOf(appJs, 'async function switchBranch', 3000);
 t('★ 切支读全量（含归档）', sw.includes('msgs.list(curCharId, 0, true)'), sw.slice(0, 240));
+// v0.5.3.1 把 switchBranch 拆成「内核 gotoBranch + 薄壳」，放回归档那段搬进了内核 ——
+// 断言跟着查内核，否则拆一次就红一次。
+const gb = bodyOf(appJs, 'async function gotoBranch', 3500);
 t('★ 切过去先把它那条线的归档放回来',
-  sw.includes('unarchiveOne'), '');
+  gb.includes('unarchiveOne'), gb.slice(0, 200));
 t('放回来的是【这条支上的】归档（不是全部）',
-  sw.includes('pathTo(all, leaf)') && sw.includes('.archived'), '');
+  gb.includes('pathTo(all, leaf)') && gb.includes('.archived'), '');
+t('离开这条线时把临时放回的再收回去（v0.5.1.7）',
+  gb.includes('putUnarchSet') && gb.includes('msgs.archive(back)'), '');
 
 console.log('');
 console.log('=== 3. 备份带上分支叶子 ===');

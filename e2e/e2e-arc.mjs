@@ -258,7 +258,8 @@ console.log('— 1. 默认没有卡 —');
 let bar = await arcBar();
 t('顶栏有剧情按钮', !!bar);
 t('默认不亮', bar && bar.on === false, JSON.stringify(bar));
-t('默认文案就是「剧情」', bar && bar.text === '剧情', bar && bar.text);
+// v0.5.3.2（清单 §7.5）：空卡不再在顶栏占一个像"有内容"的位置，改写成「＋剧情」
+t('默认文案就是「＋剧情」（空卡不装成有内容）', bar && bar.text === '＋剧情', bar && bar.text);
 const before = await kvGet('arc:' + C1);
 t('默认库里没有这张卡', !before, JSON.stringify(before));
 
@@ -316,7 +317,7 @@ console.log('— 5. 换角色不串味 —');
 await pickChar(C2);
 await sleep(600);
 bar = await arcBar();
-t('换到没卡的角色，顶栏复位', bar && bar.on === false && bar.text === '剧情', JSON.stringify(bar));
+t('换到没卡的角色，顶栏复位', bar && bar.on === false && bar.text === '＋剧情', JSON.stringify(bar));
 await clearHits();
 await say('嗯。');
 sys = await lastPrompt();
@@ -499,7 +500,7 @@ await page.evaluate(() => {
 const nowZh = await page.$eval('#arc-now-b', el => el.textContent.trim());
 t('「现在演到」显示当前拍', nowZh.startsWith('第 1 拍'), nowZh);
 const nextTxt = await page.$eval('#arc-next', el => el.textContent.trim());
-t('还有下一拍时按钮是「这一拍演完了 →」', nextTxt === '这一拍演完了 →', nextTxt);
+t('还有下一拍时按钮是「演下一拍 →」', nextTxt === '演下一拍 →', nextTxt);
 
 // ① 推进即落盘：点完【不点保存】，库里就该已经是新的
 await page.evaluate(() => document.getElementById('arc-next').click());
@@ -605,7 +606,7 @@ t('开新一段之后卡是空的、也不注入',
   !!c8 && !c8.direction && c8.beats.length === 0 && c8.status === 'off',
   JSON.stringify(c8 && { st: c8.status, n: c8.beats.length }));
 bar = await arcBar();
-t('顶栏回到裸「剧情」', bar && bar.text === '剧情', bar && bar.text);
+t('顶栏回到「＋剧情」', bar && bar.text === '＋剧情', bar && bar.text);
 
 console.log('— 11. 自动判定 beta（v0.5.0.3）—');
 await page.evaluate(() => {
@@ -693,7 +694,7 @@ const goneG = await kvGet('arc:G1');
 t('★ 删卡后库里没有这张卡', !goneG || !goneG.direction, JSON.stringify(goneG));
 t('别的角色的卡不受影响', !!(await kvGet('arc:' + C1)), '');
 bar = await arcBar();
-t('删卡后顶栏回到裸「剧情」', bar && bar.text === '剧情', bar && bar.text);
+t('删卡后顶栏回到「＋剧情」', bar && bar.text === '＋剧情', bar && bar.text);
 
 console.log('— 14. 状态诚实：off 是真暂停 / 推进可撤销 / 重抽不涨轮（v0.5.0.4）—');
 await pickChar(C2);

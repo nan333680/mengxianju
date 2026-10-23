@@ -56,7 +56,14 @@ page.on('request', req => {
         headers: { 'Access-Control-Allow-Origin': '*' },
         body: JSON.stringify({ error: { message: '模拟服务器错误(测试用)' } }) });
     } else {
-      req.continue();
+      // ⚠️ v0.5.3.2：这里原来 req.continue() 真打 api.deepseek.com。
+      //   key 是 sk-test，必然 401 —— 第 1 节「正常路径」其实一直靠错误气泡冒充回复，
+      //   断言只检查"最后一条不短于 2 个字"（错误文案满足）就绿了。
+      //   改成假造一条 SSE，这一节才真的在测正常链路，也不再依赖网络。
+      const sse = 'data: ' + JSON.stringify({ choices: [{ delta: { content: '好的，我在。' } }] })
+        + '\n\ndata: [DONE]\n\n';
+      req.respond({ status: 200, contentType: 'text/event-stream',
+        headers: { 'Access-Control-Allow-Origin': '*' }, body: sse });
     }
   } else req.continue();
 });
@@ -133,7 +140,8 @@ t('自动重试确实发了两次', apiCallCount >= 2, 'API 调用次数=' + api
 
 const errTxt = await page.$eval('.err-bub', el => el.textContent);
 console.log('  气泡内容: ' + errTxt.replace(/\s+/g,' ').slice(0, 120));
-t('显示了失败提示', errTxt.includes('没发出去'));
+// v0.5.3.2：错误卡改成「一句话原因 + 步骤」，不再有「没发出去」这句
+t('显示了失败提示', errTxt.includes('服务商那边繁忙或出错'), errTxt.slice(0, 40));
 t('显示了具体原因', /模拟服务器错误|500|API 错误/.test(errTxt), errTxt.slice(0,80));
 t('有重试按钮', (await page.$$('.retry-btn')).length === 1);
 await page.screenshot({ path: OUT + '/50-失败留痕.png' });

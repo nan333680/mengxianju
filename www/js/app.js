@@ -1,4 +1,4 @@
-import { kv, chars, msgs, mem, wb, scenes, uid, wipeAll, dbAdmin } from './db.js';
+import { kv, chars, msgs, mem, wb, scenes, uid, wipeAll, dbAdmin, DB_VERSION } from './db.js';
 import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, testConnection, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
 import { buildStablePrompt, buildTurnNote, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR, userSideLines } from './persona.js';
 import { assembleSceneContext, cleanExample, cutAtSentence } from './scenectx.js';
@@ -22,9 +22,14 @@ import { worstRepeat, REPEAT_WARN, REPEAT_LOOKBACK } from './prose.js';
 import { findCliches, templateHits } from './cliche.js';
 // 去 AI 味（0.5.3.4）：发给模型的【历史副本】和她新写的东西都要洗一遍套话。
 // 只改副本/新消息，库里已有的原文一个字不动 —— 见该文件头。
-import { deflavor } from './deflavor.js';
+import { deflavorFor } from './deflavor.js';
 // 错误翻译（v0.5.3.2，清单 §3.1）：一句话原因 / 下一步 / 按钮 / 该不该重试。
 import { explain, diagText, shouldRetry } from './errorkit.js';
+// 运行日志（0.5.3.5）：全局异常 + 最近 200 条上下文。这个应用此前一个 window.onerror 都没有，
+// 出问题只能靠肉眼复现猜根因 —— 用户方向文档 P0-1 说的就是这个。
+import { dlog, installDiag, setDiagCtx, diagEntries, diagClear, diagText as diagLogText } from './diag.js';
+// 提示词检查器（0.5.3.5）：把「实际发出去的那份」切段标注来源，纯变换，见该文件头。
+import { summarizePrompt, promptSummary } from './promptpeek.js';
 import { normalizeArc, arcActive, arcFinished, atLastBeat, beatTurns, emptyArc, ARC_BEATS_MAX, ARC_CONSTRAINTS_MAX } from './storyarc.js';
 // 内置示例卡（v0.5.3.2，清单 §3.2 L1）：一个角色都没有时，让人【立刻能试】
 import { STARTER_CARD, STARTER_HOOK } from './starter.js';
@@ -127,7 +132,7 @@ const DEFAULTS = {
   // ⚠️ 每一段都是一次完整请求、都是 6K 起的 max_tokens —— 默认必须是 0。
   epicChain: 0,
   typingDelay: 1.0, showTyping: true, hesitation: true,
-  longMemory: false, theme: 'dark', fontSize: 15, showUsage: true,
+  longMemory: false, theme: 'dark', fontSize: 15, showUsage: false,
   // 朗读（v1.21.56）：她说完自动读出来。默认关 —— 不是所有人任何时候都想被念出声。
   ttsOn: false,
   // 默认【关】：你手动加的记忆，整理时原样保留，她不许改也不许删
@@ -332,6 +337,14 @@ let allChars = [];
 const CONT_NUDGE = '（继续往下写，接着上一段，不要重复已经写过的内容）';
 // 上一轮请求的估算用量（含固定段），设置页拿它显示「现在占了多少」。
 let lastPromptTokens = 0;
+// 上一轮「实际发出去的请求」快照（0.5.3.5 提示词检查器）：只在内存里，
+// 覆盖式保存，不含图片二进制。发一条就能在设置 → 诊断里看它长什么样。
+let lastPromptSnap = null;
+// 去味记录（0.5.3.5，方向文档 P0-3）：最近 50 条「洗之前 → 洗之后」。
+// 只记【她新写出来的那一条】—— 历史清洗每轮十几条，全记的话真东西立刻被挤掉。
+// 存内存不落库：这是排错用的现场，不是用户数据；重开应用清空是合理的。
+const DEFLOG_MAX = 50;
+const defLog = [];
 
 let pendingImages = [];
 let pendingNotes = [];   // 和 pendingImages 一一对应，每张图自己的说明
@@ -343,6 +356,13 @@ let pendingNotes = [];   // 和 pendingImages 一一对应，每张图自己的�
 //    chip 画在输入行上、肉眼可见，不是「隐形开关」，所以不必跟着角色清。
 //    真要改就得连正文一起清（「输入行状态跟着角色走」），那是另一套交互。
 let pendingCmds = [];
+// 「缺星号那一层」连续没补到的次数（0.5.3.4 复查）：charId → 次数。
+// 为什么要有放弃机制：只要历史里一条星号都没有，`_needInner` 每轮都为真，
+// 于是【每一轮】都多发一次完整请求（输入还更长），实测连续两轮请求数都是 2。
+// 而这层收益早就递减到零 —— 模型两轮都不肯写，第三轮更不会。
+// 所以补不到两次就停手，只靠提示词；一旦哪条真写出了星号，历史里有了先例，
+// innerSeen 自己会变 true，也就用不着这条路了。
+const innerMiss = new Map();
 // 「本轮更改」的余温（v0.4.2.2）：上一轮他提的要求，这一轮还作数一次。
 // null = 没有；{ arg, msgId } = 上一轮那一条（msgId 用来点 ✕ 取消时回写落库消息）。
 // ⚠️ 只延续【一轮】：每轮发完就重算 —— 本轮没再提，这个变量当场清空。
@@ -1727,7 +1747,9 @@ function msgHtml(m, depth = 0) {
     // ⚠️ 类名里必须留着 ai（v0.4.1.6 自查）：别处（样式、e2e 的 DOM 断言）
     //    都按 .msg.ai 找"她说的话"，去掉它旁白就整条"消失"了。
     return '<div class="msg ai narr" data-id="' + esc(m.id) + '"><div class="bub narr-line">'
-      + renderBody(m.content || '') + (st0 ? '<div class="t">' + st0 + '</div>' : '') + '</div></div>';
+      // 旁白也要过显示侧正则（0.5.3.4 复查）：正文走 stRe，旁白原来不走，
+      // 于是同一段文字在旁白里不会被用户设的显示正则改。
+      + renderBody(stRe(m.content || '', 'display', depth)) + (st0 ? '<div class="t">' + st0 + '</div>' : '') + '</div></div>';
   }
   let inner = '';
   // 群聊：气泡顶上标出这是谁说的（单聊不显示，看着更干净）
@@ -1755,7 +1777,8 @@ function msgHtml(m, depth = 0) {
   // token 角标：总开关关掉时整条不渲染（历史记录里的 usage 仍然留着，随时能开回来）
   // ⚠️ usage 有两个来源：导入的备份、以及【模型接口原样返回的】那个对象（api.js 直接透传）。
   //    所以这几个数字必须当成外来数据 —— 先 Number() 化再拼进 HTML（v1.21.52）。
-  const u = S.showUsage === false ? null : m.usage;
+  // 默认不显示（0.5.3.5）：只有【显式打开】才画那行角标。老设置里没这个键的按关算。
+    const u = S.showUsage === true ? m.usage : null;
   const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
   const tok = u
     ? `<span class="tk" title="输入 ${num(u.prompt_tokens)} / 输出 ${num(u.completion_tokens)}">`
@@ -2164,9 +2187,19 @@ function placeMenu(menu, el) {
 // 代价：音色由【系统 TTS 引擎】决定（多数手机自带中文语音包），我们只能调语速音调。
 // 所以每一处入口都要先问 ttsAvailable()，不可用就明说，不给一个点了没反应的按钮。
 let _ttsOn = false;   // 当前是否正在朗读（给"停止"用）
+let _ttsProbe = 0;    // 「真的叫一下」的探针定时器（见 speak()）
 
 /** 这台设备有没有可用的朗读能力 */
+//
+// ⚠️ 「对象在」不等于「念得出来」。Android WebView 里 speechSynthesis 与
+//    SpeechSynthesisUtterance 都可能存在，而 speak() 永远不发声也不报错
+//    （Chromium 在 Android 上长期如此）—— 那就是一个点了没反应的哑按钮。
+//    所以下面除了能力探测，还加了一次【真的叫一下】的验证（见 speak() 的 2.5 秒探针）：
+//    叫不醒就把入口在本会话内收起来，并明说一句。
+let _ttsDead = false;   // 本会话内已判定「引擎叫不醒」（不落盘：下次启动重试一次）
+
 function ttsAvailable() {
+  if (_ttsDead) return false;
   try {
     return typeof window !== 'undefined'
       && 'speechSynthesis' in window
@@ -2184,6 +2217,10 @@ function ttsClean(text) {
     .replace(/[（(][^）)]{0,300}[）)]/g, '')
     // 心里话【整段不念】（0.5.3.4）：那是她没说出口的，念出来等于替她说了。
     // 顺序要紧：先括号、再星号段、最后才扫散落的记号 —— 反过来星号会被先吃掉。
+    // ⚠️ 先用【能跨行、不设字数上限】的宽松版剥一遍（0.5.3.4 复查）：
+    //    INNER_RE 的 [^*\n]{1,300} 不跨行，跨行或超长的心里话剥不掉，
+    //    剩下的 * 被下一行删掉 —— 那段心里话就变成正文被念出来了。
+    .replace(/\*[^*]+\*/g, '')
     .replace(INNER_RE, '$1')
     .replace(/[*_~`#>|]/g, '')
     .replace(/\s+/g, ' ')
@@ -2202,9 +2239,28 @@ function speak(text) {
     u.rate = 1;
     u.pitch = 1;
     u.onend = () => { _ttsOn = false; };
-    u.onerror = () => { _ttsOn = false; };   // 引擎中途报错也要复位，否则"停止"永远亮着
+    u.onerror = (ev) => {   // 引擎中途报错也要复位，否则"停止"永远亮着
+      _ttsOn = false;
+      // 方向文档 P1：以前这里静默复位，用户看到的是「点了没反应」。
+      // canceled / interrupted 是我们自己 cancel() 造成的，不算失败。
+      const k = ev && ev.error;
+      if (k && k !== 'canceled' && k !== 'interrupted') toast('朗读失败：' + k, 3600);
+    };
+    let started = false;
+    u.onstart = () => { started = true; };
     _ttsOn = true;
     window.speechSynthesis.speak(u);
+    // 真的叫一下：2.5 秒内 onstart 与 onerror 都没到，就当这台机器的引擎是哑的。
+    clearTimeout(_ttsProbe);
+    _ttsProbe = setTimeout(() => {
+      if (started || !_ttsOn) return;
+      _ttsDead = true;
+      _ttsOn = false;
+      try { window.speechSynthesis.cancel(); } catch { /* 停不掉也无所谓 */ }
+      toast('这台手机的 WebView 叫不醒朗读引擎 —— 入口先收起来了，下次打开再试一次', 5200);
+      // 长按菜单里有「朗读这条」，重绘一次它才会消失
+      renderMessagesIfIdle().catch(() => {});
+    }, 2500);
   } catch (e) {
     _ttsOn = false;
     console.warn('[朗读] 失败', e);
@@ -2306,6 +2362,11 @@ async function showMsgMenu(el) {
     // 朗读（v1.21.56）：只给她的消息 —— 念自己打的那句没有意义。
     // 引擎不可用（系统没装中文语音包）时干脆不给这一项，免得点了没反应。
     if (!isMe && ttsAvailable()) acts.push({ k: 'tts', t: '朗读这条' });
+    // 用量（0.5.3.5，方向文档 P0-5）：气泡右下角那一行默认不显示了 ——
+    // 它是给调参时看的，平时挂在每条消息上是干扰。但「这一条花了多少」仍然要问得到。
+    if (m.usage && (Number(m.usage.prompt_tokens) || Number(m.usage.completion_tokens))) {
+      acts.push({ k: 'usage', t: '这条的用量' });
+    }
     // v0.5.3.1：从这一条起写小说。★ 放在 del 之前 —— 「写小说」比「删除」常用，
     // 而且删除是最后一个位置（老手感），不该被新项挤动。
     acts.push({ k: 'mknovel', t: '以这段写小说' });
@@ -2467,6 +2528,13 @@ async function showMsgMenu(el) {
       // 从这一条起写小说（v0.5.3.1）。以前只有开戏弹窗里的「截最近 30 条」，
       // 想写哪一段全凭运气 —— 于是正文和想写的那段对不上，他以为是模型没读前情。
       await openSceneModal({ src: 'chat', from: m.id });
+    } else if (k === 'usage') {
+      const u = m.usage || {};
+      const pin = Number(u.prompt_tokens) || 0;
+      const out = Number(u.completion_tokens) || 0;
+      const hit = Number(u.prompt_cache_hit_tokens) || 0;
+      toast('这条：输入 ' + pin + ' / 输出 ' + out
+        + (hit ? '　缓存命中 ' + hit : ''), 3600);
     } else if (k === 'copy') {
       try { await navigator.clipboard.writeText(m.content || ''); toast('已复制'); }
       catch { toast('复制失败'); }
@@ -6339,7 +6407,7 @@ let namedInText = false;
     // ⚠️ 洗完变空就退回原文：宁可留着套话，也不能让历史里出现一条空气泡。
     const pastClean = pastRaw.map(m => {
       if (!m || m.role !== 'assistant' || typeof m.content !== 'string') return m;
-      const r = deflavor(m.content);
+      const r = deflavorFor(m.content, { model: P.model, provider: S.provider });
       return (r.hits.length && r.text.trim()) ? { ...m, content: r.text } : m;
     });
     const past = markHistoryTime(pastClean);
@@ -6716,6 +6784,20 @@ let namedInText = false;
     apiMsgs = composeApiMsgs(histBudget);
     // 给设置页「上一轮 ≈ 多少」留个数（含固定段）
     lastPromptTokens = fixedTokens + (ctxFit ? ctxFit.tokens : 0);
+    // 提示词检查器（0.5.3.5）：留一份【真正要发出去】的副本。
+    // ⚠️ 必须在这里记（composeApiMsgs 之后）：撞上超长会重拼一次，
+    //    早记的那份是旧的；而历史裁剪、世界书深度插入、/搜 都发生在这之前或之内。
+    // 不存 images：那是 base64，一条就能占几十 MB。
+    lastPromptSnap = {
+      at: Date.now(),
+      model: P.model,
+      charName: myChar ? myChar.name : '',
+      tokens: lastPromptTokens,
+      stable: sysStable || '',
+      note: turnNote || '',
+      search: searchBlock || '',
+      msgs: apiMsgs.map(m => ({ role: m.role, content: String(m.content == null ? '' : m.content) })),
+    };
   } catch (err) {
     // 前置步骤（写库 / 读历史 / 读记忆）失败时：把内容还给输入框并马上解锁。
     // 以前这些 await 在 try 之外，抛出去等于白打一段话，界面上什么都不显示。
@@ -6808,7 +6890,11 @@ let namedInText = false;
         bubble?.classList.remove('dots');
         for await (const chunk of stream) {
           full += chunk;
-          if (bubble) bubble.textContent = full;   // 切了角色就没气泡了，别硬写
+          // 流式期间先把星号隐掉（0.5.3.4 复查）：否则那几秒满屏 *_她心里的话_* 的字面记号。
+          // ⚠️ 只对【正在流式的这一个气泡】、只做显示，full 里星号一个不动；
+          //    结束后 7000 那条整体重绘成 <em class="inner-thought"> 斜体。
+          //    不做流式 innerHTML 拼接：半截的 * 会让每一帧的高亮位置乱跳。
+          if (bubble) bubble.textContent = full.replace(/\*/g, '');   // 切了角色就没气泡了，别硬写
           scrollBottom();
         }
         break;
@@ -6926,7 +7012,9 @@ let namedInText = false;
       // 第二个重写条件（0.5.3.4）：这段对话里还没有过「心里那一层」，这一条又写不出来。
       // 不加这层的话，星号通道纯靠采样运气 —— 实测同一套提示词能跑出 0/8，也能跑出 6/8。
       // 只补一次：补完就进历史，往后它自己会照着写（历史才是最强的范例）。
-      const _needInner = !innerSeen && !/\*[^*\n]{1,300}\*/.test(full);
+      // ⚠️ 有放弃上限（0.5.3.4 复查）：连续两次补不到就只靠提示词，见上面 innerMiss 的注释。
+      const _miss = innerMiss.get(myCharId) || 0;
+      const _needInner = !innerSeen && _miss < 2 && !/\*[^*\n]{1,300}\*/.test(full);
       if (_th.length || _needInner) {
         const asks = [];
         if (bad.length) asks.push('用了「' + bad.join('」「')
@@ -6944,29 +7032,59 @@ let namedInText = false;
               + '只输出重写后的完整消息，不要解释，不要提这条要求。）' }
           ]);
           let alt = '';
+          // ⚠️ 必须收第二趟的 finish_reason（0.5.3.4 复查）：原来没传 onFinish，于是
+          //    「重写版被 max_tokens 截断」会一路带着第一趟的 'stop' 混过关，
+          //    用一条说到一半的话顶掉本来完整的那条，而且界面上不报截断。
+          let fr2 = '';
           const st2 = streamChat({
             apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
             messages: retryMsgs, temperature: P.temperature,
             maxTokens: P.maxTokens, topP: P.topP,
             reasoningEffort: P.reasoningEffort,
             signal: abortCtl.signal,
-            onUsage: () => {}
+            onFinish: (r) => { fr2 = r; },
+            // 重写的这一趟同样是花钱的（输入还更长：整条原稿又发了一遍）。
+            // 原来这里是空函数，角标只记第一趟 —— 实际花了两趟的钱，界面只报一趟。
+            onUsage: (u2) => {
+              if (!u2) return;
+              if (!usage) { usage = u2; return; }
+              const n = (x) => Number(x) || 0;
+              usage = {
+                ...usage,
+                prompt_tokens: n(usage.prompt_tokens) + n(u2.prompt_tokens),
+                completion_tokens: n(usage.completion_tokens) + n(u2.completion_tokens),
+                total_tokens: n(usage.total_tokens) + n(u2.total_tokens),
+                prompt_cache_hit_tokens: n(usage.prompt_cache_hit_tokens) + n(u2.prompt_cache_hit_tokens),
+              };
+            }
           });
           for await (const ch of st2) alt += ch;
           alt = alt.trim();
+          // 重写版也要过一遍第一版过的那两道闸（0.5.3.4 复查）：
+          // 关着颜文字时它同样不该把 (*^ω^*) 带回来；空/纯标点同样不能采用。
+          if (!P.kaomojiFreq || P.kaomojiFreq <= 0) alt = stripKaomoji(alt);
           // 只有【重写后确实干净】才换 —— 否则可能拿一条更差的替掉原来那条。
+          const okFn = fr2 !== 'length' && fr2 !== 'content_filter' && fr2 !== 'safety';
+          const okTxt = !!alt && !/^[\s.…。，,、！!？?~～·]+$/.test(alt);
           const okTpl = !templateHits(alt).length;
           const okInner = !_needInner || /\*[^*\n]{1,300}\*/.test(alt);
-          if (alt && okTpl && okInner) {
+          if (alt && okFn && okTxt && okTpl && okInner) {
             full = alt;
             if (bubble) bubble.textContent = full;
+            innerMiss.delete(myCharId);
             console.warn('[重写] 采用重写版（' + full.length + ' 字）');
           } else {
-            console.warn('[重写] 重写版仍不合格或为空，保留原样');
+            if (_needInner) innerMiss.set(myCharId, _miss + 1);
+            console.warn('[重写] 重写版仍不合格或为空，保留原样'
+              + (_needInner ? '（缺星号那一层已连续 ' + (_miss + 1) + ' 次没补到）' : ''));
           }
         } catch (e) {
-          if (e.name === 'AbortError') throw e;
-          console.warn('[重写] 失败，保留原样：' + (e && e.message));
+          // ⚠️ 只有【首版本身没写完】才把中断往上抛（0.5.3.4 复查）。
+          //    首版早就完整流完了，这一趟只是「重写」—— 用户此时点停止或切角色，
+          //    原来会一路抛进半段分支，把一条完整回复存成「原文（已中断）」。
+          const headOk = finishReason === 'stop' && !!full.trim();
+          if (e.name === 'AbortError' && !headOk) throw e;
+          console.warn('[重写] 放弃重写，保留首版：' + (e && e.message));
         }
       }
     }
@@ -6976,9 +7094,10 @@ let namedInText = false;
     // 里不再长出新的「我认」「顿了顿」，也就不会再被当成范例回灌给自己。
     // ⚠️ 洗完变空就保留原文：宁可留一句套话，也不能让这一条凭空消失。
     {
-      const _df = deflavor(full);
+      const _df = deflavorFor(full, { model: P.model, provider: S.provider });
       if (_df.hits.length && _df.text.trim()) {
         console.warn('[去味] 命中 ' + _df.hits.join(' / '));
+        pushDefLog(full, _df.text, _df.hits);
         full = _df.text;
       }
     }
@@ -7107,6 +7226,11 @@ let namedInText = false;
 
   } catch (e) {
     console.error(e);
+    // ⚠️ 先记日志再动界面（0.5.3.5）：下面几条分支会改 toast / 删消息，
+    //    真出问题时诊断页里要留下【原始】错误，而不是被处理过的那一份。
+    //    AbortError 是用户按停止，不算错误，只记一条 act 便于对齐时间线。
+    if (e && e.name === 'AbortError') dlog('act', '用户停止生成', { 已收: String(full || '').length });
+    else dlog('send', e, { 模型: P.model, 角色: myCharId });
     const ph = document.getElementById(placeholderId);
 
     // ⚠️ 不是「用户按了停止」，就把已经落库的段撤掉（v1.21.52）。
@@ -7139,7 +7263,7 @@ let namedInText = false;
     //    屏幕上还是空的，用户以为是他手机的问题。
     if (e.name !== 'AbortError' && half) {
       // 半段也照洗（0.5.3.4）：被截断的这半句同样会进历史、同样会被当范例回灌。
-      const _dh = deflavor(half);
+      const _dh = deflavorFor(half, { model: P.model, provider: S.provider });
       const halfClean = (_dh.hits.length && _dh.text.trim()) ? _dh.text : half;
       const am = { id: uid(), charId: myCharId, role: 'assistant', content: halfClean + '（已中断）',
         ...sceneSnap(myChar), story: storyStamp(), ts: Date.now() };
@@ -7157,7 +7281,7 @@ let namedInText = false;
     if (e.name === 'AbortError') {
       ph?.remove();
       if (full.trim()) {
-        const _df2 = deflavor(full.trim());
+        const _df2 = deflavorFor(full.trim(), { model: P.model, provider: S.provider });
         const fullClean = (_df2.hits.length && _df2.text.trim()) ? _df2.text : full.trim();
         const am = { id: uid(), charId: myCharId, role: 'assistant', content: fullClean + '（已中断）', ...sceneSnap(myChar), story: storyStamp(), ts: Date.now() };
         am.parentId = (um && um.id) || _parent0;
@@ -9803,9 +9927,12 @@ async function openCharEdit(id, presetKey) {
     // 上下文轮数
     $('e-ctx').value = v.ctx;
     $('e-v-ctx').textContent = v.ctx;
+    // ⚠️ 0.5.3.4：非对话描写 / 描写详细程度两档已停用（index.html 里挂了 off-ctl），
+    //    但这一组预设仍会顺手把它们填成旧值 —— detectMode 要靠这两个值判「像哪一档」。
+    //    所以说明里不许再承诺「描写拉满 / 中等描写」：那是假承诺，填了也不生效。
     $('e-mode-note').innerHTML = isWriter
-      ? '已填入<b>作家</b>那套推荐值：第三人称跟随、描写拉满、长回复、不要颜文字和表情、上下文 30 轮。<br>想微调就改下面任意一项 —— 最后别忘了右上角 <b>✓</b>。'
-      : '已填入<b>陪伴</b>那套推荐值：只写她感知到的、中等描写、中等长度、颜文字偶尔、上下文 20 轮。<br>想微调就改下面任意一项 —— 最后别忘了右上角 <b>✓</b>。';
+      ? '已填入<b>作家</b>那套推荐值：第三人称跟随、长回复、强制聊天模式、不要颜文字和表情、上下文 30 轮。<br>（非对话描写那两档已停用，这里仍会顺手填成旧值，不影响输出。）<br>想微调就改下面任意一项 —— 最后别忘了右上角 <b>✓</b>。'
+      : '已填入<b>陪伴</b>那套推荐值：只写她感知到的、中等长度、颜文字偶尔、上下文 20 轮。<br>（非对话描写那两档已停用，这里仍会顺手填成旧值，不影响输出。）<br>想微调就改下面任意一项 —— 最后别忘了右上角 <b>✓</b>。';
     renderMode(kind);   // 按钮立刻亮成刚点的那一套
   };
   // 预设按钮该亮哪一个：【按当前参数值现算】，不存任何「模式」字段。
@@ -12823,7 +12950,9 @@ async function openSceneModal(opts) {
 function readParaHTML(b, i) {
   const cls = b.kind === 'user' ? 'rv-para rv-user'
     : (b.kind === 'dialogue' ? 'rv-para rv-dlg' : 'rv-para');
-  return '<p class="' + cls + '" data-bi="' + i + '">' + esc(b.text) + '</p>';
+  // 0.5.3.4：走 renderBody —— 小说层同样是模型写的，同样可能带 *心里话*。
+  // 原来这里用的是 esc(b.text)，星号会原样露在阅读页上。
+  return '<p class="' + cls + '" data-bi="' + i + '">' + renderBody(b.text) + '</p>';
 }
 
 function renderReadBody(sc) {
@@ -14560,6 +14689,43 @@ function backupEveryLabel(n) {
   return '每 ' + n + ' 天';
 }
 
+/**
+ * 聊天页的备份提醒（0.5.3.5，方向文档 P0-4 ①②）。
+ *
+ * 为什么放在聊天页：备份面板在「我的设置 → 数据」里，那是个【要去才看】的地方，
+ * 而「三天没备份了」正是那种看的时候才发现、等要用时已经晚了的账。
+ * 只在两种情形下说一句，其余时候一个字都不出现：
+ *   ① 自动备份开着，但超过 24 小时没写成（含写失败）
+ *   ② 从没成功写过，而库里确实有聊天记录
+ * 空库不提示 —— 没东西可丢的时候说「去备份」只会变成噪音。
+ */
+async function refreshBackupNudge() {
+  const b = $('backup-banner'), txt = $('backup-banner-txt');
+  if (!b || !txt) return;
+  let h = null, audit = null;
+  try { h = await kv.get('backupHealth', null); } catch { h = null; }
+  try { audit = await kv.get('dataAudit', null); } catch { audit = null; }
+  h = (h && typeof h === 'object') ? h : {};
+  // ⚠️ 门槛不能是 "> 0"：刚装上的库里只有一条开场白，那时候提示「去备份」
+  //    只是噪音 —— 备份要护的是聊出来的东西，不是一句问候语。
+  const msgs = Number(audit && audit.msgs) || 0;
+  const worth = msgs >= 10;
+  const at = Number(h.write && h.write.at) || 0;
+  const wrote = !!(h.write && h.write.ran);
+  const DAY = 24 * 3600 * 1000;
+  let show = false;
+  if (worth) {
+    if (wrote && Date.now() - at > DAY) {
+      txt.textContent = '上一次备份已经是一天多以前了 —— 补一份，才不会一次丢太多';
+      show = true;
+    } else if (!wrote && backupEveryDays()) {
+      txt.textContent = '这台手机还没成功备份过 —— 现在导出一次，换机和重装都靠它';
+      show = true;
+    }
+  }
+  b.classList.toggle('hidden', !show);
+}
+
 /** 备份里那份文件坏了没 —— 三种说法要分清楚，别一律说"坏了" */
 function verifyReasonText(reason) {
   const map = {
@@ -15281,7 +15447,7 @@ function bindSettings() {
   }
   $('s-theme').value = S.theme;
   $('s-font').value = S.fontSize; $('v-font').textContent = S.fontSize;
-  $('s-showusage').checked = S.showUsage !== false;   // 老设置没这个键，按开着算
+  $('s-showusage').checked = S.showUsage === true;   // 老设置没这个键，按关着算（0.5.3.5 起默认不显示）
 
   $('s-apikey').onchange = e => { saveSettings({ apiKey: e.target.value.trim() }); updateStatus(); refreshApiHint(); };
   // ⚠️ 明文公网地址要先确认（v1.21.56）。
@@ -17718,6 +17884,18 @@ function bindEvents() {
     toast(info.title, 3600);
   };
 
+  // 备份提醒（0.5.3.5）：直达「我的设置 → 数据」那一栏，导出按钮就在眼前。
+  // ⚠️ 不能直接 showView('mine') 就完事 —— 那是二十多个折叠项的长页面，
+  //    用户还得自己找「数据」在哪，等于把「怎么备份」这道题又留给他。
+  const bb = $('backup-banner');
+  if (bb) bb.onclick = () => {
+    showView('mine');
+    setTimeout(() => {
+      const sec = $('data-sec');
+      if (sec) sec.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }, 380);
+  };
+
   // 数据对账引导条（v0.4.0）：发现"记账还在、记录没了"时点它直达数据那一栏。
   // ⚠️ 复用的 setTimeout 理由同上 —— 抽屉有 .34s 的滑出动画。
   const db = $('data-banner');
@@ -18165,6 +18343,44 @@ function bindEvents() {
   // （一开始做成三个并排的折叠头，用户说不像「接口」那样的一层套一层）。
   fold('appear-fold', 'appear-wrap');
   fold('tavern-fold', 'tavern-wrap');
+  // 诊断（0.5.3.5）：角标显示当前日志条数 —— 一个 0 就说明干净，不必点进去。
+  fold('diag-fold', 'diag-wrap', refreshDiagHint);
+  $('btn-diag-open').onclick = openDiagModal;
+  $('btn-def-open').onclick = openDefModal;
+  $('def-close').onclick = closeDefModal;
+  $('def-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(defPlainText()); toast('已复制去味记录'); }
+    catch { toast('复制失败，可以长按文字手动复制'); }
+  };
+  $('btn-peek-open').onclick = openPeekModal;
+  $('peek-close').onclick = closePeekModal;
+  $('peek-copy').onclick = async () => {
+    const txt = peekPlainText();
+    try { await navigator.clipboard.writeText(txt); toast('已复制提示词全文'); }
+    catch { toast('复制失败，可以长按文字手动复制'); }
+  };
+  $('diag-close').onclick = closeDiagModal;
+  $('diag-clear').onclick = () => {
+    diagClear();
+    renderDiagModal();
+    refreshDiagHint();
+    toast('日志已清空');
+  };
+  $('diag-copy').onclick = async () => {
+    // 复制的是「元信息 + 全文」，不是 textarea 里那份 —— textarea 只显示，
+    // 用户手动全选复制容易漏掉头部的版本号，而那一行恰恰是最需要的。
+    const txt = diagLogText(diagMeta());
+    try {
+      await navigator.clipboard.writeText(txt);
+      toast('已复制 ' + diagEntries().length + ' 条日志');
+    } catch {
+      // 旧 WebView 上 clipboard 可能没有或被拒：退回到选中 textarea，让系统菜单去复制
+      const ta = $('diag-log');
+      try { ta.focus(); ta.select(); document.execCommand('copy'); toast('已复制'); }
+      catch { toast('复制失败，可以长按日志手动复制'); }
+    }
+  };
+  refreshDefHint();
   $('s-ranges-open').onclick = openPhaseModal;
   $('phase-cancel').onclick = closePhaseModal;
   $('phase-ok').onclick = async () => {
@@ -18512,10 +18728,178 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.3.4';
+const WEB_VERSION_FALLBACK = '0.5.3.5';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
+
+// ================= 诊断（0.5.3.5）=================
+/**
+ * 一屏看清「现在是什么版本、什么内核、日志里有什么」。
+ *
+ * 设计约束（用户方向文档 P0-1）：
+ *   · 只在内存里，200 条环形 —— 关掉 App 就没了，不落库、不占空间，也不会被一起备份走。
+ *   · 复制出去的永远是【元信息 + 全文】：只发几十行日志不带版本号，收到的人还是没法看。
+ *   · 这一页自己不做任何写操作，除「清空」以外都只读 —— 诊断页本身不该成为变量。
+ */
+let _diagApp = null;
+/** 问原生要 versionName / versionCode；桌面浏览器上必抛，返回空对象。 */
+async function diagAppInfo() {
+  if (_diagApp) return _diagApp;
+  _diagApp = {};
+  const App = capPlugin('App');
+  if (App && App.getInfo) {
+    try {
+      const info = await App.getInfo();
+      if (info) _diagApp = { version: String(info.version || ''), build: String(info.build || '') };
+    } catch { /* web 上必抛，保持空对象 */ }
+  }
+  return _diagApp;
+}
+
+/** 拼元信息。同步 —— 复制按钮也要用同一份，别让两处口径漂移。 */
+function diagMeta(info) {
+  const a = info || _diagApp || {};
+  const ents = diagEntries();
+  const errN = ents.filter(e => e.kind === 'error' || e.kind === 'reject').length;
+  const view = document.querySelector('.view.active');
+  return {
+    版本: (a.version || WEB_VERSION_FALLBACK) + (a.build ? ' (' + a.build + ')' : ''),
+    角色: curChar ? (curChar.name || '') + ' · ' + (curCharId || '') : '（未选）',
+    页签: view ? (view.id || '') : '',
+    模型: (S.provider || '?') + ' · ' + (S.model || '?'),
+    库: 'v' + DB_VERSION,
+    内核: navigator.userAgent,
+    日志: ents.length + ' 条（异常 ' + errN + ' 条）',
+  };
+}
+
+async function renderDiagModal() {
+  const info = await diagAppInfo();
+  const meta = diagMeta(info);
+  // 用 textContent 而不是 innerHTML：UA 里可能有 < > 之类的字符，
+  // 而且这一页是给"出了问题"的情况看的，不该再引入渲染依赖。
+  $('diag-meta').textContent = Object.entries(meta).map(([k, v]) => k + '：' + v).join('\n');
+  const ta = $('diag-log');
+  ta.value = diagEntries().length ? diagLogText(meta) : '';
+  ta.scrollTop = ta.scrollHeight;   // 最新的在最后，打开就滚到底
+}
+
+async function openDiagModal() {
+  dlog('diag', '打开诊断信息');
+  $('diag-modal').classList.remove('hidden');
+  await renderDiagModal();
+}
+function closeDiagModal() { $('diag-modal').classList.add('hidden'); }
+
+
+
+// ---------- 去味记录（0.5.3.5，方向文档 P0-3）----------
+// 「软件到底改了我什么」必须能看。以前只 console.warn 一行，用户永远看不到 ——
+// 于是「她怎么说话怪怪的」和「软件动了我的文本」这两件事永远对不上。
+function pushDefLog(before, after, hits) {
+  if (!hits || !hits.length) return;
+  defLog.push({ at: Date.now(), before: String(before || ''), after: String(after || ''), hits: hits.slice() });
+  while (defLog.length > DEFLOG_MAX) defLog.shift();
+  refreshDefHint();
+}
+
+function refreshDefHint() { refreshDiagHint(); }
+
+function renderDefModal() {
+  const box = $('def-list');
+  const meta = $('def-meta');
+  if (!box || !meta) return;
+  if (!defLog.length) {
+    meta.textContent = '还没洗过东西 —— 她写出来的下一条如果带了套话，这里会出现。';
+    box.innerHTML = '';
+    return;
+  }
+  const all = defLog.reduce((a, e) => a + e.hits.length, 0);
+  meta.textContent = '最近 ' + defLog.length + ' 条（上限 ' + DEFLOG_MAX + '）　累计删掉 ' + all + ' 处'
+    + '\n只显示她新写出来的那一条；发给模型的历史副本里的清洗不在这个列表里。';
+  box.innerHTML = defLog.slice().reverse().map(e => {
+    const t = new Date(e.at);
+    const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');
+    const cut = s => { const x = String(s || ''); return x.length > 700 ? x.slice(0, 700) + '……（后略）' : x; };
+    return '<div class="def-item"><div class="def-item-h"><b>' + esc(hh) + '</b><em>' + esc(e.hits.join(' / ')) + '</em></div>'
+      + '<div class="def-before"><span>洗之前</span><pre>' + esc(cut(e.before)) + '</pre></div>'
+      + '<div class="def-after"><span>洗之后</span><pre>' + esc(cut(e.after)) + '</pre></div></div>';
+  }).join('');
+}
+
+function openDefModal() { $('def-modal').classList.remove('hidden'); renderDefModal(); }
+function closeDefModal() { $('def-modal').classList.add('hidden'); }
+
+/** 复制用：原文与洗后并排，出了争议可以贴出来 */
+function defPlainText() {
+  if (!defLog.length) return '（还没洗过东西）';
+  return defLog.slice().reverse().map((e, i) => {
+    const t = new Date(e.at);
+    return '===== #' + (i + 1) + ' ' + t.toLocaleString() + '  命中：' + e.hits.join(' / ') + ' ====='
+      + '\n--- 洗之前 ---\n' + e.before + '\n--- 洗之后 ---\n' + e.after;
+  }).join('\n\n');
+}
+
+// ---------- 提示词检查器（0.5.3.5，方向文档 P0-2）----------
+// 只读 lastPromptSnap。这一页存在的唯一理由是「她这句话为什么这样」能被查到源头，
+// 所以每一段都要标来源（可缓存 / 每轮都变 / 历史 / 世界书），而且顺序与请求体一致。
+function renderPeekModal() {
+  const metaEl = $('peek-meta');
+  const box = $('peek-list');
+  if (!metaEl || !box) return;
+  if (!lastPromptSnap) {
+    metaEl.textContent = '还没发过消息 —— 发一条再回来，这里会显示那一轮真正发出去的提示词。';
+    box.innerHTML = '';
+    return;
+  }
+  const sum = promptSummary(lastPromptSnap);
+  metaEl.textContent =
+    '模型：' + (sum.model || '?') + '　角色：' + (sum.charName || '?') + '\n'
+    + '总字数：约 ' + sum.chars + ' 字（固定段 ' + sum.sysChars + ' / 历史 ' + sum.histChars + '）　'
+    + '消息 ' + sum.msgs + ' 条　上一轮估算 ' + sum.tokens + ' token';
+  const rows = summarizePrompt(lastPromptSnap);
+  box.innerHTML = rows.map(r => {
+    if (r.kind === 'sec-head') {
+      return '<div class="peek-head"><b>' + esc(r.title) + '</b><em>' + esc(r.source) + '</em></div>';
+    }
+    // 长段先截断：这一页是"看结构 + 抽查"，不是阅读器。要看全文就点复制。
+    const full = String(r.text || '');
+    const cut = full.length > 900 ? full.slice(0, 900) + '\n……（后略，复制看全文）' : full;
+    return '<details class="peek-row"><summary><span>' + esc(r.title) + '</span><em>' + r.chars + ' 字</em></summary>'
+      + '<pre>' + esc(cut) + '</pre></details>';
+  }).join('');
+}
+
+function openPeekModal() {
+  $('peek-modal').classList.remove('hidden');
+  renderPeekModal();
+}
+function closePeekModal() { $('peek-modal').classList.add('hidden'); }
+
+/** 把当前快照拼成纯文本（复制用）：结构与屏幕上一一对应 */
+function peekPlainText() {
+  if (!lastPromptSnap) return '（还没发过消息）';
+  const sum = promptSummary(lastPromptSnap);
+  const head = ['模型 ' + sum.model, '角色 ' + sum.charName, '总字数 ' + sum.chars, '总条数 ' + sum.msgs, '估算 ' + sum.tokens + ' token'];
+  const body = summarizePrompt(lastPromptSnap).map(r => {
+    if (r.kind === 'sec-head') return '\n===== ' + r.title + '（' + r.source + '）=====';
+    return '\n--- ' + r.title + ' [' + r.chars + ' 字] ---\n' + String(r.text || '');
+  });
+  return head.join('\n') + '\n' + body.join('\n');
+}
+
+/** 折叠头角标：日志条数 + 去味记录条数，都没有就显示「—」（干净）。 */
+function refreshDiagHint() {
+  const n = diagEntries().length;
+  const d = defLog.length;
+  const el = $('diag-hint');
+  if (!el) return;
+  if (n && d) el.textContent = n + ' 条 · 洗 ' + d;
+  else if (n) el.textContent = n + ' 条';
+  else if (d) el.textContent = '洗 ' + d;
+  else el.textContent = '—';
+}
 
 /** 关于页：填源码地址（版本号由 renderAppVersion 一并填） */
 function renderAbout() {
@@ -18541,6 +18925,18 @@ async function renderAppVersion() {
 }
 
 async function init() {
+  // 最先装（0.5.3.5）：连 loadSettings / loadStRegex 抛出来的都要能留下痕迹，
+  // 否则「一打开就白屏」在手机上永远查不出原因。
+  // ⚠️ 顺序：installDiag → setDiagCtx → 第一条 dlog。
+  //    反过来的话启动那几条日志的 ctx 是空的，而「启动到一半白屏」恰恰最需要上下文。
+  installDiag();
+  // 诊断上下文（0.5.3.5）：每条日志自动带「在哪个页签、哪个角色、哪个模型」。
+  // 刻意只放这几个短字段 —— diagText 会给每一行都拼上，UA 那种长串只放在页头。
+  setDiagCtx(() => {
+    const v = document.querySelector('.view.active');
+    return { view: v ? v.id : '', char: curChar ? curChar.name : '', model: S.model || '', busy };
+  });
+  dlog('boot', 'init 开始');
   await loadSettings();
   // 酒馆正则要在首屏渲染【之前】读出来 —— 它参与 msgHtml，晚一步会先看到没过滤的字（v0.4.0）
   await loadStRegex();
@@ -18590,6 +18986,10 @@ async function init() {
   // 主数据对账（v0.4.0）：IndexedDB 被系统回收时页面不会报错，
   // 用户只看到"她失忆了"。这里对一次账，对不上就把引导条拉起来。
   renderDataBanner().catch(() => {});
+
+  // 备份提醒条（0.5.3.5）：等对账落库后再算 —— 它要读 dataAudit 里的消息条数，
+  // 空库不提示。放 setTimeout 里是怕拖慢首屏（要读两个 kv）。
+  setTimeout(() => { refreshBackupNudge().catch(() => {}); }, 1200);
 
   // 自动备份：一天最多一次（v1.21.40）。
   //
@@ -18674,6 +19074,7 @@ async function _runBackupRoutineInner(FS) {
     h.at = Date.now();
     try { await kv.set('backupHealth', h); } catch { /* 记不上只是面板显示旧数据，无害 */ }
     try { renderBackupHealth(); } catch { /* 面板还没渲染过就算了 */ }
+    try { await refreshBackupNudge(); } catch { /* 提醒条出不来不该影响备份本身 */ }
     return;
   }
   try {
@@ -18725,10 +19126,18 @@ async function _runBackupRoutineInner(FS) {
   try { await kv.set('backupHealth', h); } catch { /* 记不上只是面板显示旧数据，无害 */ }
   // 设置页开着的话，面板当场跟着变（不然用户要退出去再进来才看到）
   try { renderBackupHealth(); } catch { /* 面板还没渲染过就算了 */ }
+  try { await refreshBackupNudge(); } catch { /* 提醒条出不来不该影响备份本身 */ }
 }
 
 init().catch(e => {
   console.error(e);
-  document.body.innerHTML = '<div style="padding:40px;color:#f2555a;font-family:sans-serif">启动失败：' + esc(e.message) + '</div>';
+  dlog('boot', e);
+  // 启动失败时把日志直接摊在屏幕上（0.5.3.5）：手机上没控制台，
+  // 现在这屏至少能截图发出来，里面带着栈与版本号。
+  const tail = diagLogText({ 版本: WEB_VERSION_FALLBACK })
+    .split('\n').slice(-18).map(x => esc(x)).join('\n');
+  document.body.innerHTML = '<div style="padding:24px;color:#f2555a;font-family:sans-serif;font-size:13px;line-height:1.6">'
+    + '<div style="font-size:16px;margin-bottom:12px">启动失败：' + esc(e.message) + '</div>'
+    + '<pre style="white-space:pre-wrap;color:#9aa;font-size:11px">' + tail + '</pre></div>';
 });
 

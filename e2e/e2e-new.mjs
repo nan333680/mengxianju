@@ -106,6 +106,11 @@ t('收回去', !(await page.$eval('#mem-wrap', el => el.classList.contains('open
 
 console.log('');
 console.log('=== 3. token 用量 ===');
+// 0.5.3.5（方向文档 P0-5）：气泡上那行 ↑输入 ↓输出 改成【默认关闭】了 ——
+// 挂在她每一句话下面是干扰，要看某一条就长按。所以这里先把开关打开再发消息，
+// 验的是「角标还能出来、格式没坏」；「默认必须是关的」由 e2e-clear-usage 守。
+await page.evaluate(() => { const c = document.getElementById('s-showusage'); if (c && !c.checked) c.click(); });
+await sleep(300);
 await page.click('#btn-set-back'); await sleep(400);
   // v1.15.2 起栈多了 drawer 一层，退到设置页的上一层是抽屉，还要再关一次
   await page.evaluate(() => { const b = document.getElementById('btn-drawer-close'); if (b && document.querySelector('#view-drawer.active')) b.click(); });

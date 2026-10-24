@@ -1675,8 +1675,94 @@ input[type="range"] { touch-action: pan-y; }
    否则 16px 的容器内边距会让第二拍的内容从按钮条下面露出来。 */
 .arc-box{ max-height:82vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-bottom:0; }
 .arc-box > h4{ margin-bottom:6px; }
+
+/* 诊断（0.5.3.5）：内容可能很长（200 行 + 栈），所以整块自己滚，
+   底部按钮跟着走。日志用等宽字体 —— 竖排的栈、时间戳对不齐的时候最难读。 */
+.diag-box{ max-height:82vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+.diag-box > h4{ margin-bottom:6px; }
+.diag-meta{
+  margin:0 0 10px; padding:10px 12px;
+  border:1px solid var(--line); border-radius:10px;
+  background:rgba(255,255,255,.03);
+  font-size:11.5px; line-height:1.7; color:var(--fg2);
+  white-space:pre-line; word-break:break-all;   /* UA 是一条不会断的长串 */
+}
+.diag-log{
+  width:100%; box-sizing:border-box;
+  min-height:220px; max-height:42vh;
+  margin:0 0 12px; padding:10px 12px;
+  border:1px solid var(--line); border-radius:10px;
+  background:rgba(0,0,0,.28); color:var(--fg2);
+  font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:11px; line-height:1.6;
+  white-space:pre; overflow:auto; resize:none;
+}
 .arc-sub{ margin:0 0 14px; font-size:12px; line-height:1.7; color:var(--fg3); }
 .arc-sub b{ color:var(--fg2); }
+
+/* 提示词检查器（0.5.3.5）：段头 + 可展开的段落。故意不用气泡样式 ——
+   这不是聊天记录，是检修面板，视觉上要跟聊天区分开。
+   正文 max-height 限住：一份提示词能到一万多字，展开一段就顶掉整屏，
+   结果反而什么都对比不了。 */
+.peek-box{ max-height:82vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+.peek-box > h4{ margin-bottom:6px; }
+.peek-list{ margin:0 0 12px; }
+.peek-head{
+  display:flex; align-items:baseline; gap:8px;
+  margin:14px 0 6px; padding-bottom:4px;
+  border-bottom:1px solid var(--line);
+  font-size:12.5px;
+}
+.peek-head:first-child{ margin-top:4px; }
+.peek-head b{ color:var(--fg); font-weight:700; }
+.peek-head em{ color:var(--fg3); font-style:normal; font-size:11px; }
+.peek-row{
+  margin:0 0 6px; overflow:hidden;
+  border:1px solid var(--line); border-radius:9px;
+  background:rgba(255,255,255,.03);
+}
+.peek-row > summary{
+  display:flex; align-items:baseline; gap:8px;
+  padding:8px 11px; cursor:pointer;
+  font-size:12.5px; color:var(--fg2); list-style:none;
+}
+.peek-row > summary::-webkit-details-marker{ display:none; }
+.peek-row > summary > span{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.peek-row > summary > em{ flex:0 0 auto; color:var(--fg3); font-style:normal; font-size:11px; }
+.peek-row[open] > summary{ border-bottom:1px solid var(--line); }
+.peek-row > pre{
+  margin:0; padding:9px 11px;
+  max-height:320px; overflow:auto;
+  font-family:inherit; font-size:11.5px; line-height:1.65; color:var(--fg2);
+  white-space:pre-wrap; word-break:break-word;
+}
+
+/* 去味记录（0.5.3.5）：原文和洗后并排。用色块左右区分不划算（手机上窄），
+   改成上下两块，中间不留白 —— 目标是"一眼看出少了哪几个字"。 */
+.def-box{ max-height:82vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+.def-box > h4{ margin-bottom:6px; }
+.def-list{ margin:0 0 12px; }
+.def-item{
+  margin:0 0 10px; padding:9px 11px;
+  border:1px solid var(--line); border-radius:10px;
+  background:rgba(255,255,255,.03);
+}
+.def-item-h{ display:flex; align-items:baseline; gap:8px; margin-bottom:6px; }
+.def-item-h b{ font-size:11.5px; color:var(--fg3); font-weight:500; font-variant-numeric:tabular-nums; }
+.def-item-h em{ flex:1 1 auto; min-width:0; font-style:normal; font-size:11.5px; color:var(--pri2); word-break:break-word; }
+.def-before > span, .def-after > span{
+  display:inline-block; margin:0 0 3px;
+  font-size:10.5px; letter-spacing:.04em; color:var(--fg3);
+}
+.def-before > pre, .def-after > pre{
+  margin:0 0 8px; padding:7px 9px;
+  border-radius:8px; background:rgba(0,0,0,.22);
+  font-family:inherit; font-size:11.5px; line-height:1.6; color:var(--fg2);
+  white-space:pre-wrap; word-break:break-word;
+}
+.def-after > pre{ background:rgba(140,120,255,.10); color:var(--fg); }
+
+
 
 /* v0.5.0.4：关掉的卡顶上那条黄条。整条只做一件事 —— 告诉他这卡现在不生效，
    以及重开在哪。没有这条的话，「保存」会静默把 off 改成 on（0.5.0.3 的行为），

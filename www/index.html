@@ -68,6 +68,15 @@
     <span class="sb-go" data-i18n-en="Check now">去检查 ›</span>
   </button>
 
+  <!-- 备份提醒（0.5.3.5，方向文档 P0-4）——「超过一天没备份」在聊天页说一次。
+       只在两种情况出现：自动备份开着却 24 小时没写成，或从没成功写过但库里有聊天记录。
+       空库不提示 —— 没东西可丢的时候说「去备份」只是噪音。文案与显隐见 refreshBackupNudge()。 -->
+  <button class="setup-banner danger hidden" id="backup-banner">
+    <span class="sb-ico">💾</span>
+    <span class="sb-txt" id="backup-banner-txt">这台手机还没备份过</span>
+    <span class="sb-go" data-i18n-en="Back up ›">去备份 ›</span>
+  </button>
+
   <main id="messages" class="messages"></main>
 
   <footer class="composer">
@@ -236,6 +245,7 @@
             <i class="fold-arrow">›</i>
           </button>
         </div>
+        <p class="hint-text" data-i18n-en-html="<b>Retired.</b> How much she writes now depends on what actually happens in the message: parentheses for the outside, a pair of asterisks for what she doesn't say out loud. Old settings are kept."><b data-i18n-en="Retired">已停用</b>：现在按每条消息的实际内容决定怎么写（括号里写外面，一对 <b>*</b> 里写她没说出口的）。旧设置都还在。</p>
         <div class="field" data-i18n-nodes><span data-i18n-en="Narrative point of view (the thing that drifts most in groups)">叙事视角（群聊里最容易飘的就是这个）</span>
           <div class="seg" id="g-pov"></div>
         </div>
@@ -917,6 +927,28 @@
       </div>
     </section>
 
+    <!-- 诊断（0.5.3.5）：这个应用原来一个全局错误捕获都没有，出问题只能靠肉眼猜。
+         只记最近 200 条、只在内存里，不含聊天正文与 Key。 -->
+    <section class="group">
+      <button class="fold-head" id="diag-fold">
+        <span data-i18n-en="Diagnostics">诊断</span>
+        <em class="fold-num" id="diag-hint">—</em>
+        <i class="fold-arrow">▾</i>
+      </button>
+      <div class="fold-wrap" id="diag-wrap" data-i18n-en-html="Something goes wrong (a button does nothing, a message will not send, the screen goes blank) - <b>look here first</b>.<br> It keeps the last 200 runtime log lines: exceptions, failed requests with their status codes, key actions.<br> <b>It never records your chat text or your API Key.</b>">
+        <div class="fold-inner">
+          <p class="hint-text">出了问题（点了没反应、发不出去、白屏）<b>先来这里看</b>。<br>
+            它记着最近 200 条运行日志：异常、请求失败（带状态码）、关键动作。<br>
+            <b>不记聊天内容，也不记 API Key。</b></p>
+          <button class="ghost-btn" id="btn-diag-open" data-i18n-en="Open diagnostics">打开诊断信息</button>
+          <!-- 诊断之后紧跟它：出问题时要么看日志、要么看她这轮到底被喂了什么，
+               两个入口放在一起，找的时候不用翻两页。 -->
+          <button class="ghost-btn" id="btn-peek-open" data-i18n-en="See the last prompt">看上一轮的提示词</button>
+          <button class="ghost-btn" id="btn-def-open" data-i18n-en="See what was cleaned">看洗掉了什么</button>
+        </div>
+      </div>
+    </section>
+
     <!-- ===== 角色卡（实验，v1.21.40）=====
          刻意跟上面的「数据」分开：那是整机备份恢复，这是单张角色卡，两条链路不共用输入框
          （共用了会让"导入数据"认到一张 PNG 角色卡）。 -->
@@ -1049,7 +1081,7 @@
           <label class="field row" data-i18n-nodes><span data-i18n-en="Show token usage">显示 token 使用量</span>
             <input id="s-showusage" type="checkbox">
           </label>
-          <p class="hint-text" data-i18n-en="When off, the ↑in ↓out badge disappears from the bubbles. Chats are still saved either way.">关掉后气泡右下角不再显示 ↑输入 ↓输出的角标，聊天记录照常保存。</p>
+          <p class="hint-text" data-i18n-en="Off by default: the ↑in ↓out badge is tuning information and clutters every bubble. Long-press any message and pick This message's usage to see its numbers."><b>默认关闭</b>：那行 ↑输入 ↓输出 是调参用的，挂在每条气泡上是干扰。想看某一条，长按它选「这条的用量」。聊天记录照常保存。</p>
           <!-- 朗读（v1.21.56）：用 Web Speech API，音色由系统 TTS 引擎决定 -->
           <label class="field row" data-i18n-nodes><span data-i18n-en="Read her replies aloud">朗读她的回复</span>
             <input id="s-tts" type="checkbox">
@@ -1100,7 +1132,7 @@
       </div>
     </section>
 
-    <section class="group">
+    <section class="group" id="data-sec">
       <h3 data-i18n-en="Data">数据</h3>
       <button class="ghost-btn" id="btn-export-md" data-i18n-en="Export this chat (Markdown)">导出当前角色的对话（Markdown）</button>
       <button class="ghost-btn" id="btn-export" data-i18n-en="Export everything (characters + chats)">导出全部数据（角色+记录）</button>
@@ -1168,6 +1200,17 @@
       <p class="hint-text" data-i18n-en="Full source code is here. The license text (LICENSE) lives in the same repository:">完整源代码在这里，许可证全文（LICENSE）也在同一个仓库里：</p>
       <p class="about-line" id="about-repo">—</p>
       <button class="ghost-btn" id="btn-about-copy" data-i18n-en="Copy address">复制地址</button>
+    </section>
+
+    <!-- 换手机 / 重装（0.5.3.5，方向文档 P0-4 ⑤）——
+         数据全在这台手机里，App 没有服务器也没有账号，所以「换机」这件事
+         唯一的解法就是那个 JSON 文件。写在这里是因为出事时人才会翻关于页。 -->
+    <section class="group">
+      <h3 data-i18n-en="New phone or reinstall">换手机 / 重装</h3>
+      <p class="hint-text" data-i18n-en-html="Everything lives on this phone - there is no account and no server, so nobody can restore it for you. Before switching phones, open <b>My settings - Data - Export everything</b> and keep that JSON somewhere off the phone (a computer, a drive, a cloud folder). On the new phone, install the app, then use <b>Import data</b> to pick that file. <b>Keep at least two copies in different places</b> - one file on one phone is not a backup.">数据全部在这台手机里 —— 没有账号、没有服务器，
+        <b data-i18n-en="Nobody else can restore it for you">没有人能替你恢复</b>。换机前先到<b>「我的设置 → 数据 → 导出全部数据」</b>，
+        把那个 JSON 存到手机以外的地方（电脑、网盘、U 盘都行）。新手机装好后在同一处点<b>「导入数据」</b>选它。<br>
+        建议<b data-i18n-en="Keep at least two copies in two places">至少留两份、放在两个不同的地方</b> —— 只在手机里存一份，不算备份。</p>
     </section>
 
     <section class="group">
@@ -1537,6 +1580,52 @@
       <button class="ghost-btn" id="arc-off" data-i18n-en="Turn off">关掉剧情</button>
       <button class="ghost-btn" id="arc-cancel" data-i18n-en="Cancel">取消</button>
       <button class="send-btn" id="arc-save" data-i18n-en="Save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 诊断信息（0.5.3.5）：一屏能看到版本、内核、DB 版本，和最近 200 条日志。
+     只读 + 一键复制 —— 目的是「出问题 10 秒内能定位」，不是给用户编辑日志。 -->
+<div id="diag-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box diag-box">
+    <h4 data-i18n-en="Diagnostics">诊断信息</h4>
+    <p class="arc-sub" data-i18n-en-html="These are the <b>last 200 runtime log lines</b>: exceptions, failed requests with status codes, key actions.<br>No chat text, no API Key.">这里是最近 200 条运行日志：异常、请求失败（带状态码）、关键动作。<br>不含聊天内容，也不含 key。</p>
+    <div class="diag-meta" id="diag-meta"></div>
+    <textarea id="diag-log" class="diag-log" readonly wrap="off"></textarea>
+    <div class="arc-foot">
+      <button class="ghost-btn" id="diag-clear" data-i18n-en="Clear">清空</button>
+      <button class="ghost-btn" id="diag-copy" data-i18n-en="Copy all">全部复制</button>
+      <button class="send-btn" id="diag-close" data-i18n-en="Close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 去味记录（0.5.3.5）：最近 50 条「洗之前 / 洗之后」并排。
+     放在这里是因为它和诊断是同一类东西 —— 出问题时需要「软件到底动了什么」的现场。 -->
+<div id="def-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box def-box">
+    <h4 data-i18n-en="What was cleaned">洗掉了什么</h4>
+    <p class="arc-sub" data-i18n-en-html="Only the message she <b>just wrote</b> is cleaned before saving. History is untouched — that copy is washed only when it goes to the model, so exports and bubbles keep the original.">只洗她<b>新写出来</b>的那一条（入库前）。历史一个字不动 —— 喂模型时用的是另一份副本，导出和气泡里都还是原文。</p>
+    <div class="diag-meta" id="def-meta"></div>
+    <div id="def-list" class="def-list"></div>
+    <div class="arc-foot">
+      <button class="ghost-btn" id="def-copy" data-i18n-en="Copy all">全部复制</button>
+      <button class="send-btn" id="def-close" data-i18n-en="Close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 提示词检查器（0.5.3.5）：上一次请求实际发出去的全文，按段标来源。
+     只读 —— 这一页是照镜子，不是编辑器。 -->
+<div id="peek-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box peek-box">
+    <h4 data-i18n-en="The prompt that was actually sent">上一轮实际发出去的提示词</h4>
+    <p class="arc-sub" data-i18n-en-html="Order matches the real request: <b>stable prefix</b> (cacheable) → <b>history</b> → <b>rebuilt every turn</b>.<br>Tap a section to expand. Long sections are cut on screen — use Copy all for the full text.">顺序和真实请求一致：<b>稳定前缀</b>（可缓存）→ <b>历史</b> → <b>本轮重建</b>。<br>点段头展开；长段在屏幕上是截断的，要全文点「全部复制」。</p>
+    <div class="diag-meta" id="peek-meta"></div>
+    <div id="peek-list" class="peek-list"></div>
+    <div class="arc-foot">
+      <button class="ghost-btn" id="peek-copy" data-i18n-en="Copy all">全部复制</button>
+      <button class="send-btn" id="peek-close" data-i18n-en="Close">关闭</button>
     </div>
   </div>
 </div>

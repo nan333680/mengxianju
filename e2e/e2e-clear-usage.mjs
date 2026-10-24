@@ -81,13 +81,18 @@ const backFromSettings = async () => { await page.click('#btn-mine-back'); await
 console.log('=== 1. token 使用量开关存在 ===');
 await openSettings();
 t('设置页有「显示 token 使用量」', !!(await page.$('#s-showusage')));
-t('老设置没这个键时默认勾上', (await page.$eval('#s-showusage', el => el.checked)) === true);
+// 0.5.3.5（方向文档 P0-5）：这行角标是调参用的，默认【不】显示 —— 老设置里没这个键的按关算。
+t('老设置没这个键时默认不显示', (await page.$eval('#s-showusage', el => el.checked)) === false);
 
 console.log('');
 // v0.4.3.2：外观收成了折叠，page.click 要求元素可见，先展开
 await page.evaluate(() => { const f = document.getElementById('appear-fold'); if (f && !f.classList.contains('open')) f.click(); });
 await sleep(500);
-console.log('=== 2. 关掉后角标消失（实测渲染结果）===');
+console.log('=== 2. 打开才有角标，关掉就没有（实测渲染结果）===');
+// 0.5.3.5：默认是关的，先打开 —— 后面「关掉后消失」那半边才有对照组。
+await page.evaluate(() => document.getElementById('s-showusage').click());
+await sleep(800);
+t('打开后勾上', (await page.$eval('#s-showusage', el => el.checked)) === true);
 // 先塞一条带 usage 的消息进库
 await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');

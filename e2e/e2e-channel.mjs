@@ -36,7 +36,10 @@ await page.evaluateOnNewDocument(() => {
   Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
   // 朗读捕获：不装真的语音引擎，只记下 speak() 收到了什么
   window.__spoken = [];
-  const fake = { speak: (u) => { window.__spoken.push(String(u && u.text || '')); },
+  // speak() 要回调 onstart —— app.js 里有个 2.5 秒探针，用来判定「引擎叫不醒」，
+  // 假的引擎不回调就会被判成哑的（真引擎都会回调）。
+  const fake = { speak: (u) => { window.__spoken.push(String(u && u.text || ''));
+    try { if (u && typeof u.onstart === 'function') setTimeout(() => u.onstart(), 0); } catch (e) {} },
     cancel() {}, pause() {}, resume() {}, getVoices: () => [], addEventListener() {}, removeEventListener() {},
     speaking: false, paused: false, pending: false, onvoiceschanged: null };
   try { Object.defineProperty(window, 'speechSynthesis', { get: () => fake, configurable: true }); } catch (e) {}
@@ -59,7 +62,10 @@ page.on('request', req => {
     try { const b = JSON.parse(req.postData() || '{}'); if (b.stream) lastBody = b; } catch (e) { /* ignore */ }
     REQ_N++;
     const reply = REPLAY_QUEUE.length ? REPLAY_QUEUE.shift() : NEXT_REPLY;
-    const chunk = JSON.stringify({ choices: [{ delta: { content: reply } }] });
+    // 队列项可以是字符串，也可以是 { text, finish }（第 13 节要伪造「重写版被截断」）
+    const rText = typeof reply === 'string' ? reply : String(reply.text || '');
+    const rFin = typeof reply === 'string' ? 'stop' : String(reply.finish || 'stop');
+    const chunk = JSON.stringify({ choices: [{ delta: { content: rText }, finish_reason: rFin }] });
     req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
       body: 'data: ' + chunk + NL + NL + 'data: [DONE]' + NL + NL }); return;
   }
@@ -348,6 +354,51 @@ console.log('=== 12. 万能动作命中 → 自动重写一次 ===');
   });
   t('屏幕上也是重写后的版本', bub.includes('推了推'), bub.slice(-40));
   REPLAY_QUEUE.length = 0;
+}
+
+console.log('');
+console.log('=== 13. 重写版被 max_tokens 截断 → 不采用，保留完整首版 ===');
+{
+  // 首版写了好几个模板动作（触发重写），重写版虽然干净、但被截断在半个句子上。
+  // 原来这一趟没传 onFinish，重写版会带着首版的 'stop' 混过关 —— 用一条半截话
+  // 顶掉本来完整的那条，而且界面上还不报截断。
+  REPLAY_QUEUE.push('（她偏头看他）' + NL + '「水凉了，你先喝。」');
+  REPLAY_QUEUE.push({ text: '（她把杯子往他那边推了推）' + NL + '「水凉', finish: 'length' });
+  REQ_N = 0;
+  await enterChat();
+  await send('说句话');
+  const lastAi = await page.evaluate(async (id) => {
+    const req = indexedDB.open('ai-companion');
+    const d = await new Promise(r => { req.onsuccess = () => r(req.result); });
+    const all = await new Promise(r => { const q = d.transaction('messages').objectStore('messages').index('charId').getAll(id); q.onsuccess = () => r(q.result || []); });
+    d.close();
+    all.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    const ai = all.filter(m => m.role === 'assistant');
+    return ai.length ? String(ai[ai.length - 1].content || '') : '';
+  }, CHAR_ID);
+  t('重写确实发了第二趟', REQ_N === 2, REQ_N);
+  // ⚠️ 首版自己就含「水凉了」（那是台词），所以判据必须是【重写版独有的那半句】在不在，
+  //    不能拿「水凉」当标记 —— 否则断言永远红（这一条第一版就写错了）。
+  t('被截断的重写版没有被采用', !lastAi.includes('推了推'), lastAi.slice(-40));
+  t('完整的首版还在', lastAi.includes('你先喝'), lastAi.slice(-40));
+  REPLAY_QUEUE.length = 0;
+}
+
+console.log('');
+console.log('=== 14. 跨行的心里话也不会被念出来 ===');
+{
+  // ttsClean 原来靠 INNER_RE 的 [^*\n]{1,300} 剥星号 —— 它不跨行，
+  // 跨行的心里话剥不掉，剩下的 * 又被记号清理删掉，于是整段心里话变成正文被念出来。
+  await putKV({ ttsOn: true });
+  NEXT_REPLY = '（她点头）*我' + NL + '其实不想说*' + NL + '「水凉了。」';
+  await enterChat();
+  await send('说句话');
+  await sleep(900);
+  const spoken = await page.evaluate(() => (window.__spoken || []).join(' | '));
+  t('跨行的心里话没有被念出来', !spoken.includes('其实不想说'), spoken.slice(0, 120));
+  t('台词照常念了', spoken.includes('水凉了'), spoken.slice(0, 120));
+  await putKV({ ttsOn: false });
+  NEXT_REPLY = '嗯，我在。';
 }
 
 console.log('');

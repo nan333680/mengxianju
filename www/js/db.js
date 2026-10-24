@@ -10,6 +10,9 @@ const DB_NAME = 'ai-companion';
 //       所以老库、老备份直接能读，不做数据搬迁。
 import { normalizeMemory, planSupersede, planExpire, MEMORY_STATUS } from './memory.js';
 const DB_VER = 5;
+// 诊断页要显示库版本（0.5.3.5）：升级后「数据没上来」有一半是库没迁完，
+// 用户报版本号的时候顺手能看到 v? 比问「你的库是几」有用。
+export const DB_VERSION = DB_VER;
 
 let _db = null;
 

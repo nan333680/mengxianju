@@ -731,6 +731,28 @@ const BY_ZH = {
   '这一段演完了': 'This arc is done',
   '开新一段': 'Start a new arc',
   '清空': 'Clear',
+  // 诊断页（0.5.3.5）：带 <b>/<br> 的两段走 data-i18n-en-html，这里登记的是纯文本按钮与 toast。
+  '诊断': 'Diagnostics',
+  '诊断信息': 'Diagnostics',
+  '打开诊断信息': 'Open diagnostics',
+  '全部复制': 'Copy all',
+  '日志已清空': 'Log cleared',
+  '已复制': 'Copied',
+  '复制失败，可以长按日志手动复制': 'Copy failed — long-press the log to copy it manually',
+  '这条的用量': "This message's usage",
+  '这台手机还没备份过': 'Nothing backed up yet on this phone',
+  '上一次备份已经是一天多以前了 —— 补一份，才不会一次丢太多': 'The last backup was over a day ago — make a fresh one so a single loss stays small',
+  '这台手机还没成功备份过 —— 现在导出一次，换机和重装都靠它': 'Nothing has been backed up on this phone yet — export once now; it is what carries you through a new phone or a reinstall',
+  // 提示词检查器（0.5.3.5）：入口按钮、弹层标题、复制 toast，以及没有快照时的空态。
+  '看上一轮的提示词': 'See the last prompt',
+  '上一轮实际发出去的提示词': 'The prompt that was actually sent',
+  '还没发过消息 —— 发一条再回来，这里会显示那一轮真正发出去的提示词。':
+    'Nothing sent yet — send one message and come back; this shows the prompt that turn actually used.',
+  '已复制提示词全文': 'Full prompt copied',
+  // 去味记录（0.5.3.5）
+  '看洗掉了什么': 'See what was cleaned',
+  '洗掉了什么': 'What was cleaned',
+  '已复制去味记录': 'Cleaning log copied',
   '清空方向、几拍、各人的目的，从空白开始。聊天记录不动。':
     'Clears the direction, the beats and every agenda, starting from a blank card. Chat history is untouched.',
   '清空了 —— 写个新方向吧': 'Cleared — write a new direction',

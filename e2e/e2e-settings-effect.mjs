@@ -195,7 +195,10 @@ console.log('=== 7. 卡里那几项（cardFields）真的进了设定 ===');
   // 标签是【性格】【场景】【对话范例】（persona.js 拼的），不是 markdown 标题
   t('性格进去了', sys.includes('【性格】') && sys.includes('慢热，认生'));
   t('场景进去了', sys.includes('【场景】') && sys.includes('在一间旧书店'));
-  t('对话范例进去了', sys.includes('【对话范例】') && sys.includes('照这个的写法说话'));
+  // v0.5.3.4：范例尾巴从「格式、长度都参照它」改成「只学语气和节奏，别照抄长度」——
+  // 原来那句等于给她一个长度配额（用户抱怨的「不许写长」就是这么来的）。
+  t('对话范例进去了', sys.includes('【对话范例】') && sys.includes('只学语气、句子长短的节奏'));
+  t('范例不再把长度当标准答案', sys.includes('不要照抄它的长度'), '');
   await putChar({ cardFields: {} });
 }
 
@@ -232,18 +235,23 @@ console.log('=== 9. 记忆开关 ===');
 }
 
 console.log('');
-console.log('=== 10. 描写上限 × 驱动力：各自独立生效（v0.4.3.3 起不再降档）===');
+console.log('=== 10. 描写上限 × 驱动力：两档已冻结（v0.5.3.4 三通道）===');
 {
+  // ⚠️ 断言反转（v0.5.3.4）：这一节原来守的是「v0.4.3.3 起不再静默降档」。
+  // 三通道改造之后两个档位不再进提示词（控件隐藏、数据保留、代码路径留着回滚），
+  // 所以现在要反过来守：不管怎么配，旧的字数上限 / 三段式 / 降级说明都不许再出现。
   await putChar({ descLevel: 'low', detailDrive: 'max' });
   await enterChat();
   const sys = await send('在吗');
-  t('上限压到 low 时驱动仍原样注入', sys.includes('三段式'));
+  t('low × max 也不再注入三段式', !sys.includes('三段式'));
   t('不再出现「按最低档执行」的降级说明', !sys.includes('按最低档执行'));
-  t('冲突时给的是不涉及数字的兜底', sys.includes('就只写最关键的那一件'));
+  t('也不再出现旧的字数上限 / 兜底句', !sys.includes('不超过 20 个字') && !sys.includes('就只写最关键的那一件'));
+  t('三通道照常注入（档位不影响它）', sys.includes('一对 *'));
   await putChar({ descLevel: 'mid', detailDrive: 'mid' });
   await enterChat();
   const sys2 = await send('在吗');
   t('mid × mid 同样不降级', !sys2.includes('按最低档执行'));
+  t('mid × mid 也走三通道', sys2.includes('一对 *'));
 }
 
 console.log('');

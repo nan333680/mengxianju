@@ -183,7 +183,9 @@ const both = await page.evaluate(async () => {
     { myProfile:'', verbosity:'short', descLevel:'high', splitMessages:false });
 });
 t('话限制在 40 字左右', /40 字左右/.test(both), '');
-t('描写可以写得很足', /具体的动作细节/.test(both));
+// ⚠️ 断言更新（v0.5.3.4）：descLevel 冻结，high 不再注入「具体的动作细节」那套档位文案，
+//    改成三通道写法（括号=外面 / 一对星号=里面 / 括号外=台词）。
+t('描写走三通道，不再由档位决定', /一对 \*/.test(both) && !/具体的动作细节/.test(both));
 const off = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
   return buildStablePrompt({ persona: '你是灵梦。' }, { myProfile:'', verbosity:'medium', descLevel:'off', splitMessages:false });

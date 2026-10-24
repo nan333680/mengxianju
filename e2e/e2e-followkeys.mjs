@@ -134,20 +134,28 @@ console.log('=== 2. 迁移之后，改全局档位对该角色真的生效 ===')
   await sendOne('测试描写档 high');
   const sysHi = lastSys;
   console.log('   high+max：提示词长度 ' + sysHi.length);
-  t('全局 descLevel=high 时该角色下一轮就带上上限约束', sysHi.includes('不超过 140 个字'));
-  t('全局 detailDrive=max 时该角色下一轮带上三段式', sysHi.includes('三段式'));
+  // ⚠️ 断言反转（v0.5.3.4，三通道）：descLevel / detailDrive 两个档位【已冻结】。
+  // 它们原来注入的是「括号里最长多少字」「每段必须套三段式」，正是把「心里」
+  // 定义成违规内容的源头；现在这两个值不再进提示词（控件隐藏，数据保留）。
+  t('全局 descLevel=high 时不再注入旧的字数上限', !sysHi.includes('不超过 140 个字'));
+  t('全局 detailDrive=max 时不再注入三段式', !sysHi.includes('三段式'));
+  t('high 档走的是三通道', sysHi.includes('一对 *'), sysHi.slice(0, 0));
 
   // ---- v0.4.3.1 / v0.4.3.2：去 AI 味那六条（用户拍板全做）----
   // 这六条是【软约束】，效果只能靠人看；这里守的是"它们确实进了提示词"，
   // 免得哪天重构 # 表达方式 段时被整段挤掉，而没人发现。
   t('max 档不再要求「每一段」都套三段式（v0.4.3.1）', !sysHi.includes('写每一段动作') && !sysHi.includes('每一段都必须有'));
-  t('max 档写明「一段里挑一件事写透」（v0.5.3.1 放宽）', sysHi.includes('一段里挑一件事写透'));
+  t('max 档那条「一段里挑一件事写透」也退出了注入', !sysHi.includes('一段里挑一件事写透'));
   t('规则①：括号里不许用分号串小动作', sysHi.includes('括号里用分号把一串小动作硬串成一句'));
   t('规则②：不许每条都用括号开头', sysHi.includes('每条回复都先用括号开头'));
   t('规则③：不许把前几轮写过的句子原样再写', sysHi.includes('把前几轮用过的句子原样再写一遍'));
   t('规则④：标点跟着语气走', sysHi.includes('通篇都是句号'));
   t('规则⑤：不许两三个字短句收尾（v0.4.3.1）', sysHi.includes('用两三个字的短句收尾'));
-  t('规则⑥：让步不许每次都收在同一个词上（v0.4.3.1）', sysHi.includes('整段对话里出现一次就够'));
+  // v0.5.3.4：原来这条写的是「整段对话里出现一次就够」—— 用户实测压不住
+  // （0.4.3.1 加完，0.5.3.3 里照样出现），现在直接禁掉「认」的服软义。
+  t('规则⑥：不许用「认」表示服软（v0.5.3.4 收紧）', sysHi.includes('这个词不是你说话的方式'));
+  t('规则⑦：点名那批万能动作（偏头/后颈/喉结/眼底）',
+    sysHi.includes('偏头') && sysHi.includes('后颈') && sysHi.includes('喉结'), '');
 }
 
 console.log('');

@@ -17,6 +17,12 @@ import { buildChatMarkdown, markdownFileName } from './exportmd.js';
 import { activePath, pathTo, setLeaf, pickLeaf, seedParents, siblings, deepestIn, leafKey } from './branch.js';
 // 反复读检测（v0.5.5）：4-gram 重合率，阈值从真实备份量出来的，见该文件头。
 import { worstRepeat, REPEAT_WARN, REPEAT_LOOKBACK } from './prose.js';
+// 惯性动作检测（0.5.3.4）：她的动作模板（「捏后颈」「顿了一下」）每轮都被自己的旧消息强化。
+// 抽象禁令没用，得给她一份【这一轮不许出现】的具体清单，见该文件头。
+import { findCliches, templateHits } from './cliche.js';
+// 去 AI 味（0.5.3.4）：发给模型的【历史副本】和她新写的东西都要洗一遍套话。
+// 只改副本/新消息，库里已有的原文一个字不动 —— 见该文件头。
+import { deflavor } from './deflavor.js';
 // 错误翻译（v0.5.3.2，清单 §3.1）：一句话原因 / 下一步 / 按钮 / 该不该重试。
 import { explain, diagText, shouldRetry } from './errorkit.js';
 import { normalizeArc, arcActive, arcFinished, atLastBeat, beatTurns, emptyArc, ARC_BEATS_MAX, ARC_CONSTRAINTS_MAX } from './storyarc.js';
@@ -363,6 +369,29 @@ let editPresetKey = null;
  */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/**
+ * 正文渲染：先转义，再把【成对的单星号】变成心里话。
+ *
+ * 0.5.3.4 三通道：她的消息里，括号是外面（动作/神态/环境），
+ * 一对星号是里面（心里真正在想、没说出口的），括号外是台词。
+ * 心里话要用另一个样子显示（斜体 + 稍淡），否则和台词混在一起。
+ *
+ * ⚠️ 四条约束，改之前先看：
+ *  1. 必须先 esc 再替换。反过来的话，<img src=x onerror=...> 里夹一对星号
+ *     就能把内容送进 HTML。
+ *  2. 单个星号不算 —— 必须是【一对】。模型偶尔会漏写后半，那种就原样显示
+ *     （宁可露出一个星号，也不要把后面半条消息吞进斜体里）。
+ *  3. 不能用 lookbehind（(?<=...)）：Android WebView 在旧系统上会直接抛
+ *     SyntaxError，整个脚本加载失败。所以用 (^|[^*]) 捕获前缀再拼回去。
+ *  4. **两个星号**是 markdown 加粗，别把它当心里话：body 不允许出现 *，
+ *     末尾再用 (?!\*) 挡住第三颗星。
+ */
+const INNER_RE = /(^|[^*])\*([^*\n]{1,300})\*(?!\*)/g;
+function renderBody(s) {
+  return esc(s).replace(INNER_RE,
+    (m, pre, body) => pre + '<em class="inner-thought">' + body + '</em>');
+}
 
 function toast(msg, ms = 2200) {
   const t = $('toast');
@@ -1698,7 +1727,7 @@ function msgHtml(m, depth = 0) {
     // ⚠️ 类名里必须留着 ai（v0.4.1.6 自查）：别处（样式、e2e 的 DOM 断言）
     //    都按 .msg.ai 找"她说的话"，去掉它旁白就整条"消失"了。
     return '<div class="msg ai narr" data-id="' + esc(m.id) + '"><div class="bub narr-line">'
-      + esc(m.content || '') + (st0 ? '<div class="t">' + st0 + '</div>' : '') + '</div></div>';
+      + renderBody(m.content || '') + (st0 ? '<div class="t">' + st0 + '</div>' : '') + '</div></div>';
   }
   let inner = '';
   // 群聊：气泡顶上标出这是谁说的（单聊不显示，看着更干净）
@@ -1712,7 +1741,7 @@ function msgHtml(m, depth = 0) {
   }
   // 显示侧正则（v0.4.0）：只改这一份副本，m.content 本身一个字不动。
   // 用 m.content 而非 inner —— 图片和搜索标记不该被正则碰到。
-  if (m.content) inner += esc(stRe(m.content, 'display', depth));
+  if (m.content) inner += renderBody(stRe(m.content, 'display', depth));
   // 版本切换（v0.4.0）：有两个以上版本时，气泡下面出现 ‹ 2/3 ›
   const vsN = Array.isArray(m.variants) ? m.variants.filter(Boolean).length : 0;
   if (vsN > 1) {
@@ -2153,6 +2182,9 @@ function ttsAvailable() {
 function ttsClean(text) {
   return String(text || '')
     .replace(/[（(][^）)]{0,300}[）)]/g, '')
+    // 心里话【整段不念】（0.5.3.4）：那是她没说出口的，念出来等于替她说了。
+    // 顺序要紧：先括号、再星号段、最后才扫散落的记号 —— 反过来星号会被先吃掉。
+    .replace(INNER_RE, '$1')
     .replace(/[*_~`#>|]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -6117,6 +6149,10 @@ let namedInText = false;
   let _prevCarry = null;
   let visibleText = '';
   let pastRaw = [];
+  // 「心里那一层」有没有出现过（0.5.3.4）。⚠️ 必须声明在 try【外面】：
+  // 它在 try 里赋值，而下面那段重写回路在主流程（try/catch 之后），
+  // 用块级 const 会直接 ReferenceError —— 症状是整轮卡在前置步骤、请求根本不发。
+  let innerSeen = true;
   // v0.4.2.3 修（审计 F7）：失败回滚要连「＋」挂着的功能与「本轮更改」的余温一起还原。
   //   下面落库那段会 pendingCmds = [] 并改写 carryOver，而 catch 段以前只还原了
   //   输入框 / 图片 / 正文 / 已落库消息 —— 于是发送失败后：挂着的功能凭空消失，
@@ -6295,7 +6331,31 @@ let namedInText = false;
     pastRaw = um ? history.filter(m => m.id !== um.id) : history.slice();
     // 带时间标记的版本（C-B）—— 只给模型看，落库/渲染用的还是 history 本身。
     // 两者必须分开：如果把标记写回 msgs，它会进库、进气泡、下一轮再被标一次。
-    const past = markHistoryTime(pastRaw);
+    // 去 AI 味（0.5.3.4）：发给模型的【历史副本】先洗一遍套话。
+    // 为什么必须洗历史：她自己的旧消息里有 45 个「我认」，每轮都被当范例回灌 ——
+    // 提示词里的禁令管不过历史，必须从喂进去的那一份下手。
+    // ⚠️ 只改这份副本：库里、气泡里、导出里一个字都不动；pastRaw 也不许改，
+    //    它还负责世界书触发词、上一轮剧情时间、空回复兜底，那些都该看原文。
+    // ⚠️ 洗完变空就退回原文：宁可留着套话，也不能让历史里出现一条空气泡。
+    const pastClean = pastRaw.map(m => {
+      if (!m || m.role !== 'assistant' || typeof m.content !== 'string') return m;
+      const r = deflavor(m.content);
+      return (r.hits.length && r.text.trim()) ? { ...m, content: r.text } : m;
+    });
+    const past = markHistoryTime(pastClean);
+
+    // 惯性动作（0.5.3.4）：扫她最近 30 条，找出翻来覆去用的动作短语。
+    // 用 pastRaw（原文）而不是 past（带时间标记）—— 时间标记里的字会污染短语统计。
+    const cliches = findCliches(
+      pastRaw.filter(m => m && m.role === 'assistant' && typeof m.content === 'string')
+        .map(m => m.content).slice(-30),
+      { limit: 6 });
+    // 「心里那一层」有没有出现过（0.5.3.4）：只认成对的一对星号。
+    // 用途①：提示词冷启动；用途②：生成后若还是一条都没有，触发一次补写重写。
+    // 实测（tmp/ab*.mjs，deepseek-flash 各 8 轮）：光靠提示词，星号出现率在 0/8 ~ 6/8 之间随机，
+    // 所以必须有一层"写完检查、没有就补"的兜底，否则这个通道等于不存在。
+    innerSeen = pastRaw.some(m => m && m.role === 'assistant'
+      && typeof m.content === 'string' && /\*[^*\n]{1,300}\*/.test(m.content));
     useVision = images.length > 0 || needsVision(history);
 
     // 颜文字决策（闭环：看最近实际使用率）
@@ -6488,6 +6548,10 @@ let namedInText = false;
       plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
       // 「剧情卡」（v0.5.0）：跨轮的方向层（当前拍）。没在跑就是 off，提示词里不出现。
       arc, arcNames,
+      // 惯性动作（0.5.3.4）：这一轮不许再出现的那几个动作短语，见 persona.js 那段
+      cliches,
+      // 心里那一层有没有出现过（0.5.3.4 冷启动）：见上面 innerSeen 的注释。
+      innerSeen,
       // 复读提醒（v0.5.5）：撞车了才大于 0，见 persona.js 那段
       rep: lastAiRep,
       // 「上一轮的要求」（v0.4.2.2）：这一轮没再提「本轮更改」时，把上一轮那条继续带一轮。
@@ -6841,6 +6905,78 @@ let namedInText = false;
       console.warn('[生成] 模型回了空白/纯标点，已用兜底接话替换：' + FB);
     }
 
+    // ⚠️ 重写回路（0.5.3.4，用户的原话是「不计任何代价，我要看到效果」）。
+    //
+    // 为什么光靠提示词不够：偏头 / 后颈 / 喉结 / 眼底 不是她人设里的东西（19 个人设里
+    // 一个「颈」字都没有），是模型自己的动作模板。提示词压不过【她自己写过的历史】——
+    // 每轮那段历史都在回灌。所以这边不指望它不写，而是写完发现写了，
+    // 就把它刚写的那条摆在它面前，让它在同一个场景里重写一遍。
+    //
+    // 代价：命中一次就多一次完整请求，钱和等待都翻倍。用户明确说不计代价。
+    // 只做 1 次：第二次的边际收益很低，而每多一次就要多等十几秒。
+    if (!abortCtl.signal.aborted) {
+      const _th = templateHits(full);
+      const bad = [...new Set(_th)];
+      // 第二个重写条件（0.5.3.4）：这段对话里还没有过「心里那一层」，这一条又写不出来。
+      // 不加这层的话，星号通道纯靠采样运气 —— 实测同一套提示词能跑出 0/8，也能跑出 6/8。
+      // 只补一次：补完就进历史，往后它自己会照着写（历史才是最强的范例）。
+      const _needInner = !innerSeen && !/\*[^*\n]{1,300}\*/.test(full);
+      if (_th.length || _needInner) {
+        const asks = [];
+        if (bad.length) asks.push('用了「' + bad.join('」「')
+          + '」，这些是模板动作，不是这个角色此刻真会做的 —— 把这些写法全换掉，'
+          + '写她这会儿手里在拿什么、身上哪儿不舒服、刚才那个动作还没做完');
+        if (_needInner) asks.push('整条里没有那一层没说出口的心里话 —— 补一句，'
+          + '单独用一对 * 包住（形如 *……*，一句就够，不要用两个星号）');
+        console.warn('[重写] ' + (bad.length ? '命中万能动作 ' + bad.join(' / ') : '缺星号那一层')
+          + ' —— 要求重写一次');
+        try {
+          const retryMsgs = apiMsgs.concat([
+            { role: 'assistant', content: full },
+            { role: 'user', content: '（上面这条不合格：' + asks.join('；')
+              + '。同一个场景、同一件事、同样的情绪，重写这一条。'
+              + '只输出重写后的完整消息，不要解释，不要提这条要求。）' }
+          ]);
+          let alt = '';
+          const st2 = streamChat({
+            apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
+            messages: retryMsgs, temperature: P.temperature,
+            maxTokens: P.maxTokens, topP: P.topP,
+            reasoningEffort: P.reasoningEffort,
+            signal: abortCtl.signal,
+            onUsage: () => {}
+          });
+          for await (const ch of st2) alt += ch;
+          alt = alt.trim();
+          // 只有【重写后确实干净】才换 —— 否则可能拿一条更差的替掉原来那条。
+          const okTpl = !templateHits(alt).length;
+          const okInner = !_needInner || /\*[^*\n]{1,300}\*/.test(alt);
+          if (alt && okTpl && okInner) {
+            full = alt;
+            if (bubble) bubble.textContent = full;
+            console.warn('[重写] 采用重写版（' + full.length + ' 字）');
+          } else {
+            console.warn('[重写] 重写版仍不合格或为空，保留原样');
+          }
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+          console.warn('[重写] 失败，保留原样：' + (e && e.message));
+        }
+      }
+    }
+
+    // 去 AI 味（0.5.3.4）：她新写出来的这一条，入库之前先洗掉套话。
+    // 为什么必须在【入库前】而不是显示时：洗的是历史 —— 从这一条起，她自己的旧消息
+    // 里不再长出新的「我认」「顿了顿」，也就不会再被当成范例回灌给自己。
+    // ⚠️ 洗完变空就保留原文：宁可留一句套话，也不能让这一条凭空消失。
+    {
+      const _df = deflavor(full);
+      if (_df.hits.length && _df.text.trim()) {
+        console.warn('[去味] 命中 ' + _df.hits.join(' / '));
+        full = _df.text;
+      }
+    }
+
     // 4) 拆成要落库的几段
     //    群聊「小说式一幕」（v0.4.1）：按【名字】拆成几条消息，各自挂各自的说话人；
     //    没有名字的段落当旁白，不挂人。
@@ -6996,7 +7132,10 @@ let namedInText = false;
     //    以前非 Abort 的失败会把这半段连同 added 一起删掉 —— 钱花了两次，
     //    屏幕上还是空的，用户以为是他手机的问题。
     if (e.name !== 'AbortError' && half) {
-      const am = { id: uid(), charId: myCharId, role: 'assistant', content: half + '（已中断）',
+      // 半段也照洗（0.5.3.4）：被截断的这半句同样会进历史、同样会被当范例回灌。
+      const _dh = deflavor(half);
+      const halfClean = (_dh.hits.length && _dh.text.trim()) ? _dh.text : half;
+      const am = { id: uid(), charId: myCharId, role: 'assistant', content: halfClean + '（已中断）',
         ...sceneSnap(myChar), story: storyStamp(), ts: Date.now() };
       am.parentId = (um && um.id) || _parent0;
       try { await msgs.add(am); } catch { /* 落库失败也不该盖住真正的原因 */ }
@@ -7012,7 +7151,9 @@ let namedInText = false;
     if (e.name === 'AbortError') {
       ph?.remove();
       if (full.trim()) {
-        const am = { id: uid(), charId: myCharId, role: 'assistant', content: full.trim() + '（已中断）', ...sceneSnap(myChar), story: storyStamp(), ts: Date.now() };
+        const _df2 = deflavor(full.trim());
+        const fullClean = (_df2.hits.length && _df2.text.trim()) ? _df2.text : full.trim();
+        const am = { id: uid(), charId: myCharId, role: 'assistant', content: fullClean + '（已中断）', ...sceneSnap(myChar), story: storyStamp(), ts: Date.now() };
         am.parentId = (um && um.id) || _parent0;
         try { await msgs.add(am); } catch { /* 落库失败也不影响显示 */ }
         if (curCharId === myCharId) {
@@ -18365,7 +18506,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.3.3';
+const WEB_VERSION_FALLBACK = '0.5.3.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

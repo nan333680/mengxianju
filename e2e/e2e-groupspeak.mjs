@@ -43,13 +43,21 @@ const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let replyText = '嗯。';
 let chatReq = null, chatN = 0;
+// v0.5.3.4：重写回路会为同一条回复补发一次请求（最后一条 user 带「上面这条不合格」）。
+// 断言「这一轮只发一次请求」时要把它排除，否则数出来是 2。
+const chatBodies = [];
+const isRetry = (b) => {
+  const ms = (b && b.messages) || [];
+  const last = ms.filter(m => m.role === 'user').pop() || {};
+  return String(last.content || '').includes('上面这条不合格');
+};
 await page.setRequestInterception(true);
 page.on('request', req => {
   if (req.url().includes('/chat/completions')) {
     if (req.method() === 'OPTIONS') { req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'*', 'Access-Control-Allow-Methods':'*' } }); return; }
     let body = {}; try { body = JSON.parse(req.postData() || '{}'); } catch (e) { /* ignore */ }
     if (body.stream) {
-      chatReq = body; chatN++;
+      chatReq = body; chatN++; chatBodies.push(body);
       const chunk = JSON.stringify({ choices: [{ delta: { content: replyText } }] });
       req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
         body: 'data: ' + chunk + NL + NL + 'data: [DONE]' + NL + NL }); return;
@@ -214,7 +222,7 @@ await page.evaluate(() => { [...document.querySelectorAll('#char-list .char-card
 await sleep(1300);
 let n0 = chatN;
 await send('在吗');
-const withZero = chatN - n0;
+const withZero = chatBodies.slice(n0).filter(b => !isRetry(b)).length;
 t('autoScene=0 时只请求一次', withZero === 1, withZero);
 await setGroup({ autoScene: 1 });
 await page.reload({ waitUntil: 'networkidle0' }); await sleep(1200);
@@ -223,7 +231,7 @@ await sleep(1300);
 n0 = chatN;
 await send('再说说');
 await sleep(3000);
-const withOne = chatN - n0;
+const withOne = chatBodies.slice(n0).filter(b => !isRetry(b)).length;
 t('autoScene=1 时自动再来一幕', withOne >= 2, withOne);
 const ai3 = await aiMsgs();
 t('两幕都落了库', ai3.length >= 3, ai3.length);

@@ -190,7 +190,9 @@ const sys = await page.evaluate(async () => {
 console.log('   稳定前缀长度: ' + sys.length + ' 字');
 t('前缀里有【性格】段', sys.includes('【性格】') && sys.includes(CARD.data.personality), sys.slice(0, 80));
 t('前缀里有【场景】段', sys.includes('【场景】') && sys.includes(CARD.data.scenario), '');
-t('前缀里有【对话范例】段（并说明照它写）', sys.includes('【对话范例】') && /照这个的写法说话/.test(sys), '');
+// ⚠️ v0.5.3.4：尾巴从「照这个的写法说话」改成「只学语气与节奏，不要照抄长度」——
+//    旧说法被模型当成长度配额（0.5.3.3 那次就是这么来的）。
+t('前缀里有【对话范例】段（并说明只学语气不抄长度）', sys.includes('【对话范例】') && /只学语气、句子长短的节奏/.test(sys) && /不要照抄它的长度/.test(sys), '');
 t('前缀里有【卡里给的角色说明】', sys.includes('【卡里给的角色说明】') && sys.includes(CARD.data.system_prompt), '');
 t('前缀里有【对话之后要一直记着的】', sys.includes('【对话之后要一直记着的】') && sys.includes(CARD.data.post_history_instructions), '');
 

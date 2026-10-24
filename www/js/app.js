@@ -6354,8 +6354,14 @@ let namedInText = false;
     // 用途①：提示词冷启动；用途②：生成后若还是一条都没有，触发一次补写重写。
     // 实测（tmp/ab*.mjs，deepseek-flash 各 8 轮）：光靠提示词，星号出现率在 0/8 ~ 6/8 之间随机，
     // 所以必须有一层"写完检查、没有就补"的兜底，否则这个通道等于不存在。
-    innerSeen = pastRaw.some(m => m && m.role === 'assistant'
-      && typeof m.content === 'string' && /\*[^*\n]{1,300}\*/.test(m.content));
+    //
+    // ⚠️ 门槛：她说过 2 条以上，而且一条星号都没有，才算「该有了」。
+    //    刚开的新对话不算 —— 否则每个新对话的第一条都会为了补一句心里话
+    //    多发一次请求、让用户多等十几秒，换来的只是一句可有可无的心里话。
+    const _aiHist = pastRaw.filter(m => m && m.role === 'assistant' && typeof m.content === 'string');
+    innerSeen = _aiHist.length < 2
+      ? true
+      : _aiHist.some(m => /\*[^*\n]{1,300}\*/.test(m.content));
     useVision = images.length > 0 || needsVision(history);
 
     // 颜文字决策（闭环：看最近实际使用率）

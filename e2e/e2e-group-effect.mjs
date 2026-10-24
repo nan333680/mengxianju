@@ -106,6 +106,13 @@ const tailMsgs = (n) => page.evaluate((k) => [...document.querySelectorAll('#mes
   who: (m.querySelector('.who') || {}).textContent || '',
   text: (m.querySelector('.bub') || {}).textContent || ''
 })), n);
+/** 补写/重写请求（v0.5.3.4）：重写回路会多发一次，带这条指令的就是它，不算「内容请求」 */
+const isRetry = (r) => {
+  const ms = (r && r.messages) || [];
+  const last = ms.filter(m => m.role === 'user').pop() || {};
+  return String(last.content || '').includes('上面这条不合格');
+};
+
 /** 发一句，等回复结束；返回这一轮新增的请求条数 */
 async function send(text, opts = {}) {
   const before = reqs.length;
@@ -251,7 +258,10 @@ console.log('=== 10. 允许冷场 关 → 同一轮就不再有冷场 ===');
   await groupSave({ silence: false });
   const r = await send('在吗', { random: 0 });
   t('没有「没人接话」', !r.msgs.some(m => m.text.includes('没人接话')), r.msgs);
-  t('这一轮真的发请求了', r.newReqs.length === 1, r.newReqs.length);
+  // ⚠️ v0.5.3.4：历史里一直没出现过星号时，重写回路会补发一次「补一句心里话」——
+  //    那是同一条回复的一部分，不是额外的一幕，所以只数内容请求。
+  const real10 = r.newReqs.filter(q => !isRetry(q));
+  t('这一轮真的发请求了（补写不算）', real10.length === 1, real10.length + ' / 全部 ' + r.newReqs.length);
 }
 
 console.log('');
@@ -263,8 +273,9 @@ console.log('=== 11. 自动续一幕 = 1 → 这一轮完了自己再接一轮 =
   // 自动续一幕是 setTimeout 1200ms 之后才发的，等它
   for (let i = 0; i < 60 && reqs.length < n0 + 2; i++) await sleep(300);
   await sleep(2500);
-  t('一共发了 2 次请求（手动 1 + 自动 1）', reqs.length - n0 === 2, reqs.length - n0);
-  t('第二次是自动续的一幕', reqs.length - n0 === 2);
+  const real11 = reqs.slice(n0).filter(q => !isRetry(q));
+  t('一共发了 2 次内容请求（手动 1 + 自动 1）', real11.length === 2, real11.length + ' / 全部 ' + (reqs.length - n0));
+  t('第二次是自动续的一幕', real11.length === 2);
 }
 
 console.log('');

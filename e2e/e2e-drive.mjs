@@ -174,8 +174,11 @@ console.log('=== 4. 下一条回复的系统提示词里带上了这一档的约
   console.log('   提示词片段: ' + JSON.stringify(lastSys.slice(-300)));
   console.log('   提示词里含「动作链」: ' + lastSys.includes('动作链'));
   console.log('   提示词里含「感官」: ' + lastSys.includes('感官'));
-  t('提示词带上了「详」档的约束', lastSys.includes('动作链') && lastSys.includes('感官'));
-  t('且显式声明与长度上限不冲突', lastSys.includes('上面那个长度上限照旧生效'));
+  // ⚠️ 断言反转（v0.5.3.4）：descLevel / detailDrive 冻结，不再注入「动作链 / 三段式」那套档位文案，
+  //    换成三通道写法。旧表还留在 persona.js 里（USE_CHANNEL=false 可回滚），但默认注入的不再是它。
+  t('提示词走三通道，不再注入「详」档的档位文案',
+    /一对 \*/.test(lastSys) && !lastSys.includes('动作链') && !lastSys.includes('三段式'));
+  t('且不再出现「按最低档执行」这类降级说明', !lastSys.includes('按最低档执行'));
 }
 
 console.log('');

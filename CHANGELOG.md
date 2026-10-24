@@ -31,6 +31,8 @@
 
 `descLevel === 'off'` 时仍注入「这一档整条消息里不出现括号」的硬规则，星号通道继续存在（否则老角色一路没有括号，也就一路没有内心）。
 
+**代价要说清**：冻结之后，能调她输出多少的开关只剩一个 —— **角色编辑页的「回复长度」**（`verbosity`，很短 / 短 / 中等 / 长 / 长篇；群聊里是群设置页那一档）。**括号里能写多少，不再有任何用户可见的旋钮**，改由「这一条实际发生了什么」决定。原来 `descLevel` 的四档（关 / 少 / 中 / 丰富 = 0 / 8 / 25 / 60 字上限）就是干这个的。这是方案 4.1.4 主动做的取舍（档位一旦带数字，模型就把它当整条消息的预算，一句话花完就收），但它确实让「想让她描写更足、台词还是那么少」变成没有开关可调 —— 只能靠人设和风格卡里的范例引。选「长篇」不是这件事的解：它换的是体裁（一条消息变成一场戏，几百到上千字、分段、有落点），日常闲聊用它会不像聊天；`maxTokens` 会在这一档自动抬到至少 6144（`www/js/app.js:6320`）。
+
 长度提示词同步改软：`LEN_HINT` 的 medium 改成「说出口的话 2-3 句；说完就收，不按字数凑。」、long 改成「可以多聊一些；把该说的说完，不设硬字数」、epic 去掉「不要为了长而重复」以外的数字。范例尾巴从「格式、长度都参照它」改成「只学语气、句子长短的节奏、动作和台词怎么排；不要照抄它的长度、内容、人物和场景」，`www/js/stylecard.js:60-64` 同样处理。
 
 #### 四、渲染与朗读
@@ -68,7 +70,26 @@
 
 #### 七、测试
 
-**这一轮不跑全量回归**（用户明确要求），只跑了受影响的局部套件，全部通过：
+起初用户要求这一轮不跑全量回归，只跑了受影响的 16 套局部；后来他追加「后台跑全量回归」，于是全量跑了两轮才干净。
+
+**第一轮：152 套 / 通过 3787 / 失败 18**，7 套红。这不是测试写法的偏差，是真 bug：
+
+`innerSeen`（星号冷启动的判定）门槛太宽 —— 只要历史里一条星号都没有就触发补写，于是**新对话的第一条消息也多发一次请求**，群聊每轮跟一次补写，自动续幕每一段跟一次。`e2e-variant` 最直观：它期望一次请求，实际把两次回复都收到了（`["第1版回复。","第3版回复。"]`）；`e2e-epic` 的「继续往下写」收到的也是重写指令。
+
+修法（`www/js/app.js:6357` 附近）：她说过 2 条以上、而且一条星号都没有，才算「这一轮该有了」；刚开口的头两条不强制 —— 否则每个新对话的第一条都要多等十几秒。
+
+```js
+const _aiHist = pastRaw.filter(m => m && m.role === 'assistant' && typeof m.content === 'string');
+innerSeen = _aiHist.length < 2
+  ? true
+  : _aiHist.some(m => /\*[^*\n]{1,300}\*/.test(m.content));
+```
+
+跟着改的测试：`e2e-cardfields` / `e2e-drive` / `e2e-epic` 三处用旧文案做断言的地方；`e2e-group-effect` / `e2e-groupspeak` 加 `isRetry` 过滤（重写请求不算一次聊天请求）。7 套单跑全绿。
+
+**第二轮：152 套 / 通过 3805 / 失败 0 / 57.4 分钟**（比第一轮多 18 项，就是新加的那几条断言）。
+
+下表是局部受影响的 16 套（三通道与档位冻结直接涉及），全部通过：
 
 | 套件 | 项数 |
 | --- | --- |
@@ -95,16 +116,20 @@
 
 #### 八、打包
 
-`node tools/bump-version.mjs 0.5.3.4 165` → package.json / package-lock 根包 / `android/app/build.gradle` / `www/js/app.js` 的 WEB_VERSION_FALLBACK 四处一致；`node tools/ci-check.mjs` 语法 0 错、版本三方一致。
+**打过两个包，前一个作废。** 第一版是 versionCode **165**（5,666,630 字节，SHA256 `F642F8126E0B6DCF5FABA3679048E72AAA7D9693F5A6E27293DAB4D96D89659B`），打完之后全量回归第一轮才发现 `innerSeen` 那个 bug（见上一节）—— 那个包会让每个新对话的第一条消息多花一次请求。**165 的包不要装**，装上也不影响数据，但白等一轮。
+
+修完重打，versionCode 抬到 **166**（同号覆盖在个别 ROM 上会被拦，只有 versionCode 才是系统判断升级的依据）：
+
+`node tools/bump-version.mjs 0.5.3.4 166` → package.json / package-lock 根包 / `android/app/build.gradle` / `www/js/app.js` 的 WEB_VERSION_FALLBACK 四处一致；`node tools/ci-check.mjs` 语法 0 错、类型噪音 28（= BASELINE，未增加）。
 
 `powershell -ExecutionPolicy Bypass -File tools\build-apk.ps1`：
 
-- 包：`C:\Users\29214\Desktop\mxj\梦弦居-v0.5.3.4.apk`
-- 大小：**5,666,630 字节**（比 0.5.3.3 的 5,650,988 多 15,642 —— 新增 cliche.js + deflavor.js 与提示词扩充）
-- SHA256：`F642F8126E0B6DCF5FABA3679048E72AAA7D9693F5A6E27293DAB4D96D89659B`
+- 包：`C:\Users\29214\Desktop\mxj\梦弦居-v0.5.3.4.apk`（桌面这个文件现在是 166 版，直接覆盖安装）
+- 大小：**5,666,842 字节**（比 0.5.3.3 的 5,650,988 多 15,854 —— 新增 cliche.js + deflavor.js 与提示词扩充）
+- SHA256：`7D80E23589B6D6F18B92EFF346E932A530B043BC92DC69CED34FD9BE5D6C246D`
 - 签名：`e986da9d290ae1d4c2e987585a321841af89c8783dfc2a5db0442e91246c8c0a`（历版同一把，apksigner 退出码 0）
-- versionCode **165** / versionName **0.5.3.4**
-- 已归档 `releases/v0.5.3.4`
+- versionCode **166** / versionName **0.5.3.4**（aapt2 核对过）
+- `releases/v0.5.3.4` 原来放着 165 那个包，先挪成 `releases/v0.5.3.4-165` 再归档新的（`tools/archive-release.ps1` 不覆盖已存在的目录）；归档包与桌面包装 SHA256 一致
 
 解包核对：`assets/public/js` 里 `persona.js` 135,671 字节、`app.js` 1,042,623 字节、`cliche.js` 5,342 字节、`deflavor.js` 8,387 字节，与工作区逐一对齐；包内文本含 `CHANNEL_HINT`、`一对 *`、`这个词不是你说话的方式`、`TEMPLATE_ACTS`、`innerSeen`、`renderBody`。
 

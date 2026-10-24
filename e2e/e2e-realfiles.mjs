@@ -290,8 +290,32 @@ console.log('=== F. 群聊提示词：用真实数据看谁真进了请求 ===')
 const gidReal = g1013.id;
 const memOfGroup = (J.b1013.memories || []).filter(m => m && m.charId === gidReal);
 const gMembers = (g1013.memberIds || []).map(id => (J.b1013.characters.find(c => c.id === id) || {}).name).filter(Boolean);
+// ⚠️ 进 F 之前 E 节停在设置抽屉里，reload 之后视图不一定是角色列表（全量回归第 2 次跑到这里
+//    5 条断言全红：chatReq 是 null、gSys 是空串 —— 卡片没点着，send() 发给"未选择角色"）。
+//    先回角色列表，再点卡片，再等顶栏真的换成这个群的名字。
+await page.evaluate(() => { const b = document.getElementById('btn-chars'); if (b) b.click(); });
+await sleep(900);
 await page.evaluate((gid) => { const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.dataset.id === gid); if (c) c.click(); }, gidReal);
-await sleep(1500);
+// ⚠️ 这里原来直接 .catch(()=>{})，超时了也当没事 —— 后续 5 条断言一起红，
+//   而日志里只有 "chatReq=false"，看不出到底停在哪一步。改成把状态打印出来。
+const fReady = await page.waitForFunction((nm) => {
+  const t = document.getElementById('chat-name');
+  return !!t && (t.textContent || '').includes(nm) && document.querySelectorAll('#messages .msg').length > 0;
+}, { timeout: 20000 }, String(g1013.name || '')).then(() => true).catch(() => false);
+if (!fReady) {
+  const diag = await page.evaluate(() => {
+    const shown = [...document.querySelectorAll('.view')].filter(v => !v.classList.contains('hidden')).map(v => v.id);
+    return {
+      views: shown,
+      cards: document.querySelectorAll('#char-list .char-card').length,
+      chatName: (document.getElementById('chat-name') || {}).textContent || '',
+      msgs: document.querySelectorAll('#messages .msg').length,
+      want: { id: (window.__wantId || '') }
+    };
+  }).catch(e => ({ err: String(e && e.message || e) }));
+  console.log('   [F 节诊断] ' + JSON.stringify(diag) + ' 目标群=' + gidReal + ' 名字=' + g1013.name);
+}
+await sleep(500);
 chatReq = null;
 await send('在吗');
 const gSys = sysText();

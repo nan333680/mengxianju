@@ -45,7 +45,10 @@ t('没有模块加载失败', reqFail.length === 0, reqFail.join(' | '));
 // 是测试设计的缺陷（换个环境就挂）。改成自己准备。
 await seedChar(page, '测试角色', { greeting: '（抬头看你）嗯，你来了。' });
 await page.reload({ waitUntil:'networkidle0' });
-await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
+// ⚠️ 原来是 sleep(400)。全量回归第 2 次跑到这里 FAIL「刷新后记录仍在 -> 消息数=2」：
+//    reload 后 400ms 事件循环还没把消息画完（慢机器 + 并行套件时更明显）。
+//    改成等真实条件，不再赌时间。
+await page.waitForFunction(() => document.querySelectorAll('#char-list .char-card').length > 0, { timeout: 20000 }).catch(() => {});
 await page.evaluate(() => {
   const c = [...document.querySelectorAll('#char-list .char-card')]
     .find(x => x.textContent.includes('测试角色'));
@@ -76,13 +79,21 @@ await page.type('#input','测试记录是否还在',{delay:8});
 // 血泪第 9 条记的就是这个坑。实测：page.click → msg=1；evaluate 点击 → msg=3。
 await page.evaluate(() => document.getElementById('btn-send').click());
 await waitIdle(page);   // 先等按钮出现、再等它消失（原来点完立刻查会误判成已结束）
-const n1 = await page.$$eval('.msg', els=>els.length);
+// ⚠️ 计数必须排除错误卡（.err-bub）。
+//   2026-10-24 全量回归第二轮这里报「刷新后记录仍在 -> 消息数=2」，
+//   而第 4 条却是 OK：因为那一轮请求其实失败了，屏幕上多出来的第 3 条是
+//   「⚠ API Key 无效或过期」错误卡 —— 它也是 .msg，把条数凑够了，但刷新后不落库。
+//   不排除它，这条断言就会把「请求失败」当成「回复成功」。
+const n1 = await page.$$eval('.msg', els => els.filter(e => !e.querySelector('.err-bub')).length);
+const errN = await page.$$eval('.msg .err-bub', e => e.length).catch(() => 0);
+t('没有出现错误卡', errN === 0, '错误卡='+errN);
 t('能正常发消息收到回复', n1 >= 3, '消息数='+n1);
 
 // 刷新验证持久化
 await page.reload({ waitUntil:'networkidle0' });
-await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
-const n2 = await page.$$eval('.msg', els=>els.length);
+// 同上：等消息真的画出来，而不是睡 400ms 就数。
+await page.waitForFunction(() => document.querySelectorAll('.msg').length >= 3, { timeout: 20000 }).catch(() => {});
+const n2 = await page.$$eval('.msg', els => els.filter(e => !e.querySelector('.err-bub')).length);
 t('刷新后记录仍在', n2 >= 3, '消息数='+n2);
 
 t('仍然没有 JS 错误', errs.length === 0, errs.slice(0,2).join(' | '));

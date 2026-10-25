@@ -3,6 +3,8 @@
 import { arcPrompt } from './storyarc.js';
 import { memoryLine } from './memory.js';
 import { styleCardBlock } from './stylecard.js';
+import { psychePrompt } from './psyche.js';
+import { directorPrompt } from './director.js';
 
 // ---------- 颜文字库 ----------
 // ---------- 颜文字库（v0.4.2.2：按【心情】分组）----------
@@ -1391,7 +1393,11 @@ export function buildTurnNote(char, s, ctx = {}) {
           // 「心里那一层有没有出现过」（0.5.3.4 冷启动）：历史里一条星号都没有时，
           // 模型没有可模仿的先例 —— 实测 16 条输出里 0 条用星号。
           // 只在【从没出现过】时补一句硬要求，出现过就再也不出现；它不是每轮的规则。
-          innerSeen = true } = ctx;
+          innerSeen = true,
+          // Psyche v1（0.5.3.6）：跨轮存的心理读数，见 www/js/psyche.js。
+          psyche = null,
+          // Psyche v1 判断层的输出，见 www/js/director.js。null = 这一轮没跑判断。
+          director = null } = ctx;
   const parts = [];
   // ⚠️ 世界书放在【本轮段最前面】（v1.20.20 调整）。
   //
@@ -1833,6 +1839,17 @@ export function buildTurnNote(char, s, ctx = {}) {
       + body);
   }
 
+  // 「这会儿的状态」（0.5.3.6 Psyche v1）：情绪余量、身体、想做没做的事、没说出口的话。
+  //
+  // 和「你记得关于他的事」是两件事，别合并：记忆是档案（长、要检索、会过期、
+  // 只注入命中的几条），这里是读数（短、每轮整体覆盖、永远全注入、不走检索）。
+  // 同一条「他上次敷衍我」两边都可能有，但语义不同 —— 故意不写同一份。
+  // 放在剧情卡之前：先说她现在是什么状态，再给她这一章往哪走。
+  {
+    const body = psychePrompt(psyche);
+    if (body) parts.push(body);
+  }
+
   // 「剧情卡」（v0.5.0）：跨轮的方向层，放在剧情方向之前 ——
   // 剧情卡是这一段的总走向，plot 是这一轮的临时偏移，先给总走向它才有个参照。
   {
@@ -1853,6 +1870,20 @@ export function buildTurnNote(char, s, ctx = {}) {
         + '也别把它当成本轮的写作要求（那是另一件事）。具体怎么走到那一步，你自己安排；'
         + '中途要不要出岔子、她该不该顺着来，也由你判断。）');
     }
+  }
+
+  // 「你这一轮心里在发生什么」（0.5.3.6 Psyche v1 判断层）：先判断，再开口。
+  //
+  // 为什么要有这一段：一次性生成时模型没有「决定不说」的环节，它得一边写一边找
+  // 最合理的回答，而最合理的回答就是客服那套 —— 完整、解释到位、把情绪说明白。
+  // 这一段把「她怎么听、想干什么、决定不说什么」先摆给它，再让它动笔。
+  //
+  // 只此一轮，绝不进历史；判断失败时 director 是 null，整段不出现（退回老路径）。
+  // 里面那句「不是要写出来的内容」不能去掉 —— 否则模型会把 withhold 直接念成台词，
+  // 正好是这一段要防的东西。
+  {
+    const body = directorPrompt(director);
+    if (body) parts.push(body);
   }
 
   // 「本轮更改」（v0.4.4）：他这一轮临时提的要求（输入框「＋ → 本轮更改」）。

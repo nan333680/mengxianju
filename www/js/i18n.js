@@ -501,7 +501,15 @@ const EXTRA_ZH = {
   "点一下会真的把最近那份自动备份读出来，告诉你里面有多少角色 / 记录。": "This really reads your latest auto backup and tells you how many characters / records it holds.",
   "还没有。从酒馆的角色卡或预设文件导入时会自动带过来。": "None yet. Importing a character card or a preset file brings them over automatically.",
   "模型默认": "Model defaults to",
-  "✅ 对得上": "✅ OK"
+  "✅ 对得上": "✅ OK",
+  // v0.5.3.6 Psyche v1：判断层的展示（检查器「这一轮她心里」+ 气泡内「她没说出口」折叠）。
+  // 这些是【判断痕迹】，不是聊天内容 —— 英文也照这个口径译，不要用口语化说法。
+  '她没说出口': 'Unsaid',
+  '她没说出口的': 'Unsaid',
+  '这一轮她心里': 'Inside her this turn',
+  '她听到的是：': 'What she heard:',
+  '这一轮她打算：': 'What she means to do:',
+  '可以主动提起的旧事：': 'Old thread she may reopen:',
 };
 /**
  * 动态文本的翻译表：**直接用中文原文当 key**。

@@ -34,6 +34,10 @@ import { normalizeArc, arcActive, arcFinished, atLastBeat, beatTurns, emptyArc, 
 // 内置示例卡（v0.5.3.2，清单 §3.2 L1）：一个角色都没有时，让人【立刻能试】
 import { STARTER_CARD, STARTER_HOOK } from './starter.js';
 import { normalizeStyleCard } from './stylecard.js';
+// Psyche v1（0.5.3.6）：跨轮的心理状态 + 每轮的判断层。
+// 两处都只在 send() 里用；任何一个坏了都必须能退回老路径（见 send 里那段注释）。
+import { normalizePsyche, emptyPsyche, decayPsyche, applyPsycheDelta, psycheActive, psychePrompt } from './psyche.js';
+import { runDirector, directorDelta, normalizeDirector, MOVE_NAME } from './director.js';
 // 记忆时间锚（0.5.2）：把「明天/昨天」换算成绝对剧情天数，并保留来源消息。
 import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMemory, memoryDay, memoryGrams, hasRelativeDay, MEMORY_KEYS, activeOnly, MEMORY_STATUS,
   MEMORY_KINDS, MEMORY_KIND_NAME, MEMORY_SCOPES, MEMORY_SCOPE_NAME, MEMORY_STATUS_NAME, normalizeMemory,
@@ -1764,6 +1768,18 @@ function msgHtml(m, depth = 0) {
   // 显示侧正则（v0.4.0）：只改这一份副本，m.content 本身一个字不动。
   // 用 m.content 而非 inner —— 图片和搜索标记不该被正则碰到。
   if (m.content) inner += renderBody(stRe(m.content, 'display', depth));
+  // 「她没说出口的」（0.5.3.6 Psyche v1）：这一轮判断里那几句她决定不说的话。
+  //
+  // 为什么折起来、默认不展开：它不是聊天内容，是她没说出来的东西。
+  // 摊开摆在消息里就等于替她说了一半 —— 那正好抵消了这一层要的效果。
+  // 但也不能完全不让人看：这是唯一能验证「她真的在忍住什么」的地方。
+  // ⚠️ 只在【这一轮第一条】消息上有（落库时挂在 i===0），所以一条回复只出现一次。
+  const WW = (!isMe && m.inj && m.inj.psy && Array.isArray(m.inj.psy.wd)) ? m.inj.psy.wd : null;
+  if (WW && WW.length) {
+    inner += '<details class="ww"><summary>' + esc(tt('她没说出口')) + ' · ' + WW.length + '</summary>'
+      + WW.map(x => '<div class="ww-row">' + esc(x) + '</div>').join('')
+      + '</details>';
+  }
   // 版本切换（v0.4.0）：有两个以上版本时，气泡下面出现 ‹ 2/3 ›
   const vsN = Array.isArray(m.variants) ? m.variants.filter(Boolean).length : 0;
   if (vsN > 1) {
@@ -6109,6 +6125,9 @@ async function send(opts) {
   // 这一轮到底喂了什么（v0.5.1.1）：快照在下面拼提示词之后才填，落库时挂在第一条
   // assistant 消息上。声明提到函数顶层 —— 它要在 try 里赋值、在 try 里的落库循环里读。
   let turnInj = null;
+  // Psyche v1（0.5.3.6）：这一轮的判断结果（withhold / beats / read / 状态读数）。
+  // 声明在函数顶层的原因和 turnInj 一样：在 try #1 里赋值、在 try #2 的落库处读。
+  let turnPsy = null;
   // 群里重新生成 / 换版本时，由调用方把"刚才说话的那个人"传进来（v0.4.0 复查）。
   // ⚠️ 必须在【删消息之前】取好再传 —— regenerate() 先删掉旧回复再调 send()，
   //    那时候再去读"上一条回复是谁"读到的是更早的那条了。
@@ -6608,10 +6627,50 @@ let namedInText = false;
       }
       return 0;
     })();
+    // —— Psyche v1（0.5.3.6）：这一轮先让她想一下，再动笔 ——
+    //
+    // 顺序：decayPsyche → runDirector → applyPsycheDelta 落库 → 拼提示词。
+    //
+    // ⚠️ 提示词里用的是【衰减后、还没叠这一轮 delta】的那份状态：她这一轮还没反应。
+    //    这一轮的反应下一轮才出现在她身上 —— 这才叫情绪有惯性，而不是同一轮里
+    //    既恼火又已经算完账。
+    // ⚠️ 群聊不跑（v1）：群里「他」指代不定，一份判断会张冠李戴（见 director.js 文件头）。
+    // ⚠️ 任何一步失败都不许挡住聊天：状态坏了归零、判断失败就是 null。
+    //    两个都空的时候，提示词与 0.5.3.5 逐字相同（老路径原样）。
+    const psyKey = 'psyche:' + myChar.id;
+    let psyBefore = null;
+    let psyDir = null;
+    if (!isGroup(myChar)) {
+      try { psyBefore = decayPsyche(await kv.get(psyKey, null), Date.now()); }
+      catch { psyBefore = emptyPsyche(); }
+      if (S.apiKey) {
+        psyDir = await runDirector({
+          stable: sysStable,
+          recent: (pastRaw || []).slice(-12).map(m => ({ role: m.role, content: m.content })),
+          userText: visibleText,
+          psyche: psyBefore,
+          api: { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 },
+          signal: abortCtl && abortCtl.signal
+        });
+      }
+      // 落库：就算这一轮判断失败，也要把【衰减后的】状态写回去 ——
+      // 否则「昨晚那点火气」会一直停在原处不降（衰减只在读的时候发生，不写回就白算）。
+      try {
+        const next = applyPsycheDelta(psyBefore, psyDir ? directorDelta(psyDir) : null, Date.now());
+        if (psyDir || psycheActive(psyBefore)) await kv.set(psyKey, next);
+      } catch (err) { console.warn('[psyche] 写库失败：' + ((err && err.message) || err)); }
+    }
+    // 这一轮的判断留到落库那一步：withhold 要挂到消息上（气泡里能展开看）。
+    turnPsy = psyDir;
+
     const turnNote = buildTurnNote(myChar, P, {
       memories, useKaomoji, useEmoji, worldbook, rolling, topic: memTopic,
       // 记忆 OS（0.6.0）：已经挑好的那一块；为 null 时 persona 走老的 rankMemories 分支
       memBlock,
+      // Psyche v1（0.5.3.6）：这一轮开始时她的状态（衰减后）+ 这一轮的判断结果。
+      // 两个都可能为空 —— 空的时候那两段提示词根本不出现（老角色提示词逐字不变）。
+      psyche: psyBefore,
+      director: psyDir,
       clock: clockFull(clockState), clockLocked: !!clockState.locked,
       clockState, prevStory,
       // 临时场景（v1.21.47）：只进本轮段，不进稳定前缀
@@ -6696,6 +6755,16 @@ let namedInText = false;
       } : null,
       plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => _cut(c.arg, 60)),
       dir: _cmds.filter(c => c.k === 'direct' && c.arg).map(c => _cut(c.arg, 60)),
+      // Psyche v1（0.5.3.6）：这一轮她心里那层。
+      // 放进 turnInj 而不是另开一个字段：「能查的地方」只有一个入口，
+      // 再开一个菜单等于没人看得见（长按菜单里已经有这一项）。
+      psy: psyDir ? {
+        rd: _cut(psyDir.reading, 60),
+        mv: psyDir.move || '',
+        cb: _cut(psyDir.callback, 60),
+        wd: (psyDir.withhold || []).slice(0, 3).map(x => _cut(x, 60)),
+        beats: (psyDir.beats || []).slice(0, 3).map(x => _cut(x, 60))
+      } : null,
     };
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -9563,6 +9632,21 @@ async function showInj(inj) {
     secs.push('<h4 class="inj-h">' + esc(tt(title)) + esc(tt('（' + rows.length + '）')) + '</h4>'
       + rows.map(t => '<div class="inj-row">' + esc(t) + '</div>').join(''));
   };
+  // ---- Psyche v1（0.5.3.6）：这一轮她心里那层 ----
+  // 放在最前面：用户点进来最想知道的通常是「她怎么想的那句」，而不是「注入了哪条记忆」。
+  // 这里显示的是【这一轮没写出来】的内容 —— 它不是聊天记录的一部分，只是判断的痕迹。
+  const psy = inj.psy;
+  if (psy && (psy.rd || (psy.wd && psy.wd.length))) {
+    const rows = [];
+    if (psy.rd) rows.push('<div class="inj-row">' + esc(tt('她听到的是：')) + esc(psy.rd) + '</div>');
+    if (psy.mv) rows.push('<div class="inj-row">' + esc(tt('这一轮她打算：')) + esc(tt(MOVE_NAME[psy.mv] || psy.mv)) + '</div>');
+    if (psy.cb) rows.push('<div class="inj-row">' + esc(tt('可以主动提起的旧事：')) + esc(psy.cb) + '</div>');
+    secs.push('<h4 class="inj-h">' + esc(tt('这一轮她心里')) + '</h4>' + rows.join(''));
+    if (psy.wd && psy.wd.length) {
+      secs.push('<h4 class="inj-h">' + esc(tt('她没说出口的')) + esc(tt('（' + psy.wd.length + ' 条）')) + '</h4>'
+        + psy.wd.map(t => '<div class="inj-row">「' + esc(t) + '」</div>').join(''));
+    }
+  }
   if (inj.arc) {
     const ai = (Number(inj.arc.i) || 0) + 1;
     const an = Number(inj.arc.n) || 1;
@@ -18728,7 +18812,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.3.5';
+const WEB_VERSION_FALLBACK = '0.5.3.6';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

@@ -60,6 +60,17 @@ page.on('request', req => {
   if (req.url().includes('/chat/completions')) {
     if (req.method() === 'OPTIONS') { req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'*', 'Access-Control-Allow-Methods':'*' } }); return; }
     try { const b = JSON.parse(req.postData() || '{}'); if (b.stream) lastBody = b; } catch (e) { /* ignore */ }
+    // 0.5.3.6：单聊每轮会先跑一次【非流式】判断（Psyche v1）。它不属于这一套要钉的三件事，
+    // 而且会吃掉 REPLAY_QUEUE 里预置的响应（第 12/13 节就是靠队列顺序模拟「写坏 → 重写」）。
+    // 所以判断那趟单独走：回一段不是 JSON 的文本，让它失败退回老路径 —— 正文请求拿到的还是
+    // 队列里该拿的那一条，REQ_N 也只数正文请求。
+    let isJudge = false;
+    try { isJudge = JSON.parse(req.postData() || '{}').stream === false; } catch (e) { /* ignore */ }
+    if (isJudge) {
+      req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'application/json',
+        body: JSON.stringify({ choices: [{ message: { content: '这一轮先不判断。' } }] }) });
+      return;
+    }
     REQ_N++;
     const reply = REPLAY_QUEUE.length ? REPLAY_QUEUE.shift() : NEXT_REPLY;
     // 队列项可以是字符串，也可以是 { text, finish }（第 13 节要伪造「重写版被截断」）

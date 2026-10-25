@@ -770,6 +770,29 @@ input + .hint-text{ margin-top:8px; }
 .bub .t.has-more .rep-chip,
 .bub .t.has-more .rep-chip + .story-time{ margin-left:auto; }
 .msg.me .bub .more-btn{ color:rgba(255,255,255,.88); }
+/* 「她没说出口的」（0.5.3.6 Psyche v1）：这一轮她决定不说的话。
+   默认收起 —— 它是判断的痕迹，不是聊天内容。摊开摆在消息里等于替她说了一半。
+   但得能点开：这是唯一能验证「她真的在忍住什么」的地方。 */
+.bub .ww{
+  margin-top:7px; padding-top:5px;
+  border-top:1px solid var(--line);
+}
+.bub .ww summary{
+  font-size:11.5px; color:var(--fg3); cursor:pointer;
+  list-style:none; user-select:none;
+}
+.bub .ww summary::-webkit-details-marker{ display:none; }
+.bub .ww summary::before{ content:'▸ '; }
+.bub .ww[open] summary::before{ content:'▾ '; }
+.bub .ww-row{
+  font-size:12px; line-height:1.55; color:var(--fg2);
+  padding:3px 0 0 11px;
+}
+.msg.me .bub .ww{ border-top-color:rgba(255,255,255,.26); }
+.msg.me .bub .ww summary{ color:rgba(255,255,255,.72); }
+.msg.me .bub .ww-row{ color:rgba(255,255,255,.9); }
+/* 阅读模式下不显示：那是「当小说看」，判断痕迹掺进去就破戏了 */
+#messages.reading .bub .ww{ display:none; }
 /* ===== 「上一轮的要求」余温条（v0.4.2.2）=====
    上一轮用「本轮更改」提的要求，这一轮继续作数一次，显示成虚线 chip。
    虚线 = 不是本轮挂的功能（实线那种是），而是「还没散掉的上一轮」。 */

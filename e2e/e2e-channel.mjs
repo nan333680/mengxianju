@@ -342,7 +342,11 @@ console.log('=== 12. 万能动作命中 → 自动重写一次 ===');
 {
   // 第一次写坏了（偏头 / 后颈 都是跨角色统计出来的模型模板动作），
   // 第二次是它按「把这条摆在面前重写」的要求给出的干净版本。
-  REPLAY_QUEUE.push('（她偏头看他，后颈一凉）' + NL + '「水凉了。」');
+  // ⚠️ 0.5.3.6 活人感 v2：一轮正文是【三条候选并行】再评审，所以「写坏的那条」
+  //    要预置三条（三路都拿到同一条坏的），重写那一趟才是这一轮第 4 个正文请求。
+  //    评审走非流式分支（上面 isJudge）回的不是 JSON，解析失败 → 按候选 1 处理，
+  //    正好是被写坏的那条，于是触发重写。
+  for (let i = 0; i < 3; i++) REPLAY_QUEUE.push('（她偏头看他，后颈一凉）' + NL + '「水凉了。」');
   REPLAY_QUEUE.push('（她把杯子往他那边推了推）' + NL + '「水凉了。」');
   REQ_N = 0;
   await enterChat();
@@ -356,7 +360,7 @@ console.log('=== 12. 万能动作命中 → 自动重写一次 ===');
     const ai = all.filter(m => m.role === 'assistant');
     return ai.length ? String(ai[ai.length - 1].content || '') : '';
   }, CHAR_ID);
-  t('一共发了两次请求（重写回路真的跑了）', REQ_N === 2, REQ_N);
+  t('三条候选 + 一次重写，共四个正文请求', REQ_N === 4, REQ_N);
   t('留下的是重写后的版本', lastAi.includes('往他那边推了推'), lastAi.slice(-40));
   t('模板动作没有落库', !lastAi.includes('偏头') && !lastAi.includes('后颈'), lastAi.slice(-40));
   const bub = await page.evaluate(() => {
@@ -373,7 +377,8 @@ console.log('=== 13. 重写版被 max_tokens 截断 → 不采用，保留完整
   // 首版写了好几个模板动作（触发重写），重写版虽然干净、但被截断在半个句子上。
   // 原来这一趟没传 onFinish，重写版会带着首版的 'stop' 混过关 —— 用一条半截话
   // 顶掉本来完整的那条，而且界面上还不报截断。
-  REPLAY_QUEUE.push('（她偏头看他）' + NL + '「水凉了，你先喝。」');
+  // 同样三条候选都是"写坏的"（含模板动作），重写那一趟给的是被截断的版本。
+  for (let i = 0; i < 3; i++) REPLAY_QUEUE.push('（她偏头看他）' + NL + '「水凉了，你先喝。」');
   REPLAY_QUEUE.push({ text: '（她把杯子往他那边推了推）' + NL + '「水凉', finish: 'length' });
   REQ_N = 0;
   await enterChat();
@@ -387,7 +392,7 @@ console.log('=== 13. 重写版被 max_tokens 截断 → 不采用，保留完整
     const ai = all.filter(m => m.role === 'assistant');
     return ai.length ? String(ai[ai.length - 1].content || '') : '';
   }, CHAR_ID);
-  t('重写确实发了第二趟', REQ_N === 2, REQ_N);
+  t('重写确实发了第二趟（本轮第 4 个正文请求）', REQ_N === 4, REQ_N);
   // ⚠️ 首版自己就含「水凉了」（那是台词），所以判据必须是【重写版独有的那半句】在不在，
   //    不能拿「水凉」当标记 —— 否则断言永远红（这一条第一版就写错了）。
   t('被截断的重写版没有被采用', !lastAi.includes('推了推'), lastAi.slice(-40));

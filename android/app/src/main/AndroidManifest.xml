@@ -45,6 +45,10 @@
     <!-- 震动反馈（app.js 里两处 navigator.vibrate）。缺这条时该 API 静默无效，
          而调用点外面套着 try/catch，连异常都看不到 —— 震动从来没生效过。-->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 主动消息通知（0.5.3.6，实施规格 §6）。
+         Android 13+ 必须运行时申请，不给就静默不弹 —— 申请入口在设置页与首次进聊天时，
+         由 JS 侧 nativeproactive.js 触发（见 LocalProactivePlugin.requestPermission）。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- ⚠️ 自动备份写公共「文档」目录要用的（v1.21.54，审计发现）。
          Android 10 及以下，Directory.Documents 属于外部存储，**必须**声明这两个权限
          （10 还需要 application 上的 requestLegacyExternalStorage），否则写入必然失败。

@@ -1377,7 +1377,7 @@ export function buildTurnNote(char, s, ctx = {}) {
           // 同样只这一轮；不设余温 —— 方向一旦写出来就已经进了历史，下一轮自然延续，
           // 再注入一遍只会让她反复推同一件事。
           plot = [],
-          // 「记忆块」（0.6.0 记忆 OS）：检索在 www/js/mempick.js 里做完（active 过滤、
+          // 「记忆块」（记忆 OS）：检索在 www/js/mempick.js 里做完（active 过滤、
           // 分支、优先级、预算、dropped），这里只认最终那块文本。
           // ⚠️ memBlock 为 null = 还没接上新检索（或长期记忆关着），走下面的老 rankMemories 分支；
           //    memBlock 存在但 text 为空 = 这一轮一条都不该注入（全过期/全不在这条线上），
@@ -1397,7 +1397,14 @@ export function buildTurnNote(char, s, ctx = {}) {
           // Psyche v1（0.5.3.6）：跨轮存的心理读数，见 www/js/psyche.js。
           psyche = null,
           // Psyche v1 判断层的输出，见 www/js/director.js。null = 这一轮没跑判断。
-          director = null } = ctx;
+          director = null,
+          // 活人感 v2：她这一轮没说出口的那一层（www/js/innerthought.js 的独白）。
+          // 空串 = 这一轮独白失败/没跑，整段不出现 —— 和 v1 的行为完全一致。
+          inner = '',
+          // 活人感 v2：关系读数的人话（www/js/psyche.js 的 relationLine）。
+          relation = '',
+          // 活人感 v2：她这会儿在做什么（deriveLife 的结果，见 www/js/psyche.js）。
+          lifeLine = '' } = ctx;
   const parts = [];
   // ⚠️ 世界书放在【本轮段最前面】（v1.20.20 调整）。
   //
@@ -1725,7 +1732,7 @@ export function buildTurnNote(char, s, ctx = {}) {
   // 记忆放在最后：模型对结尾的内容注意力最高。原来放在最前面，
   // 会被几千字的人设淹没，等于没写。
   if (memBlock) {
-    // ---- 0.6.0 记忆 OS ----
+    // ---- 记忆 OS ----
     // 挑哪几条已经在 mempick.js 里决定了（含 dropped 与原因，给「这一轮用了什么」用）。
     // 这里只负责把它摆进提示词，不再自己 rank / 截条数 —— 两处各挑一次必然打架。
     //
@@ -1872,6 +1879,20 @@ export function buildTurnNote(char, s, ctx = {}) {
     }
   }
 
+  // 「你脑子里刚转过这几句」（活人感 v2）：独立一次调用写出来的"没说出口的那一层"。
+  //
+  // 为什么放在判断层【前面】：独白是素材，判断是结论。先让她想起来刚才心里转过什么，
+  // 再告诉她这一轮打算怎么应付 —— 顺序反了，判断会先定调子，独白就变成给调子配的台词。
+  //
+  // ⚠️ 那句「不是要说出口的话」不能去掉：去掉之后模型会把它写成正文的开头
+  //    （「其实我刚才想的是……」），而这正是这一层要避免的。
+  if (inner) {
+    parts.push('# 你脑子里刚转过这几句\n'
+      + '（这些是你刚才心里的反应，不是要说出口的话 —— 写的时候可以受它影响，'
+      + '但不要把它复述出来、不要用旁白交代、不要写成台词。）\n'
+      + inner);
+  }
+
   // 「你这一轮心里在发生什么」（0.5.3.6 Psyche v1 判断层）：先判断，再开口。
   //
   // 为什么要有这一段：一次性生成时模型没有「决定不说」的环节，它得一边写一边找
@@ -1884,6 +1905,22 @@ export function buildTurnNote(char, s, ctx = {}) {
   {
     const body = directorPrompt(director);
     if (body) parts.push(body);
+  }
+
+  // 「你们之间」（活人感 v2）：关系走到哪一步了。
+  // 只在够熟时才出现（bond >= 3）—— 刚认识就写"你们很熟"是假的，
+  // 而且会让模型跳过该有的生分，直接演老夫老妻。
+  if (relation) {
+    parts.push('# 你们之间\n' + relation);
+  }
+
+  // 「你这会儿在做什么」（活人感 v2）：她有自己的生活，不只是在等你消息。
+  //
+  // 这一段只给"她这会儿在哪"，不给任何"所以要怎么回"的指令 ——
+  // 一旦写成指令（"在忙就回短一点"），它就变成了每一轮都要执行的任务，
+  // 而真实的人忙的时候也可能照样回一大段。
+  if (lifeLine) {
+    parts.push('# 你这会儿在做什么\n' + lifeLine);
   }
 
   // 「本轮更改」（v0.4.4）：他这一轮临时提的要求（输入框「＋ → 本轮更改」）。

@@ -35,7 +35,13 @@ page.on('request', req => {
   if (u.includes('deepseek') || u.includes('/chat/completions')) {
     if (req.method()==='OPTIONS') { req.respond({status:204,headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'*'}}); return; }
     const b = JSON.parse(req.postData()||'{}');
-    sysAll = (b.messages||[]).filter(m=>m.role==='system').map(m=>m.content||'').join('\n');
+    // ⚠️ 0.5.3.6 活人感 v2 起，一轮里会有【多个】请求：独白（非流式）、判断（非流式）、
+    //    三条候选（流式）、评审（非流式）。sysAll 只能取【正文那一趟】的 system：
+    //    · 独白/评审只拿 sysStable（前缀缓存要求逐字节相同，见 innerthought.js 头注释），
+    //      里面【没有本轮命中的世界书】—— 那一段是按轮算的，进的是 turnNote。
+    //    · 只有正文请求的 system 才是 sysStable + turnNote。
+    //    以前一轮只有一个请求，最后一条就是正文，所以直接赋值；现在必须判 stream。
+    if (b.stream) sysAll = (b.messages||[]).filter(m=>m.role==='system').map(m=>m.content||'').join('\n');
     if (b.stream) {
       const pl='data: '+JSON.stringify({choices:[{delta:{content:'好。'}}]})+String.fromCharCode(10,10)+'data: [DONE]'+String.fromCharCode(10,10);
       req.respond({status:200,headers:{'Access-Control-Allow-Origin':'*'},contentType:'text/event-stream',body:pl}); return;

@@ -65,12 +65,17 @@ const ASK = [
   '  "reading": "他怎么理解他这句话（一句，具体到这句，不要通稿）",',
   '  "confidence": 0.5,',
   '  "sting": "被戳中的地方；没有就空串",',
+  '  "inner": "她这一轮心里最想说的那一句（第一人称，一句话，不超过 60 字）；想不出就空串",',
   '  "goal": "这一轮她想达成什么（一句）",',
   '  "urgency": 0.5,',
   '  "blockedBy": "她想做但拉不下脸的地方；没有就空串",',
   '  "mood": { "label": "平静/愉快/不耐/难受/生气/紧张/心虚/倦/兴奋/闷 里挑一个", "intensity": 0, "cause": "为什么（短）" },',
   '  "stance": { "warmth": 0, "trust": 0, "irritation": 0, "playfulness": 0 },',
   '  "withhold": ["她决定不说出口的一句（最多三条）"],',
+  '  "secret": ["她瞒着、这一轮也不打算说的事（最多两条）；没有就空数组"],',
+  '  "selfEvent": ["她自己这两天的事，跟他没关系（最多两条）；没有就空数组"],',
+  '  "boundary": ["她这一轮明确不接受的那一套（最多一条）；没有就空数组"],',
+  '  "revealSecret": ["这一轮被问住了、她决定说破的那一件（最多一条）；没有就空数组"],',
   '  "move": "answer / deflect / tease / ask_back / act / silence / leave 里挑一个",',
   '  "beats": ["这一轮的表达节拍，2~3 条；写怎么演，不要写台词"],',
   '  "callback": "历史里可以主动提起来的一件旧事；没有就空串",',
@@ -84,6 +89,9 @@ const ASK = [
   '- beats 写她这一轮怎么演（先做什么、卡在哪、尾巴怎么收），不是剧情大纲，也不是台词。',
   '- mood.intensity 是 0~5；stance 四个数是【这一轮的变化量】，-5~5，没变就写 0。',
   '- length 只影响这一条多大：short = 一两个词或者一句；normal = 平时那样；long = 这一轮值得写开。',
+  '- secret 是【她明知、但没告诉你】的具体一件事 —— 这是信息差，不是悬念。selfEvent 是她自己生活里的事：跟他无关，也不是"你们之间"的事。',
+  '- boundary 是她这一轮不吃的那一套（比如"别拿这种玩笑试探我""别替我安排"）。踩上去她会真的不高兴，不用哄好。',
+  '- revealSecret 只能从 secret 里挑一件：他这一轮真的问到了、或者她自己想赌一把，才填。',
   '- 不要为了显得有内容而编细节。想不出就留空。'
 ].join('\n');
 
@@ -136,6 +144,13 @@ export function normalizeDirector(raw) {
   const withhold = (Array.isArray(raw.withhold) ? raw.withhold : [])
     .map(w => cut(typeof w === 'string' ? w : (w && (w.t || w.text)), 60))
     .filter(Boolean).slice(0, 3);
+  // 信息差 / 她自己 / 底线：三样都限条数。堆多了她这一轮就变成"心里装着事的人偶"，
+  // 一开口全是伏笔 —— 而真人大部分时候什么都没瞒、什么也没发生。
+  const txt = (x) => cut(typeof x === 'string' ? x : (x && (x.t || x.text)), 60);
+  const secret = (Array.isArray(raw.secret) ? raw.secret : []).map(txt).filter(Boolean).slice(0, 2);
+  const selfEvent = (Array.isArray(raw.selfEvent) ? raw.selfEvent : []).map(txt).filter(Boolean).slice(0, 2);
+  const boundary = (Array.isArray(raw.boundary) ? raw.boundary : []).map(txt).filter(Boolean).slice(0, 1);
+  const revealSecret = (Array.isArray(raw.revealSecret) ? raw.revealSecret : []).map(txt).filter(Boolean).slice(0, 1);
   const move = MOVES.includes(raw.move) ? raw.move : '';
   const length = LENGTHS.includes(raw.length) ? raw.length : 'normal';
   const risk = ['over_explain', 'service_tone', 'repeat', 'ooc'].includes(raw.risk) ? raw.risk : '';
@@ -145,6 +160,7 @@ export function normalizeDirector(raw) {
     reading: cut(raw.reading, 80),
     confidence: num(raw.confidence, 0, 1, 0.5),
     sting: cut(raw.sting, 60),
+    inner: cut(raw.inner, 60),
     goal: cut(raw.goal, 60),
     urgency: num(raw.urgency, 0, 1, 0),
     blockedBy: cut(raw.blockedBy, 60),
@@ -158,6 +174,10 @@ export function normalizeDirector(raw) {
     move,
     beats,
     callback: cut(raw.callback, 60),
+    secret,
+    selfEvent,
+    boundary,
+    revealSecret,
     length,
     risk
   };
@@ -169,7 +189,8 @@ export function normalizeDirector(raw) {
     };
   }
   // 一个字都没有 = 这次判断没有产出，等于失败。不要拿空对象去拼提示词。
-  if (!out.reading && !out.goal && !out.beats.length && !out.withhold.length) return null;
+  if (!out.reading && !out.goal && !out.beats.length && !out.withhold.length && !out.inner
+    && !out.secret.length && !out.selfEvent.length && !out.boundary.length) return null;
   return out;
 }
 
@@ -193,6 +214,24 @@ export function directorDelta(d) {
   // 这才是"上一轮恼火、这一轮不会立刻好"的载体。
   const irr = Number((d.stance || {}).irritation) || 0;
   if (irr >= 2 && d.sting) delta.grudge = [{ t: d.sting }];
+  // 信息差 / 她自己 / 底线：判断层顺手记下的三样，直接落进 psyche（applyPsycheDelta 认这些键）。
+  // 只传非空的 —— 空数组传下去等于每轮清一次，她攒不住任何东西。
+  if (Array.isArray(d.secret) && d.secret.length) delta.secret = d.secret;
+  if (Array.isArray(d.selfEvent) && d.selfEvent.length) delta.selfEvent = d.selfEvent;
+  if (Array.isArray(d.boundary) && d.boundary.length) delta.boundary = d.boundary;
+  if (Array.isArray(d.revealSecret) && d.revealSecret.length) delta.revealSecret = d.revealSecret;
+
+  // 关系增量：慢变量，从这里推一个很小的位移（applyRelation 里还会再 clamp 一次）。
+  // ⚠️ 挂在 delta 上而不是返回 {delta, relationDelta} 二元组 —— e2e 和 app.js 都
+  //    直接拿返回值的 .grudge 用，改形状会连带炸掉一整片调用点。
+  const w = Number((d.stance || {}).warmth) || 0;
+  const t = Number((d.stance || {}).trust) || 0;
+  const rel = {
+    warmth: num(w * 0.1, -0.15, 0.15, 0),
+    trust: num(t * 0.1, -0.15, 0.15, 0)
+  };
+  if (w > 0 && t > 0) rel.bond = 0.05;   // 两边都在变好，才算"关系往前挪了一格"
+  delta.relationDelta = rel;
   return delta;
 }
 
@@ -216,6 +255,8 @@ export function directorPrompt(d) {
       + (d.mood.cause ? ' —— ' + d.mood.cause : ''));
   }
   if (d.sting) L.push('· 被戳到的地方：' + d.sting);
+  // 判断层顺手写下的那一句"最想说的"。它比独白短，但独白失败时就是唯一的内心线索。
+  if (d.inner) L.push('· 你心里冒出来的那句（别直接说出来）：' + d.inner);
   if (d.goal) {
     L.push('· 这一轮你想：' + d.goal
       + (d.urgency >= 0.6 ? '（很急）' : '')
@@ -235,6 +276,12 @@ export function directorPrompt(d) {
     L.push('· **这几句你决定不说出口**：' + d.withhold.map(x => '「' + x + '」').join('、'));
     L.push('  不要说破、不要复述、不要用旁白交代。可以靠动作、停顿、语气泄一点 —— 也可以一点不泄。');
   }
+  // 说破这件事只在这一轮有效，所以放在【现场】这一段，不进 psychePrompt：
+  // psychePrompt 里那几件是"一直瞒着的"，写在一起会变成两份互相矛盾的说法。
+  if (Array.isArray(d.revealSecret) && d.revealSecret.length) {
+    L.push('· 这一轮你决定说破：' + d.revealSecret.map(x => '「' + x + '」').join('、'));
+    L.push('  说破也要用你自己的说法 —— 别交代来龙去脉，别一次全说完，说完也不必解释。');
+  }
   if (d.risk) {
     const R = {
       over_explain: '这一轮最容易犯的毛病是【解释自己】：会想把情绪说明白、把原因讲清楚。别讲，让她把话咽一半。',
@@ -251,8 +298,9 @@ export function directorPrompt(d) {
 /** 这一轮要不要跑判断。群聊 v1 不跑（见文件头）。 */
 export function shouldDirect(o) {
   if (!o) return false;
-  if (o.isGroup) return false;
   if (!o.apiKey) return false;
+  // v2：群聊也跑这一层了。v1 的顾虑（"他"指代不定）靠 roster/target 解决：
+  // 判断输入里明确写出"这一轮是 X 在回"，move/mood 就只作用在 X 身上。
   return true;
 }
 
@@ -266,10 +314,12 @@ export function shouldDirect(o) {
  * @param {object} o.psyche      当前状态（已经 decay 过）
  * @param {{apiKey?: string, baseUrl?: string, provider?: string, model?: string, timeoutMs?: number}} o.api
  * @param {AbortSignal} [o.signal]
+ * @param {Array<string>} [o.roster] v2：在场的人名（群聊点名用）
+ * @param {string} [o.target]      v2：这一轮该谁说话（群聊里 move/mood 只作用在他身上）
  * @returns {Promise<object|null>} 归一后的判断结果；失败/被中断一律 null
  */
 export async function runDirector(o) {
-  const { stable, recent, userText, psyche, api, signal } = o || {};
+  const { stable, recent, userText, psyche, api, signal, roster, target } = o || {};
   if (!api || !api.apiKey) return null;
   if (signal && signal.aborted) return null;
 
@@ -283,7 +333,17 @@ export async function runDirector(o) {
   if (userText && String(userText).trim()) msgs.push({ role: 'user', content: String(userText).trim() });
   // 状态块放在指令前面：先让她知道自己现在什么状态，再问"你怎么理解他这句"。
   const psyBlock = psychePrompt(psyche);
-  msgs.push({ role: 'system', content: (psyBlock ? psyBlock + '\n\n' : '') + ASK });
+  // 群聊：明确"这一轮是谁在回"。没有这一句，判断会写成"几个人一起的反应"，
+  // 而 move/mood 只能作用在一个人身上。
+  let whoBlock = '';
+  const rl = Array.isArray(roster) ? roster.filter(Boolean) : [];
+  if (rl.length) {
+    whoBlock = '# 这一轮是谁在回\n'
+      + '现在这一轮是 ' + (target || '其中一个人') + ' 在回。'
+      + '在场：' + rl.join('、') + '。\n'
+      + '（下面的 move 和 mood 只作用在 ' + (target || '这个人') + ' 身上 —— 其他人这一轮只是旁听。）\n\n';
+  }
+  msgs.push({ role: 'system', content: (psyBlock ? psyBlock + '\n\n' : '') + whoBlock + ASK });
 
   let out = '';
   try {

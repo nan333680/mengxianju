@@ -506,6 +506,7 @@ const EXTRA_ZH = {
   // 这些是【判断痕迹】，不是聊天内容 —— 英文也照这个口径译，不要用口语化说法。
   '她没说出口': 'Unsaid',
   '她没说出口的': 'Unsaid',
+  '她脑子里': 'Inside her head',
   '这一轮她心里': 'Inside her this turn',
   '她听到的是：': 'What she heard:',
   '这一轮她打算：': 'What she means to do:',
@@ -572,6 +573,8 @@ const BY_ZH = {
   '这一段的剧情卡已关掉（内容还在）': 'Plot card turned off (its content is kept)',
   // v0.5.5 复读角标 + 长篇自动串联
   '复读': 'Repetitive',
+  // 0.5.3.6：语义重复角标（本地向量判定，和上面的「复读」不是一个判据）
+  '重复': 'Said again',
   '阅读模式': 'Reading mode',
   '气泡已摊成段落 · 按剧情天数分章': 'Bubbles become paragraphs, one chapter per story day',
   '聊天气泡摊成段落': 'Chat as prose',
@@ -798,7 +801,7 @@ const BY_ZH = {
   '已经推到下一拍了': 'Moved on to the next beat',
   '撤销': 'Undo',
   '撤回上一拍': 'Went back one beat',
-  // ⚠️ 0.6.0：记忆 OS（收件箱 / 事实卡 / 槽位 / 拆分 / 本轮注入检查器）。
+  // ⚠️ 记忆 OS（收件箱 / 事实卡 / 槽位 / 拆分 / 本轮注入检查器）。
   //    这一批大多直接拼在 innerHTML 里、没走 tt，靠 applyI18n 的兜底扫文本节点翻 ——
   //    所以【必须】登记在这里，否则英文界面下整页中文（i18n-report 也扫不到这类串）。
   '按人看': 'By person',
@@ -1015,7 +1018,7 @@ const BY_PATTERN = [
   [/^演到第 (\d+) 拍（已保存）$/, (m) => 'Now at beat ' + m[1] + ' (saved)'],
   [/^这一拍才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,
     (m) => 'Only ' + m[1] + ' rounds so far; ' + m[2] + ' is the minimum before this beat counts as done — hold on.'],
-  // v0.6.0 记忆 OS：记忆页 / 检查器里的数字拼串（「记于第 N 天」「有 N 条旧记忆…」「没进来的（N 条）」）。
+  // v0.5.2 记忆 OS：记忆页 / 检查器里的数字拼串（「记于第 N 天」「有 N 条旧记忆…」「没进来的（N 条）」）。
   // ⚠️ `(\d+) 条` 是通用条目数，放在这里比放精确表里可靠 —— 分组标题、收件箱角标都是拼出来的。
   [/^记于第 (\d+) 天$/, (m) => 'Noted day ' + m[1]],
   [/^(\d+) 条$/, (m) => m[1] + (m[1] === '1' ? ' item' : ' items')],

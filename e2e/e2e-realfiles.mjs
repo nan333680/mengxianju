@@ -1,10 +1,10 @@
 // e2e-realfiles.mjs —— 拿【用户自己的真实文件】跑一遍（v0.4.1.7）
 //
 // 用户给了四份不同时期的文件，要求「拿去对各个功能进行测试」：
-//   · 梦弦居备份-2026-10-13.json      11 角色（含 1 个群、带 memberCfg）、2423 条消息、61 条记忆、worldbook 4+10、kv 125
-//   · 梦弦居世界书-八云紫-2026-09-24.json  本软件导出的「单组条目」格式（kind=worldbook-entries，只有 entries）
-//   · 梦弦居备份-2026-09-24.json      13 角色、5577 条消息、90 条记忆、**没有 kv 字段**（老格式）
-//   · 梦弦居备份-2026-09-29.json      19 角色、2265 条消息、37 条记忆、worldbook 2+20、kv 105
+//   · 某份备份   十几个角色（含 1 个群、带 memberCfg）、两千多条消息、几十条记忆、世界书两组、kv 一百多项
+//   · 某份世界书导出   本软件导出的「单组条目」格式（kind=worldbook-entries，只有 entries）
+//   · 另一份旧备份   十几个角色、五千多条消息、几十条记忆、**没有 kv 字段**（老格式）
+//   · 再一份备份   近二十个角色、两千多条消息、几十条记忆、世界书两组、kv 一百来项
 //
 // 期望值全部【从文件里现算】，不是手写的 —— 文件换了断言跟着换。
 import puppeteer from 'puppeteer-core';
@@ -12,7 +12,9 @@ import { seedChars, pickImportMode } from './e2e-helper.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = R + '/www';
-const DIR = 'C:\\Users\\29214\\Documents\\OPPO 互联\\';
+// 真实备份目录不进仓库：由环境变量给，没有就跳过这一套（这套本来就只能在有那批文件的机器上跑）。
+const DIR = process.env.MXJ_BACKUP_DIR || '';
+if (!DIR) { console.log('跳过：没设 MXJ_BACKUP_DIR（这一套要用户本机的真实备份文件）'); process.exit(0); }
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const MIME = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 let pass = 0, fail = 0;

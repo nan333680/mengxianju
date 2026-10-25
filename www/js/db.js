@@ -5,7 +5,7 @@ const DB_NAME = 'ai-companion';
 //    v2 加了 worldbook（世界书：角色组 + 条目）。
 //    v3 给记忆补 status/sourceMsgIds/day/legacy（时间锚与来源）。
 //    v4 加了 scenes（小说层：一场戏一张卡，正文不进 messages）。
-//    v5（0.6.0 记忆 OS）：不建表，只给 memories 的每条补新字段 —— normalizeMemory
+//    v5（记忆 OS）：不建表，只给 memories 的每条补新字段 —— normalizeMemory
 //       会把 v/kind/scope/subject/sourceKind/pinned/sinceDay/quote 等全补成默认值，
 //       所以老库、老备份直接能读，不做数据搬迁。
 import { normalizeMemory, planSupersede, planExpire, MEMORY_STATUS } from './memory.js';
@@ -68,7 +68,7 @@ export async function openDB() {
         const raw = c.value || {};
         const rec = normalizeMemory(raw);
         // 手写记忆不标 legacy：它不该被自动反推，也不该在注入时被当成「旧记忆」。
-        // ⚠️ 只在【原记录还没 legacy 字段】时判定（0.6.0 修，见规格 §9 幂等要求）。
+        // ⚠️ 只在【原记录还没 legacy 字段】时判定（记忆 OS 修，见规格 §9 幂等要求）。
         //    原来是无条件 rec.legacy = ...，而这段迁移每次 DB_VER 升级都会重跑，
         //    于是 v3 之后已经标成 legacy:false 的记忆会被改回 true。
         //    normalizeMemory 总会给出布尔值，所以只能看 raw。
@@ -411,7 +411,7 @@ export const mem = {
           }));
         }
         if (plan.length) rec.supersedes = plan.slice();
-        // 同槽位的旧 state → 标 expired，限期 = 新状态的起点（0.6.0 §6.1）。
+        // 同槽位的旧 state → 标 expired，限期 = 新状态的起点（记忆 OS §6.1）。
         // 语义不一样：state 不是"被顶掉"，而是"到那天为止是这样"，
         // 记忆页的时间线要按「已过期」显示，不能和「已被取代」混在一起。
         const exp = (isLive && rec.key) ? planExpire(rec, old) : [];
@@ -443,7 +443,7 @@ export const mem = {
     });
   },
   /**
-   * 改一条记忆的字段 / 状态（0.6.0）。
+   * 改一条记忆的字段 / 状态（记忆 OS）。
    * 软删、恢复、pin、编辑 text/key/kind/scope 全走这里：一处归一化、一处盖 updatedAt。
    * 只 get + put 两个请求，同一个事务，失败整条不生效。
    */

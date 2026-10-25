@@ -23,6 +23,14 @@ android {
         versionCode 168
         versionName "0.5.3.6"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // 只留手机真会用的两个 ABI（0.5.3.6 引入 onnxruntime-android 后才需要这条）：
+            //   arm64-v8a   —— 现在所有真机（用户那台是 Ace 3）
+            //   armeabi-v7a —— 老 32 位机，兼容性别砍
+            // x86 / x86_64 是模拟器用的，onnxruntime 给它们各带一份十几 MB 的
+            // libonnxruntime.so，不裁等于白送 30MB 给没人用的东西。
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -70,6 +78,12 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // 本地向量引擎（0.5.3.6+ 的辅助层）：ONNX Runtime 的 Android 原生库 + Java 绑定。
+    // 只用于 embedding（重复检测 / 候选重排），不参与正文生成。
+    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.19.2"
+    // WorkManager：App 在后台被冻结时，只有原生能定时醒来（实施规格 §6 方案 C）。
+    // 不用前台服务 —— 常驻通知会被用户当成耗电，而且国产 ROM 一样杀。
+    implementation "androidx.work:work-runtime:2.9.1"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

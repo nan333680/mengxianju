@@ -59,7 +59,8 @@ const DIR = {
 };
 
 await page.evaluateOnNewDocument((dirJson) => {
-  window.__hits = { stream: [], once: [] };
+  // v2：一轮有两次非流式（独白 + 判断），按指令正文分开记，断言才数得清。
+  window.__hits = { stream: [], once: [], dir: [], inner: [] };
   const realFetch = window.fetch.bind(window);
   window.fetch = async function (url, opts) {
     const u = String(url);
@@ -69,6 +70,9 @@ await page.evaluateOnNewDocument((dirJson) => {
       // stream === false => 一次性小请求。这一版只有判断这一趟和记忆整理会走这里，
       // 测试里没开长记忆，所以它只可能是判断。
       if (body.stream === false) {
+        const flat = ((body.messages || []).map(m => String(m.content || ''))).join('\n');
+        if (flat.indexOf('# 这一轮先别写正文') >= 0) window.__hits.dir.push(body);
+        else if (flat.indexOf('先别写回复') >= 0) window.__hits.inner.push(body);
         window.__hits.once.push(body);
         return new Response(JSON.stringify({ choices: [{ message: { content: dirJson } }] }),
           { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -347,7 +351,10 @@ const kvGet = (k) => page.evaluate(async (kk) => {
 const hits = () => page.evaluate(() => ({
   n0: (window.__hits.once || []).length,
   n1: (window.__hits.stream || []).length,
+  ndir: (window.__hits.dir || []).length,
+  ninner: (window.__hits.inner || []).length,
   once: (window.__hits.once || []).slice(-1)[0] || null,
+  dir: (window.__hits.dir || []).slice(-1)[0] || null,
   stream: (window.__hits.stream || []).slice(-1)[0] || null
 }));
 
@@ -378,15 +385,18 @@ await sleep(1000);
 
 await say('你今天怎么怪怪的');
 const h1 = await hits();
-t('★ 单聊先跑了一次判断（非流式）', h1.n0 === 1 && h1.n1 === 1, JSON.stringify({ once: h1.n0, stream: h1.n1 }));
-const sysOnce = (h1.once && h1.once.messages && h1.once.messages[0] || {}).content || '';
+// ⚠️ 不数总次数：v2 还会因为「缺星号那一层」多跑一次重写（老机制没删），
+//    这里要钉的是"独白和判断各跑了一次"，不是"一共只发了 N 个请求"。
+t('★ 单聊先跑了独白和判断各一次（非流式）', h1.ndir === 1 && h1.ninner === 1 && h1.n1 >= 1,
+  JSON.stringify({ dir: h1.ndir, inner: h1.ninner, once: h1.n0, stream: h1.n1 }));
+const sysOnce = (h1.dir && h1.dir.messages && h1.dir.messages[0] || {}).content || '';
 const sysGen = (h1.stream && h1.stream.messages && h1.stream.messages[0] || {}).content || '';
 t('★ 判断与生成共用同一段 system（前缀缓存才命得中）', !!sysOnce && sysOnce === sysGen,
   JSON.stringify({ a: sysOnce.slice(0, 40), b: sysGen.slice(0, 40), same: sysOnce === sysGen }));
-const lastOnceSys = ((h1.once && h1.once.messages) || []).slice(-1)[0].content || '';
+const lastOnceSys = ((h1.dir && h1.dir.messages) || []).slice(-1)[0].content || '';
 t('判断请求末尾是判断指令', lastOnceSys.includes('# 这一轮先别写正文'), lastOnceSys.slice(-120));
-t('判断请求关掉了思考（不然 JSON 烧穿上限）', !!(h1.once && h1.once.thinking && h1.once.thinking.type === 'disabled'),
-  JSON.stringify(h1.once && h1.once.thinking));
+t('判断请求关掉了思考（不然 JSON 烧穿上限）', !!(h1.dir && h1.dir.thinking && h1.dir.thinking.type === 'disabled'),
+  JSON.stringify(h1.dir && h1.dir.thinking));
 
 console.log('— 8. 端到端：提示词里出现内心那一段 —');
 const p1 = promptOf(h1.stream);
@@ -422,7 +432,7 @@ console.log('— 10. 端到端：第二轮才带上「这会儿的状态」—')
 await say('嗯');
 const h2 = await hits();
 const p2 = promptOf(h2.stream);
-t('第二轮也跑了判断', h2.n0 === 2, h2.n0);
+t('第二轮也跑了判断', h2.ndir === 2, JSON.stringify({ dir: h2.ndir, once: h2.n0 }));
 t('★ 第二轮出现「你这会儿的状态」', p2.includes('# 你这会儿的状态'), '');
 t('★ 火气衰减后仍过线 → 提示「还没消气」', p2.includes('还没消气'), '');
 t('上一轮咽回去的那句还在状态里', p2.includes('上一轮你咽回去了'), '');
@@ -449,7 +459,7 @@ t('★ 另一个角色不带小红的状态', !p3.includes('# 你这会儿的状
 t('另一个角色仍有这一轮的判断', p3.includes('# 你这一轮心里在发生什么'), '');
 t('另一个角色自己也有状态落库', !!(await kvGet('psyche:' + C2)), '');
 
-console.log('— 12. 群聊不跑判断（v1 的取舍）—');
+console.log('— 12. 群聊也跑判断（v2：按发言人分键，点名这一轮谁在回）—');
 await page.evaluate(async (cid) => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
@@ -461,10 +471,22 @@ await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catc
 await sleep(1000);
 await say('你们俩怎么了');
 const hg = await hits();
-t('★ 群聊不跑判断（他指代不定，一份 appraisal 会张冠李戴）', hg.n0 === 0, hg.n0);
+t('★ 群聊也跑判断（v2：roster/target 写清了这一轮谁在回）', hg.ndir === 1 && hg.ninner === 1,
+  JSON.stringify({ dir: hg.ndir, inner: hg.ninner, once: hg.n0 }));
 const pg = promptOf(hg.stream);
-t('群聊提示词里没有这两段', !pg.includes('# 你这一轮心里在发生什么') && !pg.includes('# 你这会儿的状态'), '');
-t('群聊没写 psyche 键', !(await kvGet('psyche:' + G1)), '');
+t('群聊提示词里有判断那一段', pg.includes('# 你这一轮心里在发生什么'), '');
+t('群聊判断输入里点了名字（不然 move/mood 会张冠李戴）',
+  ((hg.dir && hg.dir.messages) || []).some(m => String(m.content || '').indexOf('这一轮是') >= 0), '');
+// v2：每人一份状态 —— 键是 'psyche:组id:说话人id'，不是 'psyche:组id'
+const gKeys = await page.evaluate(async (gid) => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const ks = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').getAllKeys(); q.onsuccess = () => r(q.result || []); });
+  db.close();
+  return ks.map(k => String(k)).filter(k => k === 'psyche:' + gid || k.indexOf('psyche:' + gid + ':') === 0);
+}, G1);
+t('★ 群聊按发言人分键写了 psyche（不是大家共用一份）',
+  gKeys.length === 1 && gKeys[0].indexOf('psyche:' + G1 + ':') === 0, JSON.stringify(gKeys));
 
 console.log('— 13. 没有 key 时不跑判断（也不挡聊天）—');
 await page.evaluate(async () => {

@@ -1,4 +1,4 @@
-// e2e-memos.mjs — 记忆 OS：收件箱 + 本轮注入检查器（0.6.0）
+// e2e-memos.mjs — 记忆 OS：收件箱 + 本轮注入检查器
 //
 // 这一版最容易被做假的正是"记忆到底进没进提示词"：
 //   · draft（待确认）绝不能注入 —— 模型猜的东西不该悄悄变成她的记忆
@@ -46,7 +46,7 @@ page.on('request', req => {
       req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
         body: 'data: ' + chunk + NL + NL + 'data: [DONE]' + NL + NL }); return;
     }
-    // 剧情卡的进度判定（0.6.0 §8 的来源）：必须回一段真 JSON，否则它判不出 done，
+    // 剧情卡的进度判定（记忆 OS §8 的来源）：必须回一段真 JSON，否则它判不出 done，
     // 这条测试就变成"什么也没发生"的假通过。
     const joined = JSON.stringify(body.messages || []);
     if (joined.indexOf('剧情进度判定器') >= 0) {
@@ -355,7 +355,7 @@ const afterOk = await page.evaluate(async () => {
   return { c1key: c1.key, c1kind: c1.kind, c1st: c1.status, h1st: h1.status, h1by: h1.supersededBy || '' };
 });
 t('确认后槽位和类型都改了', afterOk.c1key === 'location.home' && afterOk.c1kind === 'state', afterOk);
-// state 走的是「过期」不是「被取代」（0.6.0 §6.1）：她不再认为他住老城区，
+// state 走的是「过期」不是「被取代」（记忆 OS §6.1）：她不再认为他住老城区，
 // 但"他以前住老城区"是一段真实发生过的过去，不该被说成"被新说法顶掉"。
 t('原来那条 state 标成已过期（不是删掉）', afterOk.h1st === 'expired' && afterOk.c1st === 'active', afterOk);
 // 槽位名写错：不能静默清空，要问一句

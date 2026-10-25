@@ -482,6 +482,7 @@ export async function onceChat(opts) {
     apiKey, baseUrl, model, messages, provider, temperature = 0.3, maxTokens = 1024,
     reasoningEffort = 'none',   // 见下面 ⚠️
     noThink = false,            // 见下面 ⚠️⚠️
+    onUsage = null,             // v2：要把这一步的用量交给调用方累加时传回调
     // v0.5.2：小说正文一次要写 1200 字，90 秒不够用（记忆整理那种短活仍用默认）。
     timeoutMs = 90000,
   } = opts;
@@ -529,6 +530,11 @@ export async function onceChat(opts) {
     throw apiErr(res.status, await readErrDetail(res));
   }
   const j = await res.json();
+  // v2（活人感）：评审这一趟也要能记用量 —— 它是一次实打实的 700 上限请求，
+  // 不记的话「这一轮到底花了多少」永远少一笔。回调出错不该影响正文。
+  if (j && j.usage && typeof onUsage === 'function') {
+    try { onUsage(j.usage); } catch { /* 记用量失败不影响这次拿到的东西 */ }
+  }
   const msg = j.choices?.[0]?.message || {};
   const main = (msg.content || '').trim();
   if (main) return main;

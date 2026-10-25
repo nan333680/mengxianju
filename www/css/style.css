@@ -426,7 +426,7 @@ input[type=checkbox]{
 .inj-h:first-child{ margin-top:0; }
 .inj-row{ font-size:13.5px; line-height:1.55; padding:6px 10px; border-radius:9px;
   background:var(--bg2); border:1px solid var(--line); margin-bottom:6px; word-break:break-word; }
-/* 0.6.0 记忆 OS：每条记忆的槽位、为什么进来、占多少 token */
+/* 记忆 OS：每条记忆的槽位、为什么进来、占多少 token */
 .inj-key{ font-weight:600; color:var(--pri); font-size:12px; }
 .inj-why{ display:block; margin-top:2px; font-style:normal; font-size:11.5px; color:var(--fg3); }
 .inj-row.dim{ opacity:.7; }
@@ -644,7 +644,7 @@ input + .hint-text{ margin-top:8px; }
 .mem-tag.src{ cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
 /* 「自定义」= 你自己写进去的 */
 .mem-tag.mine{ color:var(--pri); border:1px solid var(--pri); background:transparent; }
-/* 「她以为」（0.6.0）：belief 不是事实。用户拿它去纠正她之前，得先看见这只是她以为的 */
+/* 「她以为」（记忆 OS）：belief 不是事实。用户拿它去纠正她之前，得先看见这只是她以为的 */
 .mem-tag.belief{ color:#e0a95f; border:1px dashed #e0a95f; background:transparent; }
 /* 其它类型（计划 / 关系 / 状态 / 物品） */
 .mem-tag.kind{ color:var(--pri2); background:transparent; border:1px solid var(--line); }
@@ -677,7 +677,7 @@ input + .hint-text{ margin-top:8px; }
 }
 .mem-banner > span{ flex:1 1 62%; min-width:0; }
 
-/* ===== 事实卡视图（0.6.0 §7.2）=====
+/* ===== 事实卡视图（记忆 OS §7.2）=====
    按槽位分组：当前说法在上，前任说法收进 details，避免一屏十几条并列。 */
 .mem-keycard{ border-left:2px solid var(--line); padding:2px 0 2px 10px; margin:10px 0; }
 .mem-keycard.nokey{ border-left-color:transparent; opacity:.85; }

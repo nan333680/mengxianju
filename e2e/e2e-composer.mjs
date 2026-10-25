@@ -72,6 +72,11 @@ async function syncHits() {
   const h = await page.evaluate(() => ({ search: window.__hits.search, chat: window.__hits.chat }));
   searchHits = h.search; chatHits = h.chat;
 }
+// v2 起一轮里有多次非流式调用（独白 / 判断 / 评审），它们只带稳定前缀 + 指令，
+// 【不带 turnNote】—— 所以"最后一条请求"不再等于"生成请求"。查提示词一律用这个。
+const genReqs = () => chatHits.filter(b => b && b.stream !== false);
+const lastGen = () => genReqs().slice(-1)[0] || {};
+
 async function clearHits() {
   await page.evaluate(() => { window.__hits.search = []; window.__hits.chat = []; });
   searchHits = []; chatHits = [];
@@ -326,8 +331,8 @@ await clearHits();
 await say('/改 用可爱向的写法\n你今天怎么样');
 await syncHits();
 {
-  const blob = JSON.stringify(chatHits[chatHits.length - 1] || {});
-  t('「本轮更改」的内容进了这一轮提示词', blob.includes('用可爱向的写法'));
+  const blob = JSON.stringify(lastGen());
+  t('「本轮更改」的内容进了这一轮提示词', blob.includes('用可爱向的写法'), '生成请求 ' + genReqs().length + ' 次');
   t('提示词里有「这一轮的额外要求」那一节', blob.includes('这一轮的额外要求'));
   const u = await lastUser(CID);
   t('正文只剩正文', u && u.content === '你今天怎么样', JSON.stringify(u && u.content));
@@ -337,7 +342,7 @@ await clearHits();
 await say('继续');
 await syncHits();
 {
-  const blob = JSON.stringify(chatHits[chatHits.length - 1] || {});
+  const blob = JSON.stringify(lastGen());
   // ⚠️ v0.4.2.2 起「本轮更改」有【一轮余温】：下一轮还会再作数一次，但换成了
   //    「上一轮的要求（还没过去）」那一节，并且明写它正在淡出。
   //    这里原来断言的是「下一轮完全不带」—— 那是 v0.4.4 的行为，已经过时。
@@ -349,7 +354,7 @@ await syncHits();
 await clearHits();
 await say('再继续');
 await syncHits();
-t('再下一轮余温就没了', !JSON.stringify(chatHits[chatHits.length - 1] || {}).includes('用可爱向的写法'));
+t('再下一轮余温就没了', !JSON.stringify(lastGen()).includes('用可爱向的写法'));
 
 console.log('');
 console.log('=== 8. 编辑重发要还原挂着的功能 ===');

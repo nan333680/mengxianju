@@ -36,13 +36,26 @@ import { STARTER_CARD, STARTER_HOOK } from './starter.js';
 import { normalizeStyleCard } from './stylecard.js';
 // Psyche v1（0.5.3.6）：跨轮的心理状态 + 每轮的判断层。
 // 两处都只在 send() 里用；任何一个坏了都必须能退回老路径（见 send 里那段注释）。
-import { normalizePsyche, emptyPsyche, decayPsyche, applyPsycheDelta, psycheActive, psychePrompt } from './psyche.js';
+import { normalizePsyche, emptyPsyche, decayPsyche, applyPsycheDelta, psycheActive, psychePrompt, deriveLife, relationLine, applyRelation, lifeLine } from './psyche.js';
 import { runDirector, directorDelta, normalizeDirector, MOVE_NAME } from './director.js';
+// 活人感 v2（0.5.3.6）：独白 / 三条候选 / 评审 / 拟真节奏。
+// 四个文件都只做纯变换或单次请求，失败一律退回老路径 ——
+// 这一步坏掉不能挡住聊天（文档 §3 第 2 条）。
+import { runInner } from './innerthought.js';
+import { genCandidates, addUsage } from './candidate.js';
+import { runCritique } from './critique.js';
+import { planCadence } from './cadence.js';
+// 本地向量（0.5.3.6 辅助层）：模型在 APK 里，用 ONNX Runtime 跑，只做重复检测。
+// ⚠️ 拿不到就返回 null（浏览器 / e2e / 老壳），上层必须当场退回关键词路径。
+import { embedTexts, bestMatch } from './embedding.js';
+// 主动消息通知（0.5.3.6 §6 方案 C）：原生到点弹一条预写好的话。
+// ⚠️ 和上面一样，绝不在 www 里 import '@capacitor/xxx' —— 这个模块自己用 window.Capacitor 取。
+import { proactiveAvailable, proactiveSetQueue, proactiveTakePending, proactiveStatus, proactiveSchedule, proactiveRequestPermission } from './nativeproactive.js';
 // 记忆时间锚（0.5.2）：把「明天/昨天」换算成绝对剧情天数，并保留来源消息。
 import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMemory, memoryDay, memoryGrams, hasRelativeDay, MEMORY_KEYS, activeOnly, MEMORY_STATUS,
   MEMORY_KINDS, MEMORY_KIND_NAME, MEMORY_SCOPES, MEMORY_SCOPE_NAME, MEMORY_STATUS_NAME, normalizeMemory,
   memoryKey, keyWasDropped, MEMORY_SUBJECTS, shouldAutoCommit, isActiveMemory } from './memory.js';
-// 记忆检索（0.6.0 记忆 OS）：active 过滤 / 分支 / 优先级 / 预算 / dropped 全在 mempick.js，
+// 记忆检索（记忆 OS）：active 过滤 / 分支 / 优先级 / 预算 / dropped 全在 mempick.js，
 // 这个文件只负责拿数据、按群聊视角过一遍、把结果存一份给「这一轮用了什么」。
 import { pickMemories, memoryBlockText, MEMORY_BUDGET_SHARE } from './mempick.js';
 // 酒馆正则（v0.4.0）：解析 + 应用都在 stregex.js 里，不碰 DOM 也不碰数据库。
@@ -54,6 +67,11 @@ import { parseStChat, toMessages } from './stchat.js';
 // 出正文 / 出分镜 / 出场记在 scenegen.js，两边都不碰 DOM 也不碰数据库。
 import { SCENE_LENGTHS, USER_MODES, USER_MODE_NAME, SCENE_STATUS, GUARDRAILS_MAX, TEMP_CAST_MAX, TRASH_DAYS, emptyScene, emptyBeat, beatCountFor, clampBeats, normalizeScene, sceneNames, countChars, checkQuality, sceneWordCount, sceneFilled, textToBlocks, dialogueToNarration, newSceneId } from './scene.js';
 import { genProse, genBeatPlan, genLog, genTempCast } from './scenegen.js';
+
+// 语义复读判定线（0.5.3.6）：bge-small 余弦 >= 0.92 基本等于「同一件事又说一遍」。
+// 和 prose.js 里按字数重合的 REPEAT_WARN 是两套阈值，两个角标可以同时出现在一条消息上。
+// 定 0.92 而不是 0.85：0.85 会把「同一场景里正常承接」也算进去，角标会满天飞。
+const REPEAT_VEC_WARN = 0.92;
 
 // ⚠️ 这里绝对不能 import '@capacitor/xxx'！
 // www/ 会被原样复制进 APK，WebView 里没有 node_modules，
@@ -244,6 +262,10 @@ const DEFAULTS = {
   // 界面语言（v1.21.61）。只影响界面文字，不影响模型输出。
   // 默认「跟随系统」：手机换语言，App 跟着变。
   lang: 'system',
+  // 主动消息通知的间隔（小时，§6 方案 C）。
+  // 2~12 之外会被原生侧夹回来（ProactiveScheduler.clampHours），这里给个默认 6 小时：
+  // 一天最多弹三四次，够了 —— 再勤就是推送轰炸，不是"她想起你"。
+  proactiveHours: 6,
   // 时段对应的小时范围（她按这个理解"早上""傍晚"具体几点）
   clockRanges: {
     dawn: [0, 5], morning: [5, 9], forenoon: [9, 11], noon: [11, 13],
@@ -1702,6 +1724,384 @@ async function selectChar(id) {
   // v0.5.3.2（清单 §3.5）：这个角色上次没打完的字放回来。
   // 放在最后 —— 它要写 input.value 并重算高度，前面那些重绘不能把它盖掉。
   await restoreDraft(id);
+  // 活人感 v2（0.5.3.6）：她是不是该先开口。
+  // 不 await —— 最坏要等两次请求二十秒，而用户可能只是进来翻记录；
+  // 判据全部在函数内部本地判（单聊 / 距上一句 6 小时 / 关系够熟 / 今天没主动过 / 三成签），
+  // 不满足时同步返回、一个请求都不发。
+  maybeProactiveOpen(id).catch(() => { /* 主动开场失败不该影响进角色 */ });
+  // 主动消息通知（0.5.3.6 §6）：先看有没有「弹过通知、还没补进聊天」的那一条。
+  // 顺序要在这里（restoreDraft 之后）：补进来的那条要能被 paintFlow 画到最底下。
+  takeProactivePending().catch(() => { /* 补不上就算了，下一次进来还会看到 pending */ });
+  // 顺手把存货补满（门槛在函数里：关系不够熟、存货够、群聊都不会发请求）。
+  prewriteProactive(id).catch(() => { /* 预写失败不影响任何东西 */ });
+}
+
+// —— 上屏节奏（v2 §3）——
+/**
+ * 一条一条把 added 画到屏幕上：先停顿，再逐字打出来，中间有留白。
+ *
+ * ⚠️ 落库在调用之前早就完成了，这个函数【只影响显示】：
+ *    中途切角色就停（库里是完整的），所以最后还要补一次全量重绘防半段。
+ * ⚠️ 判据要在【每一步里】再查一遍（v1.21.54 的老账 + v2 的拟真停顿更长）：
+ *    停顿那几秒用户可以切角色，而切角色会立刻重画消息列表 ——
+ *    只在外层判一次的话，剩下的分段会画进【新角色】的聊天里，跑出别人的台词
+ *    （落库用的仍是 myCharId，数据没落错，坏的是画面）。
+ *
+ * @param {Array<{text?:string, content?:string}>} added 已经落库的那几条（顺序即上屏顺序）
+ * @param {object} myChar                 角色（画头用）
+ * @param {string} myCharId               这批消息属于谁（切角色就停）
+ * @param {{busy?:boolean, energyNow?:number}} lifeNow 她这会儿的生活状态（busy / energyNow 影响停顿）
+ */
+async function paintFlow(added, myChar, myCharId, lifeNow) {
+  const sleepMs = (ms) => new Promise(r => setTimeout(r, Math.max(0, Math.round(Number(ms) || 0))));
+  const life = lifeNow || {};
+  // ⚠️ 落库的消息字段是 content，不是 text（send 里 `{ id, charId, role, content }`）——
+  //    在这里取错了会整条画成 undefined，还要靠最后那次补重绘兜底才看得出问题。
+  const texts = added.map(a => String((a && (a.text != null ? a.text : a.content)) || ''));
+  const plan = planCadence(texts, {
+    busy: !!life.busy,
+    energy: Number.isFinite(Number(life.energyNow)) ? Number(life.energyNow) : 0.7
+  });
+  const tmpIds = [];   // 屏幕上的临时气泡（逐字打完再换成正式那条）
+  let drawn = 0;       // 已经画到第几条 added
+  for (const step of plan.steps) {
+    if (curCharId !== myCharId) break;
+    await sleepMs(step.delayMs);
+    if (curCharId !== myCharId) break;
+    // 这一步对应哪条已落库消息：对得上就是正式气泡，对不上就是极短语气条（只上屏）
+    const hit = (drawn < added.length && texts[drawn] === step.text) ? added[drawn] : null;
+    if (hit) drawn++;
+    const tmpId = 'flow-' + uid();
+    $('messages').insertAdjacentHTML('beforeend',
+      `<div class="msg ai" id="${tmpId}">${avatarHtml(myChar, 'av')}<div class="bub no-dots"><span class="gen-text"></span></div></div>`);
+    const tmp = document.getElementById(tmpId);
+    const span = tmp ? tmp.querySelector('.gen-text') : null;
+    // 逐字：把 typingMs 均分成 n 帧。字多的那句一帧露多一点 —— 否则一句 200 字要打十几秒。
+    const n = Math.max(1, Math.min(step.text.length, Math.ceil(step.typingMs / 60)));
+    const per = Math.max(1, Math.ceil(step.text.length / n));
+    for (let p = 0; p <= step.text.length; p += per) {
+      if (curCharId !== myCharId) break;
+      if (span) span.textContent = step.text.slice(0, p);
+      scrollBottom();
+      if (p + per <= step.text.length) await sleepMs(step.typingMs / n);
+    }
+    if (curCharId !== myCharId) break;
+    if (span) span.textContent = step.text;
+    if (hit) {
+      // 打完换成正式那条：带操作按钮、能展开看心理层
+      if (tmp) tmp.remove();
+      $('messages').insertAdjacentHTML('beforeend', msgHtml(hit));
+      markFresh($('messages').lastElementChild);
+      attachMsgActions();
+    } else {
+      // 极短语气条只留在屏幕上，下次重绘就没了 —— 它本来就不进库（见 cadence.js 文件头）
+      tmpIds.push(tmpId);
+    }
+    scrollBottom();
+  }
+  // ⚠️ 收尾（v2 新增）：任何一处 break 都会让屏幕只剩前几段，而库里是全的 ——
+  //    用户看到的是「她话没说完」，其实只是没画完。所以这里【无条件】对齐一次：
+  //    先撤临时气泡，再在画不全时整段重绘。
+  for (const id of tmpIds) { try { document.getElementById(id)?.remove(); } catch { /* 撤不掉不影响后面 */ } }
+  if (drawn < added.length) {
+    try { await renderMessages(); } catch (err) { console.warn('[上屏] 补重绘失败：' + ((err && err.message) || err)); }
+  }
+}
+
+// ================= 主动开场（活人感 v2，§4.8）=================
+// 她不是等他说话才活着。距上一句超过 6 小时、关系够熟、今天还没主动过，
+// 就有三成概率先开一句 —— 就一句，不问「你怎么不理我」，不解释为什么找他。
+//
+// ⚠️ 所有闸门都在【本地】判完才发请求：一次主动开场要两次模型调用（独白 + 写一句），
+//    条件不满足时一次都不该花。
+// ⚠️ 「今天已经主动过」这条标记【只有真落库成功才写】—— 写在前面的话，
+//    一次网络抽风就会让这个角色今天彻底沉默（09 检查②：标记只有真成功才打）。
+const PRO_GAP_MS = 6 * 3600 * 1000;   // 距上一句至少这么久才轮到「她先开口」
+const PRO_BOND = 3;                    // relation.bond 到这个数才算「熟到能主动找你」
+const PRO_P = 0.3;                     // 满足条件也只有三成会真的开口 —— 人不会天天主动
+const PRO_BUSY = new Set();            // 正在跑主动开场的角色（防同一角色连点两次入口跑两遍）
+
+/** 本地日期戳（YYYY-MM-DD）—— 「今天已经主动过」按手机本地时间切天。 */
+function dayStamp(ts) {
+  const d = new Date(Number(ts) || Date.now());
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+/** 主动开口那一条的指令（§4.8 逐字）。innerText 来自独白，activity 来自 deriveLife。 */
+function proactiveAsk(innerText, activity, hours) {
+  return [
+    '（你脑子里刚转过这几句：' + (innerText || '（也没什么，就是想找他说句话）') + '）',
+    '（你现在：' + (activity || '在忙自己的事') + '）',
+    '',
+    '他已经 ' + hours + ' 小时没跟你说话了。你先开口。',
+    '只写一句话，最多 20 个字：可以是问他在干嘛、可以是说你自己这会儿的事、可以是一句没头没尾的话。',
+    '不要寒暄，不要「在吗」，不要问「你怎么不理我」，不要解释你为什么找他。'
+  ].join('\n');
+}
+
+/**
+ * 进角色后看一眼：这一回该不该由她先开口。
+ *
+ * 不 await、不挡界面（调用点见 selectChar 末尾）：这里最坏要等两次请求二十秒，
+ * 而用户此时可能只是进来翻记录。判据全部在本地，条件不满足时同步返回、零开销。
+ *
+ * 落库顺序是【先落、后上屏】：切走了也不丢，下次进来重绘时自然出现。
+ */
+async function maybeProactiveOpen(charId) {
+  if (!charId || !S.apiKey || busy) return;
+  if (PRO_BUSY.has(charId)) return;
+  PRO_BUSY.add(charId);
+  try {
+    const c = await chars.get(charId);
+    if (!c || isGroup(c)) return;                       // 群聊不主动开场（要等人在场才成立）
+    const path = await curMsgs(charId);
+    if (!path.length) return;                           // 空聊天不主动：第一句该由人来说
+    const last = path[path.length - 1];
+    if (!last || last.role !== 'assistant') return;      // 她刚说完、之后一直没人说话，才轮到她再开口
+    const gap = Date.now() - (Number(last.ts) || 0);
+    if (!(gap > PRO_GAP_MS)) return;
+    const markKey = 'proactive:' + charId + ':' + dayStamp(Date.now());
+    if (await kv.get(markKey, 0)) return;               // 今天已经主动过一次了
+    let psy = null;
+    try { psy = normalizePsyche(await kv.get('psyche:' + charId, null)); } catch { psy = emptyPsyche(); }
+    if (!psy) psy = emptyPsyche();
+    const bond = Number(psy.relation && psy.relation.bond) || 0;
+    if (bond < PRO_BOND) return;                        // 还没熟到能主动找他
+    if (Math.random() >= PRO_P) return;                 // 掷签：不是每次都开口
+    const P2 = effSettings(c, S);
+    const life = deriveLife(psy, { now: Date.now(), char: c });
+    const hours = Math.max(1, Math.round(gap / 3600000));
+    const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 };
+    let stable = '';
+    try { stable = buildStablePrompt(c, P2, await worldbookConst(charId)); } catch { stable = ''; }
+    if (!stable) return;
+    const recent = path.slice(-12).map(m => ({ role: m.role, content: String(m.content || '') }));
+    // 先让她在心里过一遍（独白），再用那几句去写这一条 —— 直接写会写成一句礼貌的招呼
+    const inner = await runInner({
+      stable, recent, userText: '（他已经 ' + hours + ' 小时没找你说话了）', api: apiCfg, signal: null
+    }).catch(() => '');
+    let got = '';
+    try {
+      got = await onceChat({
+        apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider,
+        messages: [
+          { role: 'system', content: stable },
+          { role: 'user', content: proactiveAsk(inner, life.activity, hours) }
+        ],
+        temperature: 1.0, maxTokens: 200, noThink: true, timeoutMs: 20000
+      });
+    } catch (err) {
+      console.warn('[主动开场] 这句没写出来：' + ((err && err.message) || err));
+      return;   // 不写标记 —— 下一次进角色还能再试
+    }
+    let line = String(got || '').trim()
+      .replace(/^[「『“"\'‘\s]+/, '').replace(/[」』”"\'’\s]+$/, '')
+      .replace(/^(她|我)(说|想|先开口)[:：]\s*/, '');
+    line = (line.split('\n').map(x => x.trim()).filter(Boolean)[0] || '').replace(/\*/g, '').trim();
+    if (!line) return;
+    if (line.length > 60) line = line.slice(0, 60);      // 提示词说 20 字，不听话时也别让它变成一段
+    if (/^在吗[？?。！!]*$/.test(line)) return;           // 明令禁止的那一句，真写出来就宁可这次不开口
+    const am = { id: uid(), charId, role: 'assistant', content: line, ...sceneSnap(c), story: storyStamp(), ts: Date.now(), proactive: true };
+    await msgs.add(am);
+    try { await setLeaf(charId, am.id); } catch { /* 钉不上就靠退化路径，不影响这一条存在 */ }
+    await kv.set(markKey, 1);
+    console.log('[主动开场] ' + String(c.name || charId) + '：' + line);
+    if (curCharId !== charId) return;   // 已经切走了：库里有了，下次进来重绘时出现
+    // 先给一个「正在输入」的空泡 —— 直接蹦出一整句不像人在打字
+    const phId = 'pro-' + uid();
+    try {
+      $('messages').insertAdjacentHTML('beforeend',
+        '<div class="msg ai" id="' + phId + '">' + avatarHtml(c, 'av')
+        + '<div class="bub dots"><span class="gen-text"><span class="typing-dots"><i></i><i></i><i></i></span></span></div></div>');
+      scrollBottom();
+      await new Promise(r => setTimeout(r, 700 + Math.random() * 900));
+    } catch { /* 画不出空泡就直接走逐字 */ }
+    try { document.getElementById(phId)?.remove(); } catch { /* 同上 */ }
+    if (curCharId !== charId) return;
+    await paintFlow([am], c, charId, life);
+  } catch (err) {
+    console.warn('[主动开场] 失败：' + ((err && err.message) || err));
+  } finally {
+    PRO_BUSY.delete(charId);
+  }
+}
+
+
+// ================= 主动消息通知（§6 方案 C：预写 + 本地通知）=================
+// 和上面「主动开场」的区别：
+//   主动开场 —— 用户【正在打开 App】，她先说话（进来才看得到）；
+//   这里     —— 用户【根本没开 App】，原生到点弹一条通知，点开才看见。
+// 两条路共用同一套判断标准（够熟、不是群聊、今天没主动过），但各花各的钱：
+//   这里每条消息只花 2 次调用（一次独白 + 一次写三句），写好的句子存着，
+//   原生每隔几小时挑一条弹出来 —— 弹的时候不再请求网络。
+//
+// ⚠️ 为什么必须预写：WebView 一进后台就被系统冻结，JS 一行都不会跑。
+//    原生里没有 API key（也不该有），所以只能提前把话写好交出去。
+const PW_POOL = 'proactivePool';    // 池子键（全局一个：原生只有一个队列）
+const PW_MAX = 6;                   // 池子上限（多了也弹不完，只会过期）
+const PW_USE_MAX = 5;               // 一次最多推给原生几条
+const PW_ASK_KEY = 'proactivePermAsked';
+const PW_BUSY = new Set();
+
+/** 读池子（永远返回数组，坏数据当空处理）。 */
+async function pwPoolGet() {
+  try {
+    const v = await kv.get(PW_POOL, []);
+    return Array.isArray(v) ? v.filter(x => x && x.text) : [];
+  } catch { return []; }
+}
+
+/** 写池子。超过上限时丢最老的 —— 老句子隔一天再弹出来反而不像人。 */
+async function pwPoolSet(list) {
+  try { await kv.set(PW_POOL, list.slice(-PW_MAX)); } catch { /* 存不上就这轮不弹，不影响聊天 */ }
+}
+
+/** 把模型输出的一行洗成能直接进通知的句子（去编号、去引号、去星号）。 */
+function pwSanitize(s) {
+  return String(s == null ? '' : s).trim()
+    .replace(/^[\s\-*·•>]+/, '')
+    .replace(/^\d+[.、)）]\s*/, '')
+    .replace(/^[「『“"\'‘]+/, '')
+    .replace(/[」』”"\'’]+$/, '')
+    .replace(/\*/g, '')
+    .trim();
+}
+
+/** 把池子推给原生（每次整批覆盖，队列只有几条，增量只会带来不一致）。 */
+async function syncProactiveQueue() {
+  if (!proactiveAvailable()) return;
+  const pool = await pwPoolGet();
+  await proactiveSetQueue(pool.slice(0, PW_USE_MAX).map(x => ({
+    text: x.text, charId: x.charId, charName: x.charName || '', at: x.at || 0
+  })));
+}
+
+/**
+ * 预写几句「她不在你身边时想说的话」，交给原生存着。
+ *
+ * 门槛（全部在本地判完，一次请求都不该白花）：
+ *   单聊 + 有 API key + 原生插件在 + 关系够熟 + 这个角色的存货不足 3 句。
+ * 成本：2 次调用（独白 + 写三句），补满一次能用好几轮。
+ *
+ * 调用点：每轮说完话之后（见 send 收尾），fire-and-forget。
+ */
+async function prewriteProactive(charId) {
+  if (!charId || !S.apiKey) return;
+  if (!proactiveAvailable()) return;
+  if (PW_BUSY.has(charId)) return;
+  PW_BUSY.add(charId);
+  try {
+    const c = await chars.get(charId);
+    if (!c || isGroup(c)) return;
+    const pool = await pwPoolGet();
+    if (pool.filter(x => x.charId === charId).length >= 3) return;   // 存货够，不花这个钱
+    const path = await curMsgs(charId);
+    if (!path.length) return;
+    const last = path[path.length - 1];
+    if (!last || last.role !== 'assistant') return;                  // 她刚落完话才轮到"她想起你"
+    let psy = null;
+    try { psy = normalizePsyche(await kv.get('psyche:' + charId, null)); } catch { psy = null; }
+    if (!psy) psy = emptyPsyche();
+    if ((Number(psy.relation && psy.relation.bond) || 0) < PRO_BOND) return;   // 还没熟到会主动找你
+    const P2 = effSettings(c, S);
+    const life = deriveLife(psy, { now: Date.now(), char: c });
+    let stable = '';
+    try { stable = buildStablePrompt(c, P2, await worldbookConst(charId)); } catch { stable = ''; }
+    if (!stable) return;
+    const recent = path.slice(-12).map(m => ({ role: m.role, content: String(m.content || '') }));
+    const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 };
+    // 先独白再写：直接写三句会写成三句礼貌的招呼
+    const inner = await runInner({
+      stable, recent, userText: '（他这会儿没在看手机）', api: apiCfg, signal: null
+    }).catch(() => '');
+    const ask = [
+      '（你脑子里刚转过这几句：' + (inner || '（也没什么事，就是想起他了）') + '）',
+      '（你现在：' + (life.activity || '在忙自己的事') + '）',
+      '',
+      '你要在他没看手机的时候，过一阵子给他发一句话。现在先写好三句。',
+      '一句一行，每句最多 20 个字，三句彼此不一样：一句问他、一句说你自己这会儿的事、一句没头没尾的。',
+      '不要寒暄，不要「在吗」，不要问「你怎么不理我」，不要解释你为什么找他，不要编号。'
+    ].join('\n');
+    let got = '';
+    try {
+      got = await onceChat({
+        apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider,
+        messages: [
+          { role: 'system', content: stable },
+          { role: 'user', content: ask }
+        ],
+        temperature: 1.0, maxTokens: 220, noThink: true, timeoutMs: 20000
+      });
+    } catch (err) {
+      console.warn('[主动通知] 预写没成：' + ((err && err.message) || err));
+      return;   // 不写任何标记，下一轮还能再试
+    }
+    const lines = String(got || '').split('\n').map(pwSanitize)
+      .filter(Boolean)
+      .filter(x => !/^(在吗|你在吗|在不在)[？?。！!]*$/.test(x))
+      .map(x => (x.length > 40 ? x.slice(0, 40) : x))
+      .slice(0, 3);
+    if (!lines.length) return;
+    const now = Date.now();
+    const next = (await pwPoolGet()).concat(lines.map(t => ({
+      text: t, charId, charName: String(c.name || ''), at: now
+    })));
+    await pwPoolSet(next);
+    await syncProactiveQueue();
+    console.log('[主动通知] 预写 ' + lines.length + ' 句：' + lines.join(' / '));
+    // 有存货了才谈调度与权限：没东西可弹的时候弹权限框只会让人莫名其妙
+    await ensureProactiveSchedule();
+  } catch (err) {
+    console.warn('[主动通知] 预写失败：' + ((err && err.message) || err));
+  } finally {
+    PW_BUSY.delete(charId);
+  }
+}
+
+/** 定时任务 + 通知权限。权限只问一次（问了不给就不再烦）。 */
+async function ensureProactiveSchedule() {
+  if (!proactiveAvailable()) return;
+  try {
+    const st = await proactiveStatus();
+    if (!st.perm) {
+      if (await kv.get(PW_ASK_KEY, 0)) return;
+      await kv.set(PW_ASK_KEY, 1);
+      await proactiveRequestPermission();
+    }
+    const hours = Number(S.proactiveHours) || 6;
+    await proactiveSchedule(hours);
+  } catch { /* 调度不上就是不弹，不影响任何别的功能 */ }
+}
+
+/**
+ * 用户点开通知（或只是打开了 App）之后，把那条「弹过但还没出现」的话补成正式消息。
+ *
+ * 调用点：selectChar 末尾、以及启动后第一次进角色。
+ * ⚠️ 取走即清空（原生侧第一次调用就 remove），所以重复进入不会重复落库；
+ *    这里再按内容查一遍老消息，是防"落库成功但原生没清干净"那一类脏情况。
+ */
+async function takeProactivePending() {
+  if (!proactiveAvailable()) return;
+  let it = null;
+  try { it = await proactiveTakePending(); } catch { it = null; }
+  if (!it || !it.text) return;
+  const pool = await pwPoolGet();
+  const next = pool.filter(x => !(x.text === it.text && x.charId === it.charId));
+  if (next.length !== pool.length) { await pwPoolSet(next); await syncProactiveQueue(); }
+  const c = it.charId ? await chars.get(it.charId) : null;
+  if (!c || isGroup(c)) return;
+  const path = await curMsgs(c.id);
+  if (path.some(m => m && m.proactive && String(m.content) === it.text)) return;   // 已经补过了
+  const am = {
+    id: uid(), charId: c.id, role: 'assistant', content: it.text,
+    ...sceneSnap(c), story: storyStamp(), ts: Number(it.at) || Date.now(), proactive: true
+  };
+  await msgs.add(am);
+  try { await setLeaf(c.id, am.id); } catch { /* 钉不上就走退化路径 */ }
+  await kv.set('proactive:' + c.id + ':' + dayStamp(Date.now()), 1);
+  console.log('[主动通知] 补上这一句：' + String(c.name || c.id) + '：' + it.text);
+  if (curCharId !== c.id) return;   // 不是当前角色：库里有了，点进去自然出现
+  await paintFlow([am], c, c.id, {});
 }
 
 function updateStatus() {
@@ -1811,6 +2211,12 @@ function msgHtml(m, depth = 0) {
   const repChip = (m.rep && Number(m.rep) >= REPEAT_WARN)
     ? '<span class="rep-chip" title="' + esc('跟前面某一条的重合率 ' + Math.round(Number(m.rep) * 100) + '%，点这条消息可以重抽') + '">⚠ ' + tt('复读') + '</span>'
     : '';
+  // 语义复读角标（0.5.3.6，本地向量）：字面不重合、意思撞了的那一种。
+  // 和上面那个分开画（★ 标记）：一个是「字数撞了」，一个是「意思撞了」，
+  // 两者的触发条件几乎不重叠，同时成立时只显示信息量更大的那个。
+  const repVecChip = (!repChip && m.repVec && Number(m.repVec) >= REPEAT_VEC_WARN)
+    ? '<span class="rep-chip" title="' + esc('和前面某一条说的是同一件事（相似度 ' + Math.round(Number(m.repVec) * 100) + '%，点这条消息可以重抽）') + '">★ ' + tt('重复') + '</span>'
+    : '';
   // 旁白（v0.4.1 小说式一幕）：没有说话人，样式上也和"谁说的"区分开 ——
   // 不然一段环境描写会看起来像某个人在说话。
   const narr = m.narration === true && !isMe;
@@ -1827,7 +2233,7 @@ function msgHtml(m, depth = 0) {
   const moreBtn = tags.length
     ? '<button class="more-btn" data-more="1" title="' + esc(tt('附加内容')) + '" aria-label="' + esc(tt('附加内容')) + '">' + tt('附') + '</button>'
     : '';
-  return `<div class="msg ${isMe ? 'me' : 'ai'}${narr ? ' narr' : ''}" data-id="${esc(m.id)}">${av}<div class="bub">${inner}<div class="t${moreBtn ? ' has-more' : ''}">${moreBtn}${tagChips}${repChip}${time}${tok}</div></div></div>`;
+  return `<div class="msg ${isMe ? 'me' : 'ai'}${narr ? ' narr' : ''}" data-id="${esc(m.id)}">${av}<div class="bub">${inner}<div class="t${moreBtn ? ' has-more' : ''}">${moreBtn}${tagChips}${repChip}${repVecChip}${time}${tok}</div></div></div>`;
 }
 
 let _archOpen = false;   // 归档区的展开状态（重绘后要保住）
@@ -6128,6 +6534,13 @@ async function send(opts) {
   // Psyche v1（0.5.3.6）：这一轮的判断结果（withhold / beats / read / 状态读数）。
   // 声明在函数顶层的原因和 turnInj 一样：在 try #1 里赋值、在 try #2 的落库处读。
   let turnPsy = null;
+  // 活人感 v2（这一轮的三件附加料）——同样必须声明在函数顶层：
+  // 它们是在 try #1 里算出来的，却在 try #2 的评审、重写、落库、上屏里读。
+  // 声明在 try #1 里面 = 块作用域，跨到 try #2 就是 ReferenceError（e2e 逮到过）。
+  let psyBefore = null;   // 这一轮的 psyche 读数（上屏节奏要看它的 life.busy/energy）
+  let psyDir = null;      // 判断层的输出（move/mood/withhold…），评审要用 move 名
+  let innerText = '';     // 这一轮的独白（归一后），评审要看同一份
+  let sysStable = '';     // 稳定前缀，评审也要用「同样的 system 前缀」
   // 群里重新生成 / 换版本时，由调用方把"刚才说话的那个人"传进来（v0.4.0 复查）。
   // ⚠️ 必须在【删消息之前】取好再传 —— regenerate() 先删掉旧回复再调 send()，
   //    那时候再去读"上一条回复是谁"读到的是更早的那条了。
@@ -6469,7 +6882,7 @@ let namedInText = false;
     // 常驻世界书（v1.21.51）：只有「一直生效」那一档进稳定前缀，
     // 命中式的条目仍然走下面的 worldbookHits → 本轮段。
     const wbConst = await worldbookConst(myCharId);   // 常驻条目：进稳定前缀，也要记一笔（见下面的 turnInj）
-    const sysStable = buildStablePrompt(myChar, P, wbConst);
+    sysStable = buildStablePrompt(myChar, P, wbConst);
     // 世界书：拿"用户这句 + 最近几条"去撞触发词。
     // 必须用 past（不含刚才那条还没写进去的），再补上本轮 text ——
     // history 里最新一条就是本轮用户消息，重复拼会命中两次（虽然去重后无影响，但没必要）。
@@ -6537,7 +6950,7 @@ let namedInText = false;
     // 刻意不用上面那个 wbText —— 它带 6 条上下文，二元组命中会掺进太多噪声。
     const memTopic = [visibleText].concat(pastRaw.slice(-2).map(m => m.content || '')).join(' ');
 
-    // 记忆检索（0.6.0 记忆 OS · 规格 §5）。全部判断在 mempick.js，这里只做三件事：
+    // 记忆检索（记忆 OS · 规格 §5）。全部判断在 mempick.js，这里只做三件事：
     //   ① 拿当前活动路径的消息 id（scope=branch 的记忆靠它判断"在不在这一条线上"）
     //   ② 群聊按视角先滤一遍（别人视角的私事进不了她的脑子，这条比任何优先级都硬）
     //   ③ 把结果存一份给「这一轮用了什么」检查器
@@ -6566,8 +6979,9 @@ let namedInText = false;
         // 别人视角的私事一条都不进她的脑子 —— 那不是"她记不清"，是"她根本不知道"。
         const mine = allMem.filter(m => m && m.who === selfId);
         const shared = allMem.filter(m => m && !m.who && (!sinceJoin || !m.ts || Number(m.ts) >= sinceJoin));
-        const mp = pickMemories({ list: mine, pathIds, limit: 16, budgetTokens: Math.round(memBudget * 0.66), nowDay: memDay, estimate: memEst });
-        const sp = pickMemories({ list: shared, pathIds, limit: 8, budgetTokens: Math.max(200, Math.round(memBudget * 0.34)), nowDay: memDay, estimate: memEst });
+        // userText：这一轮他说的话，检索打分要用它算语义相关（记忆经历化）
+        const mp = pickMemories({ list: mine, pathIds, limit: 16, budgetTokens: Math.round(memBudget * 0.66), nowDay: memDay, estimate: memEst, userText: visibleText });
+        const sp = pickMemories({ list: shared, pathIds, limit: 8, budgetTokens: Math.max(200, Math.round(memBudget * 0.34)), nowDay: memDay, estimate: memEst, userText: visibleText });
         // 被视角过滤掉的那些也要进 dropped 并说明原因，否则检查器里它们凭空消失。
         const dropped = mp.dropped.concat(sp.dropped);
         for (const m of allMem) {
@@ -6589,7 +7003,8 @@ let namedInText = false;
           limit: S.memLimit || 20,
           budgetTokens: memBudget,
           nowDay: memDay,
-          estimate: memEst
+          estimate: memEst,
+          userText: visibleText
         });
         memBlock = {
           text: memoryBlockText(pick.used),
@@ -6627,50 +7042,83 @@ let namedInText = false;
       }
       return 0;
     })();
-    // —— Psyche v1（0.5.3.6）：这一轮先让她想一下，再动笔 ——
+    // —— Psyche v2（活人感 v2，0.5.3.6）：这一轮先把"心里那层"和"怎么应付"想清楚，再动笔 ——
     //
-    // 顺序：decayPsyche → runDirector → applyPsycheDelta 落库 → 拼提示词。
+    // 顺序：decayPsyche → deriveLife →（runInner 并行 runDirector）→
+    //      applyPsycheDelta + applyRelation → 落库 → 拼提示词。
     //
     // ⚠️ 提示词里用的是【衰减后、还没叠这一轮 delta】的那份状态：她这一轮还没反应。
     //    这一轮的反应下一轮才出现在她身上 —— 这才叫情绪有惯性，而不是同一轮里
     //    既恼火又已经算完账。
-    // ⚠️ 群聊不跑（v1）：群里「他」指代不定，一份判断会张冠李戴（见 director.js 文件头）。
-    // ⚠️ 任何一步失败都不许挡住聊天：状态坏了归零、判断失败就是 null。
-    //    两个都空的时候，提示词与 0.5.3.5 逐字相同（老路径原样）。
-    const psyKey = 'psyche:' + myChar.id;
-    let psyBefore = null;
-    let psyDir = null;
-    if (!isGroup(myChar)) {
-      try { psyBefore = decayPsyche(await kv.get(psyKey, null), Date.now()); }
-      catch { psyBefore = emptyPsyche(); }
-      if (S.apiKey) {
-        psyDir = await runDirector({
+    // ⚠️ 群聊也跑了（v2）：每人一份状态（'psyche:角色:说话人'），否则 A 的火气会烧到 B 身上；
+    //    判断层的 move/mood 只作用在这一轮该说话的那个人身上（见 director.js 的 roster/target）。
+    // ⚠️ 任何一步失败都不许挡住聊天：状态坏了归零、独白失败空串、判断失败 null。
+    //    全空的时候，提示词与 0.5.3.5 逐字相同（老路径原样）。
+    const psyKey = (isGroup(myChar) && speaker)
+      ? 'psyche:' + myChar.id + ':' + speaker.id
+      : 'psyche:' + myChar.id;
+    psyBefore = null;
+    psyDir = null;
+    innerText = '';
+    try { psyBefore = decayPsyche(await kv.get(psyKey, null), Date.now()); }
+    catch { psyBefore = emptyPsyche(); }
+    // 生活推导：她这会儿在做什么。纯本地算（deriveLife 是纯函数），不写死作息。
+    // 这一轮现算、下一轮再算 —— 只是让"她有自己的生活"有个具体出处，不是长期档案。
+    try {
+      psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: Date.now(), char: myChar }) });
+    } catch { /* 推导失败就沿用读到的旧生活状态，不影响下面的判断 */ }
+
+    if (S.apiKey) {
+      const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 };
+      const recentForJudge = (pastRaw || []).slice(-12).map(m => ({ role: m.role, content: m.content }));
+      // 独白和判断没有先后依赖 —— 串行就是白等一倍。两个都失败也能继续。
+      const [innerGot, dirGot] = await Promise.all([
+        runInner({ stable: sysStable, recent: recentForJudge, userText: visibleText, api: apiCfg, signal: abortCtl && abortCtl.signal })
+          .catch(err => { console.warn('[inner] 外层兜底：' + ((err && err.message) || err)); return ''; }),
+        runDirector({
           stable: sysStable,
-          recent: (pastRaw || []).slice(-12).map(m => ({ role: m.role, content: m.content })),
+          recent: recentForJudge,
           userText: visibleText,
           psyche: psyBefore,
-          api: { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 },
-          signal: abortCtl && abortCtl.signal
-        });
-      }
-      // 落库：就算这一轮判断失败，也要把【衰减后的】状态写回去 ——
-      // 否则「昨晚那点火气」会一直停在原处不降（衰减只在读的时候发生，不写回就白算）。
-      try {
-        const next = applyPsycheDelta(psyBefore, psyDir ? directorDelta(psyDir) : null, Date.now());
-        if (psyDir || psycheActive(psyBefore)) await kv.set(psyKey, next);
-      } catch (err) { console.warn('[psyche] 写库失败：' + ((err && err.message) || err)); }
+          api: apiCfg,
+          signal: abortCtl && abortCtl.signal,
+          // 群聊：谁在场、这一轮该谁说话。单人传空，director 那边那一段就不出现。
+          roster: isGroup(myChar) ? groupMembers(myChar).map(m => m.name).filter(Boolean) : null,
+          target: (isGroup(myChar) && speaker) ? speaker.name : ''
+        }).catch(err => { console.warn('[director] 外层兜底：' + ((err && err.message) || err)); return null; })
+      ]);
+      innerText = String(innerGot || '');
+      psyDir = dirGot || null;
     }
+    // 独白兜底：独白那次没回来时，用判断层写下的那一句（只有 60 字，但总比没有强）。
+    if (!innerText && psyDir && psyDir.inner) innerText = psyDir.inner;
+
+    // 落库：就算这一轮判断失败，也要把【衰减后的】状态写回去 ——
+    // 否则「昨晚那点火气」会一直停在原处不降（衰减只在读的时候发生，不写回就白算）。
+    try {
+      const d = psyDir ? directorDelta(psyDir) : null;
+      let next = applyPsycheDelta(psyBefore, d, Date.now());
+      if (d && d.relationDelta) next = applyRelation(next, d.relationDelta, Date.now());
+      // 独白原文也留一份（lastInner）：psychePrompt 不读它，只给"她记得自己憋着话"留个依据。
+      if (innerText) next = normalizePsyche({ ...next, lastInner: innerText });
+      if (psyDir || psycheActive(psyBefore) || innerText) await kv.set(psyKey, next);
+    } catch (err) { console.warn('[psyche] 写库失败：' + ((err && err.message) || err)); }
     // 这一轮的判断留到落库那一步：withhold 要挂到消息上（气泡里能展开看）。
     turnPsy = psyDir;
 
     const turnNote = buildTurnNote(myChar, P, {
       memories, useKaomoji, useEmoji, worldbook, rolling, topic: memTopic,
-      // 记忆 OS（0.6.0）：已经挑好的那一块；为 null 时 persona 走老的 rankMemories 分支
+      // 记忆 OS：已经挑好的那一块；为 null 时 persona 走老的 rankMemories 分支
       memBlock,
       // Psyche v1（0.5.3.6）：这一轮开始时她的状态（衰减后）+ 这一轮的判断结果。
       // 两个都可能为空 —— 空的时候那两段提示词根本不出现（老角色提示词逐字不变）。
       psyche: psyBefore,
       director: psyDir,
+      // 活人感 v2（0.5.3.6）：她这一轮没说出口的那一层、你们之间的距离、她这会儿在做什么。
+      // 三个都可能是空串 —— 空的时候那三段提示词整段不出现。
+      inner: innerText,
+      relation: relationLine(psyBefore),
+      lifeLine: lifeLine(psyBefore),
       clock: clockFull(clockState), clockLocked: !!clockState.locked,
       clockState, prevStory,
       // 临时场景（v1.21.47）：只进本轮段，不进稳定前缀
@@ -6765,6 +7213,10 @@ let namedInText = false;
         wd: (psyDir.withhold || []).slice(0, 3).map(x => _cut(x, 60)),
         beats: (psyDir.beats || []).slice(0, 3).map(x => _cut(x, 60))
       } : null,
+      // 活人感 v2（0.5.3.6）：她这一轮没说出口的那一层原文。
+      // 它不进聊天记录、不进历史 —— 只留在这里给「这一轮她心里」那一段展开看，
+      // 也方便排查「提示词到底带没带独白」。
+      inner: _cut(innerText, 200),
     };
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -6944,28 +7396,32 @@ let namedInText = false;
     // 首次请求失败自动重试一次（手机网络首次连接常偏慢/抖动）
     let attempt = 0;
     let usage = null;
+    let cands = null;   // 三条候选（v2）；评审挑中的那条才进 full
     for (;;) {
       try {
-        const stream = streamChat({
-      onThink: (t) => { thinkBuf = t; },   // 收尾时回调（v1.21.30）
-          onFinish: (r) => { finishReason = r; },   // 收尾原因（v1.21.54）：'length' = 被 max_tokens 截断
-          apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
-          messages: apiMsgs, temperature: P.temperature,
-          maxTokens: P.maxTokens, topP: P.topP,
-          reasoningEffort: P.reasoningEffort,
-          signal: abortCtl.signal,
-          onUsage: (u) => { usage = u; }
+        // 三条候选并行（v2 §2 P3）：温度 0.85 / 1.00 / 1.15，风格不是一个模子。
+        // 只有第 0 条往气泡里流式打字 —— 屏幕上先有个东西在长，不至于干等二十秒；
+        // 三条全回来后再评审挑一条，最终上屏的永远是挑中的那条（见下面 cadence 那段）。
+        cands = await genCandidates({
+          baseMsgs: apiMsgs,
+          signal: abortCtl && abortCtl.signal,
+          onDelta: (t) => {
+            if (!bubble) return;   // 切了角色就没气泡了，别硬写
+            // 流式期间先把星号隐掉（0.5.3.4 复查）：否则那几秒满屏 *_她心里的话_* 的字面记号。
+            // ⚠️ 只对【正在流式的这一个气泡】、只做显示，text 里星号一个不动；
+            //    结束后整体重绘时再变成 <em class="inner-thought"> 斜体。
+            //    不做流式 innerHTML 拼接：半截的 * 会让每一帧的高亮位置乱跳。
+            bubble.textContent = String(t).replace(/\*/g, '');
+            scrollBottom();
+          },
+          genOpts: {
+            apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
+            maxTokens: P.maxTokens, topP: P.topP,
+            reasoningEffort: P.reasoningEffort,
+            onThink: (t) => { thinkBuf = t; }   // 收尾时回调（v1.21.30）；三路里最后写完的那路赢
+          }
         });
         bubble?.classList.remove('dots');
-        for await (const chunk of stream) {
-          full += chunk;
-          // 流式期间先把星号隐掉（0.5.3.4 复查）：否则那几秒满屏 *_她心里的话_* 的字面记号。
-          // ⚠️ 只对【正在流式的这一个气泡】、只做显示，full 里星号一个不动；
-          //    结束后 7000 那条整体重绘成 <em class="inner-thought"> 斜体。
-          //    不做流式 innerHTML 拼接：半截的 * 会让每一帧的高亮位置乱跳。
-          if (bubble) bubble.textContent = full.replace(/\*/g, '');   // 切了角色就没气泡了，别硬写
-          scrollBottom();
-        }
         break;
       } catch (err) {
         if (err.name === 'AbortError') throw err;
@@ -7020,6 +7476,33 @@ let namedInText = false;
         await new Promise(r => setTimeout(r, 700));
       }
     }
+
+    // —— 选出这一轮真正要发出去的那条（v2 §2 P4/P5）——
+    // 候选 0 是底：评审没回来（超时 / JSON 坏了 / 被中断）就发它。
+    let crit = null;
+    if (cands && cands.list && cands.list.length) {
+      try {
+        crit = await runCritique({
+          pool: cands.list,
+          inner: innerText,
+          userText: visibleText,
+          moveName: (psyDir && MOVE_NAME[psyDir.move]) || '',
+          stable: sysStable,
+          api: { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 },
+          signal: abortCtl && abortCtl.signal
+        });
+        if (crit && crit.usage) usage = addUsage(usage, crit.usage);
+      } catch (err) {
+        console.warn('[critique] 评审这次没跑成，直接用候选 1：' + ((err && err.message) || err));
+        crit = null;
+      }
+    }
+    // 用量记【三条之和】：钱是真花了，不能只记挑中的那条。
+    if (cands && cands.usage) usage = addUsage(usage, cands.usage);
+    const pickIdx = (crit && crit.pick != null && cands.list[crit.pick]) ? crit.pick : 0;
+    full = cands.list[pickIdx].text;
+    // finish 用【挑中的那条】的：候选 0 没被截断、挑中的那条被截断了，也得按截断处理。
+    finishReason = cands.list[pickIdx].finish || '';
 
     full = full.trim();
 
@@ -7084,14 +7567,23 @@ let namedInText = false;
       // ⚠️ 有放弃上限（0.5.3.4 复查）：连续两次补不到就只靠提示词，见上面 innerMiss 的注释。
       const _miss = innerMiss.get(myCharId) || 0;
       const _needInner = !innerSeen && _miss < 2 && !/\*[^*\n]{1,300}\*/.test(full);
-      if (_th.length || _needInner) {
+      // 第三个重写条件（v2 §2 P5）：评审自己给出的硬伤。
+      // 评审说「两条以上毛病」或直接给了重写方向 —— 那就是三条候选里没一条立得住，
+      // 与其硬发一条它自己都不认的，不如让它照着那句方向再写一次。
+      // 只有一条毛病时不触发：那种基本都是小瑕疵，重写的边际收益抵不上多等十几秒。
+      const _critFlaws = (crit && crit.flaws) || [];
+      const _needRewrite = _critFlaws.length >= 2 || !!(crit && crit.rewriteHint);
+      if (_th.length || _needInner || _needRewrite) {
         const asks = [];
         if (bad.length) asks.push('用了「' + bad.join('」「')
           + '」，这些是模板动作，不是这个角色此刻真会做的 —— 把这些写法全换掉，'
           + '写她这会儿手里在拿什么、身上哪儿不舒服、刚才那个动作还没做完');
         if (_needInner) asks.push('整条里没有那一层没说出口的心里话 —— 补一句，'
           + '单独用一对 * 包住（形如 *……*，一句就够，不要用两个星号）');
+        // 评审给的方向优先（它是看着三条候选说的），没有就把它列的毛病铺开。
+        if (_needRewrite) asks.push((crit && crit.rewriteHint) || _critFlaws.join('；'));
         console.warn('[重写] ' + (bad.length ? '命中万能动作 ' + bad.join(' / ') : '缺星号那一层')
+          + (_needRewrite ? ' / 评审说：' + ((crit && crit.rewriteHint) || _critFlaws.join('；')) : '')
           + ' —— 要求重写一次');
         try {
           const retryMsgs = apiMsgs.concat([
@@ -7263,6 +7755,35 @@ let namedInText = false;
         }
       }
     } catch { /* 记不上就记不上，不影响这轮 */ }
+    // ── 语义复读（0.5.3.6，本地向量辅助）─────────────────────────────
+    // 上面的 rate 是【字数重合率】，认不出「换个说法说同一件事」：
+    //   "我在改东西" 与 "还在弄那个，快完了" 字面几乎不重合，rate 可能 0.1，
+    //   但对读者来说就是同一句话说了两遍 —— 这是角色扮演最伤沉浸的毛病。
+    // 这里用 APK 自带的 bge-small 算余弦，跟最近几条 assistant 比一遍。
+    // ⚠️ 三个原则：
+    //   ① 只记不拦 —— 和上面的 rep 一样，挂角标，重抽权留给人，系统绝不自动重写；
+    //   ② 全链 fire-and-forget —— 首次要加载 24MB 模型，1~3 秒，界面一秒都不能等；
+    //   ③ 拿不到（浏览器 / 模型坏 / 内存不够）就整个平掉，行为与 0.5.3.5 完全一致。
+    try {
+      const vecPicks = added.filter(a => a && a.role === 'assistant' && a.content);
+      const vecPrev = (pastRaw || []).filter(m => m && m.role === 'assistant' && m.content).slice(-REPEAT_LOOKBACK);
+      if (vecPicks.length && vecPrev.length) {
+        embedTexts(vecPicks.map(a => a.content).concat(vecPrev.map(m => m.content)))
+          .then(vecs => {
+            if (!vecs || vecs.length !== vecPicks.length + vecPrev.length) return;
+            const pool = vecs.slice(vecPicks.length);
+            vecPicks.forEach((a, i) => {
+              const bm = bestMatch(vecs[i], pool);
+              if (bm.score >= REPEAT_VEC_WARN) {
+                a.repVec = Math.round(bm.score * 100) / 100;
+                if (bm.idx >= 0 && vecPrev[bm.idx] && vecPrev[bm.idx].id) a.repVecId = vecPrev[bm.idx].id;
+                msgs.add(a).catch(() => {});
+              }
+            });
+          })
+          .catch(() => {});
+      }
+    } catch { /* 向量这条链断了不影响任何事 */ }
     // ⚠️ 续写也计一轮（v0.5.1.6，外部评审 §五）。
     // 以前的条件是「!regen && !cont」—— 自动串联 4 段只算 1 轮，
     // 而提示词里却对模型说"这一拍才演了 1 轮，至少 4 轮才收"。
@@ -7274,23 +7795,16 @@ let namedInText = false;
     // ⚠️ 只【标记演完】，绝不自动推进：判错会毁掉节奏且没法回滚，推进权留给人。
     // 不 await —— 这一轮已经成了，判定晚几百毫秒回来不该拖慢界面。
     maybeAutoJudgeArc(myCharId, P, pieces.map(x => x.text).join(''), text);
+    // 主动消息通知（0.5.3.6 §6）：囤几句她「不在你身边时」会说的话，交给原生到点弹。
+    // 不 await —— 它要两次请求（独白 + 写三句），不能拖住这一轮的收尾。
+    // 门槛在函数里：存货够、关系不够熟、群聊、没有原生插件，都不发请求。
+    prewriteProactive(myCharId).catch(() => { /* 预写失败不影响任何东西 */ });
     // 她说完自动读出来（v1.21.56，开关默认关）。
     // ⚠️ 放在【整段都落库之后】：分段发送时逐段念会一顿一顿的，连起来念才像说话。
     if (S.ttsOn) speak(pieces.map(x => x.text).join(''));
     document.getElementById(placeholderId)?.remove();
     if (curCharId === myCharId) {
-      for (let i = 0; i < added.length; i++) {
-        // ⚠️ 判据要在【循环里】再查一遍（v1.21.54，审计发现）：
-        //    下面那句 350ms 的间隔里用户可以切角色，而切角色会立刻重画消息列表 ——
-        //    只在外层判一次的话，剩下的分段会画进【新角色】的聊天里，跑出别人的台词
-        //    （落库用的仍是 myCharId，数据没落错，坏的是画面），要等下一次重绘才消失。
-        if (curCharId !== myCharId) break;
-        $('messages').insertAdjacentHTML('beforeend', msgHtml(added[i]));
-        if (i > 0) markFresh($('messages').lastElementChild);   // 第 1 条是替换占位气泡，内容没变，加动画会闪
-        attachMsgActions();
-        scrollBottom();
-        if (i < added.length - 1) await new Promise(r => setTimeout(r, 350));
-      }
+      await paintFlow(added, myChar, myCharId, (psyBefore && psyBefore.life) || {});
     }
 
   } catch (e) {
@@ -7510,16 +8024,16 @@ function parseMemJson(s) {
     throw new Error('记忆总结的 ' + arr.length + ' 个元素里没有 text 字段（模型没按格式回）');
   }
   return kept.map(x => {
-      // 类型（0.6.0 §3）：七类。模型给了表外的值就当 fact —— 绝不把它写进去，
+      // 类型（记忆 OS §3）：七类。模型给了表外的值就当 fact —— 绝不把它写进去，
       // 否则 normalizeMemory 会把它原样留在库里，注入时 kind 判定全失效。
       const kind = MEMORY_KINDS.includes(String(x.kind || '').trim()) ? String(x.kind).trim() : 'fact';
-      // 槽位（0.6.0）：中文白名单 + 点号前缀都认，其它一律当没给。
+      // 槽位（记忆 OS）：中文白名单 + 点号前缀都认，其它一律当没给。
       // memoryKey 对认不出的值返回空串 → db.add 不会去取代任何旧记忆，安全。
       const key = memoryKey(String(x.key == null ? '' : x.key).trim());
       // 主人与作用域：表外的值退回默认，不报错也不丢这条记忆。
       const subject = MEMORY_SUBJECTS.includes(String(x.subject || '').trim()) ? String(x.subject).trim() : 'user';
       const scope = MEMORY_SCOPES.includes(String(x.scope || '').trim()) ? String(x.scope).trim() : 'character';
-      // 原话（0.6.0 §2 来源回链）：只留 80 字，空白压平。它是用来回查"这条是从哪句来的"，
+      // 原话（记忆 OS §2 来源回链）：只留 80 字，空白压平。它是用来回查"这条是从哪句来的"，
       // 所以宁可短而准，不要长而糊。
       const quote = String(x.quote == null ? '' : x.quote).replace(/s+/g, ' ').trim().slice(0, 80);
       return {
@@ -7559,6 +8073,10 @@ function parseMemJson(s) {
                   && Number.isFinite(Number(x.untilHour))) ? Number(x.untilHour) : null,
       untilMinute: (kind === 'event' && x.untilMinute !== null && x.untilMinute !== ''
                     && Number.isFinite(Number(x.untilMinute))) ? Number(x.untilMinute) : 0,
+      // 记忆经历化：情绪强度与「还没完」。模型不给就是 0 / false，
+      // 不影响老行为 —— mempick 的 heatNorm 会给没标的老记忆按类型补一个保守值。
+      heat: (() => { const n = Number(x.heat); return Number.isFinite(n) ? Math.max(0, Math.min(5, Math.round(n))) : 0; })(),
+      open: x.open === true,
       };
   });
 }
@@ -7653,7 +8171,7 @@ async function pruneMemories(charId = null) {
   const list = await mem.list(cid);
   const nowMin = clockToMin(clockOf);
   for (const m of list) {
-    // 只看有没有限期，不再看 kind（0.6.0）：v2 的七类里 state / goal 也可以带限期，
+    // 只看有没有限期，不再看 kind（记忆 OS）：v2 的七类里 state / goal 也可以带限期，
     // 老判据只认 event，用户给一条 state 填了「第 5 天之后不算数」会永远不过期。
     if (typeof m.untilDay !== 'number') continue;
     // ⚠️ 只处理还在生效的（v0.5.2.2，外部评审 P0-2）。
@@ -7765,17 +8283,17 @@ function memQualityGuards(max) {
 }
 
 /**
- * 记忆条目的输出格式（0.6.0 §3）。两条提炼路径共用这一份。
+ * 记忆条目的输出格式（记忆 OS §3）。两条提炼路径共用这一份。
  * 字段名必须和 parseMemJson 一一对上 —— 加字段要【同时】改这三处，
  * 否则模型给了也拿不到（untilHour 历史上就漏过一次，成了死代码）。
  */
 const MEM_OUTPUT_SHAPE =
   '格式：[{"text":"...","kind":"fact","key":null,"subject":"user","scope":"character",'
-  + '"quote":"...","untilDay":null,"untilHour":null,"untilMinute":null,"freq":"often"}]\n'
+  + '"quote":"...","untilDay":null,"untilHour":null,"untilMinute":null,"freq":"often","heat":0,"open":false}]\n'
   + '  （text 一条只说一件事，尽量不超过 120 字；key / quote 没有就填 null）\n';
 
 /**
- * 记忆条目的【字段说明】（0.6.0 记忆 OS）。两条提炼路径共用这一份。
+ * 记忆条目的【字段说明】（记忆 OS）。两条提炼路径共用这一份。
  *
  * 为什么不再各写一份：以前 summarizeIfNeeded 和 summarizeChunk 各写一套
  * 【分两类】+【槽位】，两处历史上各漏过一次同样的坑。这一版要加的东西
@@ -7794,7 +8312,15 @@ function memSchemaBlock(day, withTime) {
     + `  · item         属于他的、以后还会提到的具体东西（"他有一把旧吉他"）。\n`
     + `  · goal         他想做但还没做到的事（"想把老房子修好"）。\n`
     + `  · belief       【她以为】的事 —— 不一定真（"她以为他怕黑"）。拿不准真假、只是推断的，用这一类，\n`
-    + `                不要写成 fact。这一类不用你填是谁以为的，程序会记到你头上。\n\n`
+    + `                不要写成 fact。这一类不用你填是谁以为的，程序会记到你头上。\n`
+    + `  · promise      【说定的事】：答应过什么、约好了什么（"他答应周末来接你"）。\n`
+    + `                它和 goal 的区别是【有对家】—— 一个人可以想考好成绩，但只能答应别人。\n`
+    + `                没兑现之前一直算数，新的承诺也不会顶掉旧的。\n\n`
+    + `【两个可选字段 —— 不填也行，填了下一轮检索会准一点】\n`
+    + `  heat   这条有多重：0~5。5 = 吵翻了、伤到了；3 = 明显带着情绪；0 = 平铺直叙。\n`
+    + `         只有真的带着情绪才给高分，别因为"觉得重要"就写 5 —— 那样所有记忆都会变成 5。\n`
+    + `  open   这件事还【没完】吗：true / false。承诺没兑现、话没说开、事没解决 → true。\n`
+    + `         已经过去、已经翻篇的一律 false。\n\n`
     + `【槽位（key）—— 同一件事变了才填同一个槽位，填了才会顶掉旧说法】\n`
     + `  写法是「前缀.名字」，前缀只能从下面挑，名字自己起（不要空格、不要点）：\n`
     + `    identity.…      职业、身份          identity.job\n`
@@ -7818,7 +8344,7 @@ function memSchemaBlock(day, withTime) {
 }
 
 /**
- * 从这一批对话里找出"这条记忆是从哪句来的"（0.6.0 §2 来源回链）。
+ * 从这一批对话里找出"这条记忆是从哪句来的"（记忆 OS §2 来源回链）。
  *
  * 先用模型给的原话做精确包含匹配（最可信）；对不上就用二元组重合度兜底
  * （和 repairLegacyMemories 同一套算法），但要求分数足够高，否则宁可不认。
@@ -7857,7 +8383,7 @@ function findSourceMsgId(chunk, quote, text) {
 }
 
 /**
- * 把模型提炼出来的一条变成能落库的记忆记录（0.6.0 §3 / §4.3）。
+ * 把模型提炼出来的一条变成能落库的记忆记录（记忆 OS §3 / §4.3）。
  *
  * 两条写入路径共用这一份 —— 以前它们各写一遍 mem.add 的字段，
  * 字段一多必然有一边漏（untilHour 就漏过一次，成了永远读不到的死字段）。
@@ -7878,6 +8404,9 @@ function memRecFromItem(it, o) {
     untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
     untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
     freq: it.freq, ts: Date.now(), day: o.day,
+    // 记忆经历化：提炼器给的两个维度，一路带到库里（mempick 打分要用）
+    heat: Number.isFinite(Number(it.heat)) ? Math.max(0, Math.min(5, Math.round(Number(it.heat)))) : 0,
+    open: it.open === true,
     sourceMsgIds: o.srcOne ? [o.srcOne] : o.sourceIds,
     sourceKind: o.srcOne ? 'message' : 'summary',
     status: MEMORY_STATUS.ACTIVE, legacy: false,
@@ -8108,7 +8637,7 @@ async function summarizeIfNeeded(charId = null) {
       // 正文在写入时就绝对化：「他明天休息」→「他第 3 天休息」。
       // 这样即使注入层忘了带时间锚，模型也不会把「明天」按今天重新解释。
       const absText = absolutizeMemoryText(it.text, day);
-      // 来源精确化（0.6.0 §2）：认得出是哪一句就只认那一句。
+      // 来源精确化（记忆 OS §2）：认得出是哪一句就只认那一句。
       const srcOne = findSourceMsgId(chunk, it.quote, absText);
       const srcIds = srcOne ? [srcOne] : sourceIds;
       // 两条抽取路（实时总结 / 归档总结）看到的是同一段对话时，模型会给出同一条。
@@ -8325,7 +8854,7 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
   const P = effSettings(charT, S);
   const protectMine = !P.allowEditMine;
   const mineList = protectMine ? listAll.filter(m => m.mine) : [];
-  // ⚠️ 只有 active 的才参加整理（0.6.0）。
+  // ⚠️ 只有 active 的才参加整理（记忆 OS）。
   //
   // 整理是「全删重写」：送进去的每一条，模型都会吐回来、再被写成一条新的 active。
   // 已过期 / 已被取代 / 已删除 / 待在收件箱里的旧条目一旦被送进去，
@@ -8375,7 +8904,7 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
     const src = JSON.stringify(list.map(m => ({
       text: m.text,
       kind: m.kind || 'fact',
-      // 0.6.0：槽位/主人/作用域也送进去，模型才知道「这几条说的是同一个槽位、
+      // 记忆 OS：槽位/主人/作用域也送进去，模型才知道「这几条说的是同一个槽位、
       // 合并时该留哪一边」。但它们【不在输出白名单里】—— 合并后的 key 由代码
       // 从最像的旧条目继承（见 nearestOld），不让模型现编一个。
       ...(m.key ? { key: m.key } : {}),
@@ -8779,7 +9308,7 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
         const prov = provenanceFor(it.text, list);
         // 模型偶尔会把绝对天数改回「明天」；provenance 给了 day 就再兜一次。
         const absText = absolutizeMemoryText(it.text, prov.day);
-        // 0.6.0：槽位这些新字段从最像的旧条目继承（模型不回传，回了也不收）。
+        // 记忆 OS：槽位这些新字段从最像的旧条目继承（模型不回传，回了也不收）。
         const near = nearestOld(it.text, list);
         await mem.add({ id: uid(), charId: cidFor, text: absText, kind: it.kind,
                         key: it.key || (near && near.key) || '',
@@ -9130,7 +9659,7 @@ async function summarizeChunk(charId, chunk) {
   for (const it of items) {
     // ⚠️ 同上（v1.21.25 修）——这是【最常走】的一条写回路径。
     const absText = absolutizeMemoryText(it.text, day);
-    // 来源精确化（0.6.0 §2）：同实时总结路径。
+    // 来源精确化（记忆 OS §2）：同实时总结路径。
     const srcOne = findSourceMsgId(chunk, it.quote, absText);
     const srcIds = srcOne ? [srcOne] : sourceIds;
     // 与实时总结路径同一条规则：同一件事只留一条，来源合并。
@@ -9647,6 +10176,16 @@ async function showInj(inj) {
         + psy.wd.map(t => '<div class="inj-row">「' + esc(t) + '」</div>').join(''));
     }
   }
+  // ---- 活人感 v2：这一轮的独白原文 ----
+  // 判断层（上面那块）是 JSON 归一后的摘要；这里是【她自己写下来的那几句话】。
+  // 分开显示的原因是排查时问法不同：「她打算怎么应付」看上面，「她脑子里到底过了什么」看这里。
+  if (inj.inner) {
+    const il = String(inj.inner).split('\n').map(x => x.trim()).filter(Boolean);
+    if (il.length) {
+      secs.push('<h4 class="inj-h">' + esc(tt('她脑子里')) + '</h4>'
+        + il.map(t => '<div class="inj-row">' + esc(t) + '</div>').join(''));
+    }
+  }
   if (inj.arc) {
     const ai = (Number(inj.arc.i) || 0) + 1;
     const an = Number(inj.arc.n) || 1;
@@ -9657,7 +10196,7 @@ async function showInj(inj) {
       + (inj.arc.beat ? '<i class="inj-why">' + esc(inj.arc.beat) + '</i>' : '')
       + '</div>');
   }
-  // ---- 长期记忆（0.6.0 §5.4）----
+  // ---- 长期记忆（记忆 OS §5.4）----
   // 每一条都说清三件事：为什么进来（why）、占多少 token、来源是哪条消息。
   // 下面「没进来的」是这份清单的另一半 —— 被挤掉的记忆必须看得见，
   // 否则用户只会觉得"她怎么又忘了"，永远找不到原因。
@@ -10733,7 +11272,7 @@ function attributeWho(text, chunk) {
 }
 
 /**
- * 整理/查重时把老条目的【整条】找出来（0.6.0）。
+ * 整理/查重时把老条目的【整条】找出来（记忆 OS）。
  *
  * 模型只被允许吐回 text / kind / 时限 / freq，key / subject / scope / quote /
  * sourceKind 一律从最像的那条旧记忆继承。不继承的话：整理跑一次，槽位就全空，
@@ -14585,7 +15124,7 @@ async function maybeAutoJudgeArc(charId, P, text, userMsg) {
     // 判定读的上下文最多，result 只有它写得出来 —— 丢掉就等于白判一次。
     if (o.result) cb.result = String(o.result).replace(/\s+/g, ' ').trim().slice(0, 240);
     await kv.set(arcKey(charId), normalizeArc(cur));
-    // 这一拍实际发生了什么 → 记忆收件箱的候选（0.6.0 §8）。只进收件箱，不自动提交。
+    // 这一拍实际发生了什么 → 记忆收件箱的候选（记忆 OS §8）。只进收件箱，不自动提交。
     await seedArcMemory(charId, cur, cur.currentBeat);
     if (charId === curCharId) {
       await refreshArcBar();
@@ -14595,7 +15134,7 @@ async function maybeAutoJudgeArc(charId, P, text, userMsg) {
 }
 
 /**
- * 把「这一拍实际发生了什么」落成一条【待确认】记忆（0.6.0 §8）。
+ * 把「这一拍实际发生了什么」落成一条【待确认】记忆（记忆 OS §8）。
  *
  * 为什么只进收件箱：result 是判定器从正文里读出来的一句概括，不是用户说的原话。
  * 直接当事实记下来，一旦判歪（把"差点发生"读成"发生了"），她以后就会一直
@@ -15725,9 +16264,9 @@ function memItemHtml(m, opts = {}) {
   const dead = st === 'superseded';
   // 过期（v0.5.1.1）：不再是"删掉就算了"。灰掉、标一句过期，同样给「恢复」。
   const gone = st === 'expired';
-  // 已删除（0.6.0）：软删。不物理删 = 她"忘了"这件事有痕迹可查，也能撤回。
+  // 已删除（记忆 OS）：软删。不物理删 = 她"忘了"这件事有痕迹可查，也能撤回。
   const isDel = st === 'deleted';
-  // 待确认（0.6.0 收件箱）：模型提炼出来但不够确定的，不进提示词，等用户点一下。
+  // 待确认（记忆 OS 收件箱）：模型提炼出来但不够确定的，不进提示词，等用户点一下。
   const isDraft = st === 'draft';
   const tags = [];
   if (isDraft) {
@@ -15751,18 +16290,18 @@ function memItemHtml(m, opts = {}) {
     tags.push('<em class="mem-tag">记于第 ' + m.day + ' 天</em>');
   }
   if (m.key) tags.push('<em class="mem-tag key">' + esc(m.key) + '</em>');
-  // 旧记忆（0.6.0 §3）：v2 之前一条里塞了好几件事的 blob。它照常注入，
+  // 旧记忆（记忆 OS §3）：v2 之前一条里塞了好几件事的 blob。它照常注入，
   // 但会"一次全倒出来"，所以界面上要看得见、要给出拆开的入口。
   const canSplit = (m.legacy === true || m.needsSplit === true);
   if (canSplit) tags.push('<em class="mem-tag draft">建议拆开</em>');
   if (m.mine) tags.push('<em class="mem-tag mine">自定义</em>');
-  // 类型（0.6.0 §7.2）：事实之外的类型都要标出来，尤其是 belief ——
+  // 类型（记忆 OS §7.2）：事实之外的类型都要标出来，尤其是 belief ——
   // 「她以为」和「事实」在注入时是两回事，界面上也必须一眼分得开，
   // 否则用户会拿一条误解去纠正她，越纠越乱。
   const kd = String(m.kind || '');
   if (kd === 'belief') tags.push('<em class="mem-tag belief">她以为</em>');
   else if (kd && kd !== 'fact' && kd !== 'event') tags.push('<em class="mem-tag kind">' + esc(MEMORY_KIND_NAME[kd] || kd) + '</em>');
-  // 作用域（0.6.0 §5.2）：只在这一条线上 / 只在小说里 —— 不标的话用户会以为
+  // 作用域（记忆 OS §5.2）：只在这一条线上 / 只在小说里 —— 不标的话用户会以为
   // 「明明有这条记忆，切了个走向她就不记得了」是 bug。
   if (m.scope === 'branch' || m.scope === 'scene') {
     tags.push('<em class="mem-tag scope">' + esc(MEMORY_SCOPE_NAME[m.scope] || '') + '</em>');
@@ -15808,7 +16347,7 @@ function openMemEditor(memId, charId) {
     const isEvent = m.kind === 'event' && typeof m.untilDay === 'number';
     const modal = $('modal');
     $('modal-title').textContent = '修改这条记忆';
-    // 类型 / 槽位 / 作用域（0.6.0 §7）：这三样决定「这条算不算同一个槽位的新说法」，
+    // 类型 / 槽位 / 作用域（记忆 OS §7）：这三样决定「这条算不算同一个槽位的新说法」，
     // 只给正文和期限的话，用户改不动"她现在是这么认为的"这件事本身。
     const kindOpts = MEMORY_KINDS.map(k =>
       '<option value="' + esc(k) + '"' + (String(m.kind || 'fact') === k ? ' selected' : '') + '>'
@@ -15889,7 +16428,7 @@ async function saveMemEdit(memId, charId) {
       untilMinute = (mEl && mEl.value.trim() !== '' && isFinite(mv)) ? Math.min(59, Math.max(0, Math.floor(mv))) : 0;
     }
   }
-  // 类型 / 作用域 / 槽位（0.6.0 §7）。这三样必须能改，否则用户看见一条
+  // 类型 / 作用域 / 槽位（记忆 OS §7）。这三样必须能改，否则用户看见一条
   // 「她以为」记错了，只能删掉重加 —— 而删掉会丢来源和日期。
   const kindRaw = String($('mem-edit-kind')?.value || '');
   const scopeRaw = String($('mem-edit-scope')?.value || '');
@@ -16026,7 +16565,7 @@ async function showMemSources(id, charId) {
 }
 
 /**
- * 按句子切开一条长记忆（0.6.0 §7 拆分）。
+ * 按句子切开一条长记忆（记忆 OS §7 拆分）。
  *
  * 只在【用户点「拆」】时跑，不自动跑 —— 自动拆一句错的话，
  * 用户要一条条去改；不拆只是"她一次全倒出来"。两害相权，宁可不拆。
@@ -16040,7 +16579,7 @@ function splitSentences(text) {
 }
 
 /**
- * 把一条旧 blob 拆成几条原子记忆（0.6.0 §7）。
+ * 把一条旧 blob 拆成几条原子记忆（记忆 OS §7）。
  *
  * 两条硬规则：
  *   ① 拆出来的每条【槽位一律清空】。留着原 key 的话，同 key 同 kind 的新条
@@ -16130,13 +16669,13 @@ function bindMemItems(box, charId, after) {
     e.stopPropagation();
     await showMemSources(el.dataset.src, charId);
   });
-  // 拆分（0.6.0 §7）：旧 blob 里装着好几件事，用户点「拆」才进编辑态，不自动切。
+  // 拆分（记忆 OS §7）：旧 blob 里装着好几件事，用户点「拆」才进编辑态，不自动切。
   box.querySelectorAll('[data-split]').forEach(b => b.onclick = async (e) => {
     e.stopPropagation();
     const did = await splitMemory(b.dataset.split, charId);
     if (did) await after();
   });
-  // 收件箱（0.6.0 §4.3）：模型自己落进来的"不够确定"的条目，收下才进提示词。
+  // 收件箱（记忆 OS §4.3）：模型自己落进来的"不够确定"的条目，收下才进提示词。
   box.querySelectorAll('[data-accept]').forEach(b => b.onclick = async (e) => {
     e.stopPropagation();
     const aid = b.dataset.accept;
@@ -16283,7 +16822,7 @@ let _memDraft = {};           // charId -> 还没提交的输入内容
 // 记忆管理两种看法（v0.5.1.1）：列表按人分组，时间线按剧情天数排队。
 // 时间线只排【有天数的】条目 —— 没记过天的是老数据，排进去只会挤在最前面造谣。
 let _memView = 'list';
-// 「她以为」要不要一起摆出来（0.6.0 §7.2）。默认关：
+// 「她以为」要不要一起摆出来（记忆 OS §7.2）。默认关：
 // 一屏全是推断的话，用户拿它当事实去纠正她，越纠越乱。
 let _memBelief = false;
 
@@ -16306,7 +16845,7 @@ function memTimelineHtml(items) {
 
 
 /**
- * 槽位（key）的中文名（0.6.0 §7.2 事实卡视图）。
+ * 槽位（key）的中文名（记忆 OS §7.2 事实卡视图）。
  *
  * key 是【槽位不是标签】：同一个槽位上只能有一条 active，
  * 新说法顶掉旧说法。所以界面必须按槽位分组，用户才能看见
@@ -16431,7 +16970,7 @@ async function renderMem() {
       swIn.onchange = () => { _memBelief = !!swIn.checked; renderMem(); };
     }
   }
-  // 待确认的数字挂在「收件箱」那个按钮上（0.6.0 §4.3）。
+  // 待确认的数字挂在「收件箱」那个按钮上（记忆 OS §4.3）。
   // 不做弹窗、不打断 —— 攒着，用户想看的时候点进来。
   {
     const nEl = $('mem-inbox-n');
@@ -16470,7 +17009,7 @@ async function renderMem() {
     return;
   }
 
-  // ---- 收件箱视图（0.6.0 §4.3）----
+  // ---- 收件箱视图（记忆 OS §4.3）----
   // 只看 status=draft 的条目。它们一条都不进提示词 —— 收下才进。
   // 这是"不每轮弹窗确认"和"不静默往她脑子里塞东西"之间唯一可行的折中。
   if (_memView === 'inbox') {
@@ -16497,7 +17036,7 @@ async function renderMem() {
     return;
   }
 
-  // 旧 blob 横幅（0.6.0 §3 / §7）：v2 之前一条里塞好几件事的记忆照常注入，
+  // 旧 blob 横幅（记忆 OS §3 / §7）：v2 之前一条里塞好几件事的记忆照常注入，
   // 但"一次全倒出来"正是她答非所问的来源。不阻塞、不弹窗，只在顶上提一句。
   const splitN = all.filter(m => m && isActiveMemory(m) && (m.legacy === true || m.needsSplit === true)).length;
   const banner = splitN
@@ -17556,7 +18095,7 @@ async function applyImport(data, p, file) {
         // ⚠️ 这一段历史上是【白名单式重建】，教训是同一个：少写一个字段就永久丢一个。
         //   · 漏 who（v0.4.1.4）→ 群记忆恢复后全退化成"全群共识"，甲的私事被读成大家都知道
         //   · 漏 untilHour/untilMinute（v1.21.25）→ 到期时刻推迟 8 小时
-        //   · 0.6.0 又加了 key/subject/scope/quote/sourceKind/status 五态…
+        //   · 记忆 OS 又加了 key/subject/scope/quote/sourceKind/status 五态…
         //     再抄一遍白名单等于把同一个坑留给下一个字段。
         //
         // 所以现在改成【整条交给 normalizeMemory】：它负责白名单校验 + 补默认值 +

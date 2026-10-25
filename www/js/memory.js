@@ -12,7 +12,7 @@
 //     · 注入时在每条前面加「第 N 天记下：」，并把当天是第几天写进提示词；
 //     · 来源消息 id 一起存，后面做记忆回链/审计时不用再猜。
 //
-// ── 0.6.0 记忆 OS（0.5.2.1 实装）追加了什么 ──────────────────────────────
+// ── 记忆 OS（0.5.2.1 实装）追加了什么 ──────────────────────────────
 //   一条记忆从"一句话"变成"一张卡"。新增字段全部有默认值，老数据老备份直接读：
 //     kind    事实/事件/状态/信念/关系/物品/计划 —— 决定能不能自动取代（§6.1）
 //     scope   character/branch/scene —— 决定在当前分支下算不算数（§5.2）
@@ -28,9 +28,9 @@
 // 原来 pruneMemories 直接 mem.del —— 用户只会觉得"她忘了"，而且没有任何痕迹可查。
 // 现在留在库里、记忆页看得见、点一下还能恢复（恢复时把限期清掉，否则下一轮又过期）。
 //
-// DELETED（0.6.0 §6.3）：用户点删除 = 软删。不物理删的理由和 EXPIRED 一样，
+// DELETED（记忆 OS §6.3）：用户点删除 = 软删。不物理删的理由和 EXPIRED 一样，
 // 但更强：误删一条关系记忆是没法从聊天记录里找回来的。30 天后才允许清理。
-// DRAFT（0.6.0 §4.3）：进收件箱、等用户确认，**不注入**。分不清新旧的冲突进这里。
+// DRAFT（记忆 OS §4.3）：进收件箱、等用户确认，**不注入**。分不清新旧的冲突进这里。
 export const MEMORY_STATUS = {
   ACTIVE: 'active',
   SUPERSEDED: 'superseded',
@@ -40,9 +40,12 @@ export const MEMORY_STATUS = {
 };
 const STATUS_SET = new Set([MEMORY_STATUS.ACTIVE, MEMORY_STATUS.SUPERSEDED, MEMORY_STATUS.EXPIRED, MEMORY_STATUS.DELETED, MEMORY_STATUS.DRAFT]);
 
-export const MEMORY_KINDS = ['fact', 'event', 'state', 'belief', 'relationship', 'item', 'goal'];
+// promise（记忆经历化）：答应过的事。它和 goal 的区别是【有对家】——
+// 「她想考个好成绩」是 goal，「她答应过他明天把书还回来」是 promise。
+// 承诺没兑现之前一直算数，所以它默认参与注入，也不会被同类新条目取代（见 planSupersede）。
+export const MEMORY_KINDS = ['fact', 'event', 'state', 'belief', 'relationship', 'item', 'goal', 'promise'];
 const KIND_SET = new Set(MEMORY_KINDS);
-export const MEMORY_KIND_NAME = { fact: '事实', event: '事件', state: '状态', belief: '她以为', relationship: '关系', item: '物品', goal: '计划' };
+export const MEMORY_KIND_NAME = { fact: '事实', event: '事件', state: '状态', belief: '她以为', relationship: '关系', item: '物品', goal: '计划', promise: '约定' };
 
 export const MEMORY_SCOPES = ['character', 'branch', 'scene'];
 const SCOPE_SET = new Set(MEMORY_SCOPES);
@@ -74,7 +77,7 @@ export const MEMORY_STATUS_NAME = {
 // 为什么只认有限的形式：
 //   模型是自由给 key 的。要是任何字符串都算槽位，它给两条不相干的事实随手填同一个
 //   key（比如都填「他」），就会把一条活记忆顶成 superseded —— 用户看着记忆凭空消失。
-//   所以只认两组：老的中文白名单（兼容老库），和 8 个点号前缀 + 短后缀（0.6.0 规格）。
+//   所以只认两组：老的中文白名单（兼容老库），和 8 个点号前缀 + 短后缀（记忆 OS 规格）。
 //   其余一律当空，宁可不取代，也不误伤。
 export const MEMORY_KEYS = ['职业', '住处', '关系', '称呼', '年龄', '身体', '宠物', '爱好', '计划', '物品'];
 const KEY_SET = new Set(MEMORY_KEYS);
@@ -102,7 +105,7 @@ export function keyWasDropped(v) {
 /**
  * 一条新记忆会把哪些旧记忆标成 superseded。
  *
- * 条件全部满足才算同一个槽位的新旧说法（0.6.0 §6.1）：
+ * 条件全部满足才算同一个槽位的新旧说法（记忆 OS §6.1）：
  *   · 两边 key 都合法且相同（空槽位不参与取代）
  *   · subject 相同（说的是同一个人）
  *   · kind 相同（事实不会被一条带限期的安排顶掉）
@@ -135,6 +138,9 @@ export function planSupersede(rec, list) {
     // 「只在这一条线上」的说法不该顶掉「一直算数」的说法，反过来也不行。
     if (String(old.scope || 'character') !== String(rec.scope || 'character')) continue;
     if (String(old.kind || 'fact') !== kind) continue;
+    // 没兑现的承诺不该被新的顶掉：一个人可以同时答应过好几件事，
+    // 用「同槽位」那套去取代，等于她答应第二件事的那一秒就把第一件忘了。
+    if (kind === 'promise' && old.open === true) continue;
     if (kind === 'belief') {
       if (String(old.who || '').trim() !== who) continue;
     }
@@ -146,7 +152,7 @@ export function planSupersede(rec, list) {
 }
 
 /**
- * 同槽位的旧 state 该怎么过期（0.6.0 §6.1）。
+ * 同槽位的旧 state 该怎么过期（记忆 OS §6.1）。
  *
  * 状态不是"被新说法取代"，而是"到某个时点为止是这样"：
  *   新 state 的 sinceDay 比旧的晚、旧的又没有 untilDay → 旧的 untilDay = 新的 sinceDay，标 expired
@@ -232,6 +238,14 @@ export function normalizeMemory(m = {}, now = Date.now()) {
   out.legacy = out.legacy === true;
   out.needsSplit = out.needsSplit === true;
   out.pinned = out.pinned === true;
+  // —— 记忆经历化新增的两个维度 ——
+  // heat：这条记忆【有多重】。1~5，0 = 没标（老数据）。检索评分里占 0.25 权重：
+  //       同样是「他来过」，「他摔门走了」该压过「他敲了两下门」。
+  //       不让模型自己报数字——它也报不准；由提炼器按措辞判，判不出就留 0。
+  // open：这件事【还没完】。承诺、没问出口的话、没解决的矛盾都算。占 0.20 权重，
+  //       也是「她突然想起来」的抽取条件之一（见 mempick 的 pickCallback）。
+  out.heat = (() => { const n = Number(out.heat); return Number.isFinite(n) ? Math.max(0, Math.min(5, Math.round(n))) : 0; })();
+  out.open = out.open === true;
   // 槽位（见上面 MEMORY_KEYS 的说明）。不合格式的一律清空。
   out.key = memoryKey(out.key);
   out.supersedes = (Array.isArray(out.supersedes) ? out.supersedes : []).filter(x => typeof x === 'string' && x).slice(0, 20);
@@ -256,7 +270,7 @@ export function isActiveMemory(m) {
 }
 
 /**
- * 这条能不能不经用户确认就落库（0.6.0 §4.3）。
+ * 这条能不能不经用户确认就落库（记忆 OS §4.3）。
  *
  * 进收件箱（status=draft，不注入）的三条硬理由：
  *   · 信念 / 计划 —— 她的看法和打算不能由提炼器替她定，必须他点头

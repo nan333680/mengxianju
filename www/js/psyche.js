@@ -32,7 +32,13 @@ export const CAP = {
   withheld: 4,
   grudges: 4,
   beliefs: 6,
-  moves: 6
+  moves: 6,
+  // 信息差 / 她自己 / 底线（活人感 v2）：这三样都是「她自己的东西」——
+  // 不在聊天记录里、也不是对他这个人的读数，所以必须存在状态里，
+  // 否则每一轮都从零开始：她永远没有瞒着的事，也永远没有跟他无关的生活。
+  secrets: 4,
+  selfEvents: 5,
+  boundaries: 4
 };
 
 /** 单条文本的字符上限。超了截断，不报错 —— 提示词里一条气事写 200 字没有意义。 */
@@ -40,6 +46,12 @@ const TEXT_MAX = 60;
 
 /** 情绪强度 / 关系读数的范围。stance 用 -5..5，mood.intensity 用 0..5。 */
 const CLAMP = { mood: [0, 5], stance: [-5, 5] };
+
+/** relation 的 warmth/trust 范围。和 stance 不同：这两个是"底子"，从 1.0 起步。 */
+const REL_CLAMP = [-5, 5];
+
+/** 一轮里 relation 最多能动多少。关系是慢变量 —— 一句话不该让陌生人变生死之交。 */
+export const REL_STEP = 0.15;
 
 /**
  * 情绪衰减系数（每轮乘一次）。
@@ -98,6 +110,8 @@ function makeItem(x, s) {
     if (Number.isFinite(Number(x.at))) it.at = Number(x.at);
     if (Number.isFinite(Number(x.conf))) it.conf = num(x.conf, [0, 1], 0.5);
     if (x.dead) it.dead = true;
+    // reveal：这件事在什么条件下才肯说。空 = 一直瞒着。
+    if (x.reveal) it.reveal = cut(x.reveal, 20);
   }
   return it;
 }
@@ -116,6 +130,18 @@ export function emptyPsyche() {
     grudges: [],
     beliefs: [],
     moves: [],
+    // v2：她这会儿在做什么 + 关系深度。life 每轮由 deriveLife() 现算（会覆盖），
+    // relation 是慢变量：几十轮才动一点，所以和 stance（快变量）分开存。
+    life: { activity: '', busy: false, energyNow: 0.7, lastSeenAt: 0 },
+    relation: { warmth: 1.0, trust: 1.0, bond: 0, since: 0 },
+    // v2：她自己那一部分 —— 瞒着他的事 / 跟他无关的生活 / 底线。
+    // 三者都只增不换（说破了才删），因为"每轮重新决定瞒什么"不是人。
+    secrets: [],
+    selfEvents: [],
+    boundaries: [],
+    // v2：上一轮她没说出口的那一层（独白原文）。只存不算 —— psychePrompt 不读它、
+    // psycheActive 也不看它，所以老角色不会因为多了这个字段就突然换一套提示词。
+    lastInner: '',
     updatedAt: 0
   };
 }
@@ -133,6 +159,8 @@ export function normalizePsyche(raw) {
   const mood = raw.mood && typeof raw.mood === 'object' ? raw.mood : {};
   const st = raw.stance && typeof raw.stance === 'object' ? raw.stance : {};
   const w = raw.want && typeof raw.want === 'object' ? raw.want : {};
+  const life = raw.life && typeof raw.life === 'object' ? raw.life : {};
+  const rel = raw.relation && typeof raw.relation === 'object' ? raw.relation : {};
   return {
     v: 1,
     mood: {
@@ -158,6 +186,23 @@ export function normalizePsyche(raw) {
     grudges: strList(raw.grudges, CAP.grudges),
     beliefs: strList(raw.beliefs, CAP.beliefs),
     moves: (Array.isArray(raw.moves) ? raw.moves : []).map(m => cut(m, 12)).filter(Boolean).slice(-CAP.moves),
+    secrets: strList(raw.secrets, CAP.secrets),
+    selfEvents: strList(raw.selfEvents, CAP.selfEvents),
+    boundaries: strList(raw.boundaries, CAP.boundaries),
+    life: {
+      activity: cut(life.activity, 20),
+      busy: !!life.busy,
+      energyNow: num(life.energyNow, [0, 1], 0.7),
+      lastSeenAt: Number(life.lastSeenAt) || 0
+    },
+    relation: {
+      warmth: num(rel.warmth, REL_CLAMP, 1.0),
+      trust: num(rel.trust, REL_CLAMP, 1.0),
+      bond: num(rel.bond, [0, 99], 0),
+      since: Number(rel.since) || 0
+    },
+    // 独白原文留一份（v2）。400 字够 INNER_ASK 让她一口气说完 3~5 句。
+    lastInner: cut(raw.lastInner, 400),
     updatedAt: Number(raw.updatedAt) || 0
   };
 }
@@ -271,6 +316,17 @@ export function applyPsycheDelta(raw, delta, now = Date.now()) {
 
   for (const b of strList(delta.belief, CAP.beliefs)) pushCapped(p.beliefs, { ...b, conf: b.conf == null ? 0.5 : b.conf }, CAP.beliefs);
 
+  // 信息差 / 她自己 / 底线：只增不换。
+  // 覆盖式写法（像 withheld 那样每轮换掉）会让"她瞒着什么"每一轮重掷一次骰子，
+  // 于是她永远瞒不住同一件事三轮 —— 而隐瞒这件事的全部意义就是它一直在那儿。
+  for (const s of strList(delta.secret, CAP.secrets)) pushCapped(p.secrets, { ...s, at: s.at || now }, CAP.secrets);
+  for (const r of (Array.isArray(delta.revealSecret) ? delta.revealSecret : [])) {
+    const i = findItem(p.secrets, r);
+    if (i >= 0) p.secrets.splice(i, 1);   // 说破了就不再是秘密（但也不会变成"没发生过"）
+  }
+  for (const e of strList(delta.selfEvent, CAP.selfEvents)) pushCapped(p.selfEvents, { ...e, at: e.at || now }, CAP.selfEvents);
+  for (const b of strList(delta.boundary, CAP.boundaries)) pushCapped(p.boundaries, { ...b, at: b.at || now }, CAP.boundaries);
+
   if (delta.move) {
     const mv = cut(delta.move, 12);
     if (mv) { p.moves.push(mv); while (p.moves.length > CAP.moves) p.moves.shift(); }
@@ -286,7 +342,8 @@ export function psycheActive(p) {
   const q = normalizePsyche(p);
   return !!(q.mood.label || q.mood.intensity > 0 || q.energy || q.body.length
     || q.want.goal || q.stance.warmth || q.stance.trust || q.stance.irritation || q.stance.playfulness
-    || q.openLoops.length || q.withheld.length || q.grudges.length || q.beliefs.length);
+    || q.openLoops.length || q.withheld.length || q.grudges.length || q.beliefs.length
+    || q.secrets.length || q.selfEvents.length || q.boundaries.length);
 }
 
 /** 火气到这一档就算"还在气头上" —— 好几个地方要问这一个问题，别各写一遍。 */
@@ -350,6 +407,19 @@ export function psychePrompt(raw, opts = {}) {
   if (op.length) L.push('· 还没问出口的：' + op.join('；'));
   const bl = p.beliefs.filter(b => b.t).map(b => b.t + (b.conf >= 0.6 ? '（你比较确信）' : '（你自己也没底）'));
   if (bl.length) L.push('· 你心里认定的：' + bl.join('；'));
+  // 信息差（活人感 v2）：她瞒着的事。这里必须写「别主动交代」——
+  // 只要列出来不约束，模型会把它当成"待揭示的剧情"顺手讲掉，隐瞒就消失了。
+  const sc = p.secrets.filter(x => x && x.t)
+    .map(x => x.t + (x.reveal ? '（除非他先问起' + x.reveal + '，否则别主动说）' : ''));
+  if (sc.length) L.push('· 你瞒着他的：' + sc.join('；'));
+  // 她自己的生活（活人感 v2）：跟他没关系的事。人是先有自己的日子，才有他的话。
+  // 不给"所以要不要提"的指令 —— 提不提都行，她不是来汇报的。
+  const se = p.selfEvents.map(x => x && x.t).filter(Boolean);
+  if (se.length) L.push('· 你自己这两天：' + se.join('；'));
+  // 底线（活人感 v2）：她不吃的那一套。写「不需要假装没事」是为了防她
+  // 被踩了还替对方圆场 —— 那是最典型的 AI 式懂事。
+  const bd = p.boundaries.map(x => x && x.t).filter(Boolean);
+  if (bd.length) L.push('· 你的底线：' + bd.join('；') + '。踩到你会真的不高兴，不需要假装没事');
   const wd = p.withheld.map(x => x.t).filter(Boolean);
   if (wd.length) L.push('· 上一轮你咽回去了：' + wd.join('；'));
 
@@ -359,3 +429,109 @@ export function psychePrompt(raw, opts = {}) {
     + '它只决定你怎么听、怎么答、答多少。）\n'
     + L.join('\n');
 }
+
+/**
+ * 二十四小时里的作息槽。lib：哪个时段她在干嘛、忙不忙、电量多少。
+ *
+ * ⚠️ 这是「默认作息」，不是她的设定。要按角色不同，就从 ctx 里给 override —— 
+ *    不要在这里按角色名写 if。签名留了口子（见 deriveLife 的 ctx.override）。
+ */
+const LIFE_SLOTS = [
+  { from: 0, to: 6, act: ['睡着了', '半夜醒着，没开灯', '在被窝里刷手机'], busy: true, energy: 0.2 },
+  { from: 7, to: 9, act: ['在洗漱准备出门', '刚醒，还没开手机', '在吃早饭'], busy: false, energy: 0.6 },
+  { from: 10, to: 12, act: ['在工作/上课', '在忙，手机放一边', '在等人'], busy: true, energy: 0.8 },
+  { from: 13, to: 14, act: ['在吃饭', '刚吃完，懒着', '在午休'], busy: false, energy: 0.8 },
+  { from: 15, to: 18, act: ['在忙', '在收拾东西', '在外面'], busy: true, energy: 0.8 },
+  { from: 19, to: 22, act: ['刚回家', '在洗澡', '躺着刷手机', '在吃晚饭'], busy: false, energy: 0.7 },
+  { from: 23, to: 24, act: ['准备睡了', '在关灯', '还没困'], busy: false, energy: 0.4 }
+];
+
+/** 某个钟点落在哪个槽。越界一律落到深夜槽（宁可当她睡了，也不当她清醒着敷衍你）。 */
+function lifeSlot(hour) {
+  const h = Number(hour);
+  if (!Number.isFinite(h)) return LIFE_SLOTS[0];
+  const hh = ((Math.floor(h) % 24) + 24) % 24;
+  for (const s of LIFE_SLOTS) if (hh >= s.from && hh <= s.to) return s;
+  return LIFE_SLOTS[0];
+}
+
+/**
+ * 现算「她这会儿在做什么」。
+ *
+ * 为什么每轮现算而不是存下来：作息是钟点的函数，存下来就会过夜过期 ——
+ * 早上八点她还"在被窝里刷手机"，就露馅了。只把结果写回 psyche.life 供 UI 显示。
+ *
+ * @param {any} psyche
+ * @param {{now?:number, hour?:number, char?:any, lastMsgAt?:number, rnd?:()=>number, override?:any}} ctx
+ * @returns {{activity:string, busy:boolean, energyNow:number, lastSeenAt:number}}
+ */
+export function deriveLife(psyche, ctx = {}) {
+  const now = Number(ctx.now) || Date.now();
+  const hour = Number.isFinite(Number(ctx.hour)) ? Number(ctx.hour) : new Date(now).getHours();
+  const rnd = typeof ctx.rnd === 'function' ? ctx.rnd : Math.random;
+  const ov = ctx.override && typeof ctx.override === 'object' ? ctx.override : null;
+  const slot = ov || lifeSlot(hour);
+  const act = Array.isArray(slot.act) && slot.act.length ? slot.act : ['在忙'];
+  const activity = act[Math.min(act.length - 1, Math.floor(rnd() * act.length))] || act[0];
+  let busy = !!slot.busy;
+  // 忙不忙是随机的：同一个时段她不会每轮都在忙，也不会每轮都闲着。
+  if (busy && rnd() >= 0.5) busy = false;
+  const energyNow = num(slot.energy, [0, 1], 0.7);
+  return { activity: cut(activity, 20), busy, energyNow, lastSeenAt: now };
+}
+
+/**
+ * 关系读数的中文表述。
+ *
+ * 只在够熟的时候才出一句 —— 刚认识就写"你们已经很熟了"是假的，
+ * 而且会让模型直接演熟络，跳过该有的生分。
+ *
+ * @returns {string} 空串 = 还没到该说的时候
+ */
+export function relationLine(raw) {
+  const p = normalizePsyche(raw);
+  const bond = p.relation.bond;
+  if (bond < 3) return '';
+  if (bond < 10) return '你们不算生人，但还没到能随便说话的地步。';
+  if (bond < 25) return '你们已经熟到不用客气了。';
+  return '你们之间已经没什么好客气的，但也有些话谁都不提。';
+}
+
+/**
+ * 关系增量落地。和 applyPsycheDelta 分开是因为它动的是慢变量，
+ * 而且调用点在 app.js 里独立于 stateDelta（Director 可能没给 stateDelta 但给了关系变化）。
+ *
+ * @returns {object} 新状态（不改原对象）
+ */
+export function applyRelation(raw, relationDelta, now = Date.now()) {
+  const p = normalizePsyche(raw);
+  if (!relationDelta || typeof relationDelta !== 'object') return p;
+  for (const k of ['warmth', 'trust']) {
+    const d = Number(relationDelta[k]);
+    if (Number.isFinite(d) && d !== 0) {
+      const step = Math.max(-REL_STEP, Math.min(REL_STEP, d));   // 一轮最多 ±0.15
+      // ⚠️ 留两位：步长是 0.15，按一位四舍五入会把 1.0+0.15=1.15 舍成 1.2，
+      //    等于一轮走了 0.2 —— 与「一轮最多 ±0.15」的约定对不上。
+      p.relation[k] = Math.round(num(p.relation[k] + step, REL_CLAMP, 1.0) * 100) / 100;
+    }
+  }
+  const db = Number(relationDelta.bond);
+  if (Number.isFinite(db) && db !== 0) {
+    const step = Math.max(-REL_STEP * 2, Math.min(REL_STEP * 2, db));
+    p.relation.bond = Math.round(num(p.relation.bond + step, [0, 99], 0) * 100) / 100;
+  }
+  if (!p.relation.since) p.relation.since = now;
+  return p;
+}
+
+/**
+ * 把「这会儿的生活」写成提示词里的一行。
+ * 忙的时候补一句提示：她可能回得慢、回得短 —— 这不是敷衍，是她真的在忙。
+ */
+export function lifeLine(raw) {
+  const p = normalizePsyche(raw);
+  const a = p.life.activity;
+  if (!a) return '';
+  return a + (p.life.busy ? '（这会儿腾不出手，回得慢）' : '');
+}
+

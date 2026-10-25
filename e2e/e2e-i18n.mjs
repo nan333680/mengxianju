@@ -225,11 +225,11 @@ await page.evaluate(() => { const c=document.querySelectorAll('#char-list .char-
 const attrEn3 = await scanAttr();
 t('★ 角色编辑页：title/placeholder 无中文', attrEn3.length === 0, attrEn3.slice(0, 6).join(' | '));
 await page.evaluate(() => { const b=document.getElementById('btn-edit-back'); if(b)b.click(); }); await sleep(500);
-// ⚠️ 0.6.0 记忆 OS：收件箱 / 事实卡 / 槽位标签 / 旧记忆横幅这一批文案几乎全是
+// ⚠️ 记忆 OS：收件箱 / 事实卡 / 槽位标签 / 旧记忆横幅这一批文案几乎全是
 //    innerHTML 拼出来的，i18n-report 扫不到、静态 data-i18n 也标不了 —— 只能在
 //    英文界面下把整屏的界面文字抓出来查一遍。这里就是那道闸。
 console.log('');
-console.log('=== 0.6.0 记忆页（按人看 / 时间线 / 事实卡 / 待确认）英文下不留中文 ===');
+console.log('=== 记忆页（按人看 / 时间线 / 事实卡 / 待确认）英文下不留中文 ===');
 await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });

@@ -180,7 +180,9 @@ await sleep(200);
 await page.click('#btn-edit-save'); await sleep(1000);   // 保存后会自动退回聊天页
 await page.type('#input', '再测一次');
 await sleep(300);
-await page.click('#btn-send');
+// 同样是 DOM click：前面刚点过「停止」，发送键可能还是 hidden 的（收尾没走完），
+// 坐标点击会抛「Node is either not clickable」，掩盖真正要测的占位气泡。
+await page.evaluate(() => document.getElementById('btn-send').click());
 await sleep(1200);
 const on = await page.evaluate(() => {
   const bub = document.querySelector('#messages .msg.ai:last-child .bub');

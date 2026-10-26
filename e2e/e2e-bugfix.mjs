@@ -131,6 +131,15 @@ page.on('request',(req)=>{
         'Access-Control-Allow-Headers':'*'
       }}).catch(()=>{});
     }
+    // 活人感 v2：这一轮先发独白/判断（非流式）。它们也吊住的话，界面会先干等 20 秒超时，
+    // 第 4 段切的就不是「正文正在跑」，而是「辅助请求还没回来」—— 只吊正文那条流。
+    let _b = null;
+    try { _b = JSON.parse(req.postData() || '{}'); } catch { _b = null; }
+    if (_b && _b.stream === false) {
+      return req.respond({ status:200, headers:{ 'Access-Control-Allow-Origin':'*' },
+        contentType:'application/json',
+        body: JSON.stringify({ choices: [{ message: { content: '{}' } }] }) }).catch(()=>{});
+    }
     held=req;   // POST：故意吊住，让界面停在「生成中」
     return;
   }

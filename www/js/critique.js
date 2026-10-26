@@ -170,6 +170,8 @@ export async function runCritique(o) {
       // 关思考：只输出 JSON 的活，开思考会把 700 上限烧穿（同 director.js）。
       noThink: true,
       timeoutMs: Number(api.timeoutMs) || 20000,
+      // 跟着这一轮一起断：用户点停止 / 切角色之后，评审不该还在后台跑。
+      signal: signal || null,
       onUsage: (u) => { usage = u || null; }
     });
   } catch (err) {

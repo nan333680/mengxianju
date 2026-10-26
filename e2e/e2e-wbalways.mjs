@@ -68,6 +68,14 @@ page.on("request", (req) => {
         "Access-Control-Allow-Headers":"*"
       }}).catch(()=>{});
     }
+    // 活人感 v2：最后一发可能是评审/独白（非流式辅助请求），它不是正文 ——
+    // 只认流式那条（3 条候选的 messages 一样，取哪条都行），辅助请求给个合法 JSON 就放走。
+    try {
+      if (JSON.parse(req.postData()||'{}').stream === false) {
+        return req.respond({ status:200, headers:{ "Access-Control-Allow-Origin":"*" }, contentType:"application/json",
+          body: JSON.stringify({ choices:[{ message:{ content:'{}' } }] }) }).catch(()=>{});
+      }
+    } catch (e) {}
     held = req;
     return;
   }

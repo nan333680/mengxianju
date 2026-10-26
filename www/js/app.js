@@ -50,7 +50,7 @@ import { planCadence } from './cadence.js';
 import { embedTexts, bestMatch } from './embedding.js';
 // 主动消息通知（0.5.3.6 §6 方案 C）：原生到点弹一条预写好的话。
 // ⚠️ 和上面一样，绝不在 www 里 import '@capacitor/xxx' —— 这个模块自己用 window.Capacitor 取。
-import { proactiveAvailable, proactiveSetQueue, proactiveTakePending, proactiveStatus, proactiveSchedule, proactiveRequestPermission } from './nativeproactive.js';
+import { proactiveAvailable, proactiveSetQueue, proactiveTakePending, proactiveStatus, proactiveSchedule, proactiveRequestPermission, proactiveStop, proactiveClear } from './nativeproactive.js';
 // 记忆时间锚（0.5.2）：把「明天/昨天」换算成绝对剧情天数，并保留来源消息。
 import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMemory, memoryDay, memoryGrams, hasRelativeDay, MEMORY_KEYS, activeOnly, MEMORY_STATUS,
   MEMORY_KINDS, MEMORY_KIND_NAME, MEMORY_SCOPES, MEMORY_SCOPE_NAME, MEMORY_STATUS_NAME, normalizeMemory,
@@ -153,6 +153,14 @@ const DEFAULTS = {
   // 0 = 写完一段就停（默认）。2–4 = 这一段落完之后，接着自己再往下写几段。
   // ⚠️ 每一段都是一次完整请求、都是 6K 起的 max_tokens —— 默认必须是 0。
   epicChain: 0,
+  // —— 活人感 v2 总开关（0.5.3.6）——
+  // 开：一轮五步（独白 → 判断 → 三条候选 → 评审 → 条件重写），多等 12~20 秒，
+  //     回复里会有「没说出口的那一层」，句子也不再一条比一条完整。
+  // 关：完全回到 0.5.3.5 那条老路 —— 一次请求、一条流式、350ms 逐条上屏；
+  //     独白 / 判断 / 三条候选 / 评审 / 拟真节奏 / 主动开场，一起停。
+  // ⚠️ 只有两档（用户 m02892 第 2 条：开/关，直接管理全部），没有「只开一半」。
+  // ⚠️ 判空一律写 `S.liveV2 !== false`：老库里没有这个键，undefined 必须当成【开】。
+  liveV2: true,
   typingDelay: 1.0, showTyping: true, hesitation: true,
   longMemory: false, theme: 'dark', fontSize: 15, showUsage: false,
   // 朗读（v1.21.56）：她说完自动读出来。默认关 —— 不是所有人任何时候都想被念出声。
@@ -1373,7 +1381,15 @@ async function loadSettings() {
 
 async function saveSettings(patch) {
   S = { ...S, ...patch };
-  await kv.set('settings', S);
+  try {
+    await kv.set('settings', S);
+  } catch (err) {
+    // ⚠️ 不能静默失败：S 已经改了，界面看起来「改好了」，但库里还是旧的 ——
+    //    退出 App 再进来设置全回去，用户只会觉得「这个设置不生效」，无从排查。
+    //    （写库失败是真会发生的：容量满、被别的标签页占住、浏览器拒绝。）
+    console.error('[settings] 写库失败', err);
+    try { toast('设置没能存下来（这次改动重启后会丢）：' + ((err && err.message) || err), 5200); } catch {}
+  }
 }
 
 function applyTheme() {
@@ -1728,12 +1744,15 @@ async function selectChar(id) {
   // 不 await —— 最坏要等两次请求二十秒，而用户可能只是进来翻记录；
   // 判据全部在函数内部本地判（单聊 / 距上一句 6 小时 / 关系够熟 / 今天没主动过 / 三成签），
   // 不满足时同步返回、一个请求都不发。
-  maybeProactiveOpen(id).catch(() => { /* 主动开场失败不该影响进角色 */ });
+  // 总开关关掉时也不主动开口（那是 v2 的功能：0.5.3.5 不会自己找上门）。
+  if (S.liveV2 !== false) maybeProactiveOpen(id).catch(() => { /* 主动开场失败不该影响进角色 */ });
   // 主动消息通知（0.5.3.6 §6）：先看有没有「弹过通知、还没补进聊天」的那一条。
   // 顺序要在这里（restoreDraft 之后）：补进来的那条要能被 paintFlow 画到最底下。
+  // ⚠️ 总开关关掉时这个函数自己直接返回并清掉残留（见 takeProactivePending 开头），
+  //    所以这里不另加判断 —— 一处判完就够，两处判容易改漏一处。
   takeProactivePending().catch(() => { /* 补不上就算了，下一次进来还会看到 pending */ });
   // 顺手把存货补满（门槛在函数里：关系不够熟、存货够、群聊都不会发请求）。
-  prewriteProactive(id).catch(() => { /* 预写失败不影响任何东西 */ });
+  if (S.liveV2 !== false) prewriteProactive(id).catch(() => { /* 预写失败不影响任何东西 */ });
 }
 
 // —— 上屏节奏（v2 §3）——
@@ -1751,23 +1770,82 @@ async function selectChar(id) {
  * @param {object} myChar                 角色（画头用）
  * @param {string} myCharId               这批消息属于谁（切角色就停）
  * @param {{busy?:boolean, energyNow?:number}} lifeNow 她这会儿的生活状态（busy / energyNow 影响停顿）
+ * @param {HTMLElement|null} [phEl] 屏幕上那个还亮着的占位气泡（v2 的候选 0 正文就长在里头）。
+ *   给了它，第一条就【原地换】成正式那条：不重打一遍、也不会有「内容消失再重来」。
+ *   用户 m02892 第 3 条说的闪回就是这么消掉的 —— 只删不换是闪，换而不打是接。
  */
-async function paintFlow(added, myChar, myCharId, lifeNow) {
-  const sleepMs = (ms) => new Promise(r => setTimeout(r, Math.max(0, Math.round(Number(ms) || 0))));
+async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
+  // ⚠️ 停止键（abortCtl）在这一段也必须立刻咬住（0.5.3.6 复查）。
+  //    现场：生成早就结束了、消息也落好库了，屏幕还在一条条往外打 ——
+  //    这一段原来【完全不看 signal】，用户点「停止」之后她还照打不误（最长 12 秒），
+  //    而 busy 一直是 true（发送键换不成停止键），他那几秒里点发送只会弹
+  //    「她还在打字」—— 看起来就是「点了停止卡死」。
+  //    修法：sleep 能被 abort 立刻唤醒，每步开头再查一次。
+  const sig = (abortCtl && abortCtl.signal) || null;
+  const stopNow = () => !!(sig && sig.aborted);
+  let _wake = () => {};
+  const woken = new Promise(r => { _wake = r; });
+  if (sig) {
+    if (sig.aborted) _wake();
+    else if (typeof sig.addEventListener === 'function') sig.addEventListener('abort', _wake, { once: true });
+  }
+  const sleepMs = (ms) => new Promise(r => {
+    const t = setTimeout(r, Math.max(0, Math.round(Number(ms) || 0)));
+    // 被停掉时【立刻】醒，不是 reject：抛出来会走 catch 的「发送失败」那条路，
+    // 把刚落库的段和用户那条消息一起撤掉 —— 停止不该等于「当作没发」。
+    woken.then(() => { clearTimeout(t); r(); });
+  });
   const life = lifeNow || {};
   // ⚠️ 落库的消息字段是 content，不是 text（send 里 `{ id, charId, role, content }`）——
   //    在这里取错了会整条画成 undefined，还要靠最后那次补重绘兜底才看得出问题。
   const texts = added.map(a => String((a && (a.text != null ? a.text : a.content)) || ''));
+  // 角色设置里的「打字延迟」在 v2 下必须还算数：v1 是老节奏里那个 ×typingDelay 的乘数，
+  // v2 一接手节奏，这个滑块就会【静默失效】—— 用户在角色设置里拧到 3.0，
+  // 回复的快慢一模一样，他只会以为设置坏了。所以这里把 P.typingDelay 当倍率传下去
+  // （和 candidate.js 的 temperList 对温度做的是同一件事：角色设置是基准，不是废键）。
+  // ⚠️ 用 effSettings(myChar, S) 现算，别读 P：这个函数也被主动开场那几个路径调用，
+  //    那时 P 还停在上一个角色（或者干脆是 null），读 P 会拿到别人的打字速度。
+  const eff = effSettings(myChar, S);
+  const typingSpeed = Number(eff.typingDelay);
   const plan = planCadence(texts, {
     busy: !!life.busy,
-    energy: Number.isFinite(Number(life.energyNow)) ? Number(life.energyNow) : 0.7
+    energy: Number.isFinite(Number(life.energyNow)) ? Number(life.energyNow) : 0.7,
+    speed: Number.isFinite(typingSpeed) ? typingSpeed : 1,
+    // 角色关掉了「分段发送」= 他要一条整消息：这层也别往前面塞一声「嗯」。
+    allowInsert: !!eff.splitMessages
   });
   const tmpIds = [];   // 屏幕上的临时气泡（逐字打完再换成正式那条）
   let drawn = 0;       // 已经画到第几条 added
+  let ph = phEl || null;   // 还在屏幕上的占位气泡（只对第一条有效）
+  // 屏幕上已经有候选 0 的正文了：先原地换成正式的第一条（不打字、不消失、不停顿）。
+  // 评审挑了别的候选时，这里就是「改了一句」，而不是「整段消失、从头再来」。
+  // ⚠️ 占位必须在进循环【之前】消化掉：cadence 有 12% 概率在第一条前面插一条
+  //    极短语气条，那时 step.text 不等于 texts[0]，占位就会一直挂在最上面，
+  //    屏幕上变成「候选 0 + 嗯 + 正式第一条」三条并存 —— 比闪回更难看。
+  let consumed0 = false;
+  if (ph && added.length) {
+    try { ph.remove(); } catch { /* 已经被别的分支删掉了 */ }
+    ph = null;
+    drawn = 1;
+    consumed0 = true;
+    $('messages').insertAdjacentHTML('beforeend', msgHtml(added[0]));
+    markFresh($('messages').lastElementChild);
+    attachMsgActions();
+    scrollBottom();
+  }
+  // 第一条已经由占位消化过了：plan 里还留着它（cadence 不知道屏幕上有什么），跳过。
+  // ⚠️ 认它用 inserted 标记，不用文本比对（0.5.3.6 复查）：前插的极短语气条
+  //    一旦恰好等于 texts[0]（她第一条本来就说「嗯」），比对会先吃掉插入条，
+  //    随后把真正的第一条当临时气泡重画一遍 —— 画面最终是对的，但收尾
+  //    drawn < added.length 会白触发一次整段重绘，而且两条相邻文本相同时会错位。
+  let skipFirst = consumed0;
   for (const step of plan.steps) {
     if (curCharId !== myCharId) break;
+    if (stopNow()) break;            // 他按了停止：剩下的不再打（库里是全的，收尾会补上）
+    if (skipFirst && !step.inserted) { skipFirst = false; continue; }
     await sleepMs(step.delayMs);
     if (curCharId !== myCharId) break;
+    if (stopNow()) break;
     // 这一步对应哪条已落库消息：对得上就是正式气泡，对不上就是极短语气条（只上屏）
     const hit = (drawn < added.length && texts[drawn] === step.text) ? added[drawn] : null;
     if (hit) drawn++;
@@ -1781,6 +1859,7 @@ async function paintFlow(added, myChar, myCharId, lifeNow) {
     const per = Math.max(1, Math.ceil(step.text.length / n));
     for (let p = 0; p <= step.text.length; p += per) {
       if (curCharId !== myCharId) break;
+      if (stopNow()) break;          // 逐字打到一半被停：这一条停在半截，收尾整段重绘
       if (span) span.textContent = step.text.slice(0, p);
       scrollBottom();
       if (p + per <= step.text.length) await sleepMs(step.typingMs / n);
@@ -1802,6 +1881,7 @@ async function paintFlow(added, myChar, myCharId, lifeNow) {
   // ⚠️ 收尾（v2 新增）：任何一处 break 都会让屏幕只剩前几段，而库里是全的 ——
   //    用户看到的是「她话没说完」，其实只是没画完。所以这里【无条件】对齐一次：
   //    先撤临时气泡，再在画不全时整段重绘。
+  if (ph) { try { ph.remove(); } catch { /* 删不掉也不影响 */ } }
   for (const id of tmpIds) { try { document.getElementById(id)?.remove(); } catch { /* 撤不掉不影响后面 */ } }
   if (drawn < added.length) {
     try { await renderMessages(); } catch (err) { console.warn('[上屏] 补重绘失败：' + ((err && err.message) || err)); }
@@ -1901,7 +1981,12 @@ async function maybeProactiveOpen(charId) {
     if (!line) return;
     if (line.length > 60) line = line.slice(0, 60);      // 提示词说 20 字，不听话时也别让它变成一段
     if (/^在吗[？?。！!]*$/.test(line)) return;           // 明令禁止的那一句，真写出来就宁可这次不开口
-    const am = { id: uid(), charId, role: 'assistant', content: line, ...sceneSnap(c), story: storyStamp(), ts: Date.now(), proactive: true };
+    // ⚠️ parentId 必须给（0.5.3.6 复查）：这条是【从当前叶子接着往下】的一句，
+    //    不写父指针就是个孤儿 —— setLeaf 钉到它之后 pathTo 回溯一步就断，
+    //    活动路径只剩这一条：用户下次重绘会看到「聊天记录全没了，只剩下她这句话」。
+    //    seedParents 要到【下一次进角色】才会把它接到链尾，这一轮之内救不回来。
+    const _pBefore = (path[path.length - 1] && path[path.length - 1].id) || '';
+    const am = { id: uid(), charId, role: 'assistant', content: line, ...sceneSnap(c), story: storyStamp(), ts: Date.now(), proactive: true, parentId: _pBefore };
     await msgs.add(am);
     try { await setLeaf(charId, am.id); } catch { /* 钉不上就靠退化路径，不影响这一条存在 */ }
     await kv.set(markKey, 1);
@@ -2081,6 +2166,14 @@ async function ensureProactiveSchedule() {
  *    这里再按内容查一遍老消息，是防"落库成功但原生没清干净"那一类脏情况。
  */
 async function takeProactivePending() {
+  // ⚠️ 总开关关掉时【连这一步都不做】（0.5.3.6 复查）：关掉的语义是「回到 0.5.3.5」，
+  //    而 0.5.3.5 根本没有「她不在你身边时发来的消息」这条路 —— 用户把开关关了，
+  //    却还能收到一条她自己找上门的话，那就是开关没管全。
+  //    已经弹过通知、停在原生待展示位里的那条顺手清掉，不然下次点开又冒出来。
+  if (S.liveV2 === false) {
+    try { await proactiveClear(); } catch { /* 清不掉只是个残留，不影响聊天 */ }
+    return;
+  }
   if (!proactiveAvailable()) return;
   let it = null;
   try { it = await proactiveTakePending(); } catch { it = null; }
@@ -2092,9 +2185,12 @@ async function takeProactivePending() {
   if (!c || isGroup(c)) return;
   const path = await curMsgs(c.id);
   if (path.some(m => m && m.proactive && String(m.content) === it.text)) return;   // 已经补过了
+  // ⚠️ 同 maybeProactiveOpen：不写 parentId 就是孤儿，setLeaf 一钉就把活动路径切断。
+  const _pBefore = (path[path.length - 1] && path[path.length - 1].id) || '';
   const am = {
     id: uid(), charId: c.id, role: 'assistant', content: it.text,
-    ...sceneSnap(c), story: storyStamp(), ts: Number(it.at) || Date.now(), proactive: true
+    ...sceneSnap(c), story: storyStamp(), ts: Number(it.at) || Date.now(), proactive: true,
+    parentId: _pBefore
   };
   await msgs.add(am);
   try { await setLeaf(c.id, am.id); } catch { /* 钉不上就走退化路径 */ }
@@ -6522,6 +6618,15 @@ async function exportChatMarkdown() {
  * 中断后留半截、失败回滚…）。另写一条等于把这些坑全部重新踩一遍。
  */
 async function send(opts) {
+  // 活人感 v2 总开关（DEFAULTS.liveV2）。两档：undefined/true = 开，false = 关。
+  //
+  // ⚠️ 必须声明在【函数第一行】：这个函数体里有两段互不嵌套的 try/catch
+  //    （第一段从 Psyche 状态读到「发送失败就 return」结束，第二段是真正的生成段）。
+  //    0.5.3.6 一开始把它声明在第一段的 try 里面，于是第二段一引用就是
+  //    `Cannot find name 'LIVE'` —— tsc 报了 4 处（7432/7549/7868/7874 附近），
+  //    CI 只认语法错、不认这个，所以静态检查是绿的、运行时却会 ReferenceError。
+  //    这类「跨 try 块的作用域」坑在本文件里踩过不止一次，别再挪位置。
+  const LIVE = S.liveV2 !== false;
   const cont = !!(opts && opts.cont);
   // 分支重来（v0.5.1.2）：「从这里重聊」之后接着生成，但【不写新的用户消息】。
   // 用户已经停在那条消息上，再存一遍同一句会在历史里留下两个一模一样的问句，
@@ -6631,6 +6736,9 @@ let _parent0 = '';
 //    在它初始化【之前】抛错（用户消息落库失败等），catch 自己会抛
 //    「Cannot access 'placeholderId' before initialization」，把真正的原因盖掉。
 let placeholderId = '';
+// 占位气泡里的 .gen-text。v2 起在 psyche 段【之前】就建好（不然点完发送要空等 20 秒），
+// 所以声明必须留在这个函数作用域里 —— 放进下面 try 的块里，后面的上屏代码就引用不到了。
+let bubble = null;
 // 这一轮他是不是点名了某个人（@名字 / 名字：）—— 小说式一幕里要告诉她"你被点名了，必须接话"
 let namedInText = false;
   // 上下文预算（v1.21.54）：这几个同理 —— 撞超长后的重发发生在 try #2 里，
@@ -7042,6 +7150,19 @@ let namedInText = false;
       }
       return 0;
     })();
+    // 3) 渲染占位气泡
+    //    ⚠️ v2 提前到这里（原在下面的生成段之前）：下面紧接着要跑独白 + 判断，
+    //    各最长 20 秒。占位气泡排在它们后面的话，用户点完发送最多 20 秒
+    //    看不到任何反应 —— 以为没点上，再点一次就是两条。
+    placeholderId = 'gen-' + uid();
+    if (curCharId === myCharId) {
+      $('messages').insertAdjacentHTML('beforeend',
+        `<div class="msg ai" id="${placeholderId}">${avatarHtml(myChar, 'av')}<div class="bub${P.showTyping === false ? ' no-dots' : ''}"><span class="gen-text"><span class="typing-dots"><i></i><i></i><i></i></span></span></div></div>`);
+      markFresh($('messages').lastElementChild);
+      scrollBottom();
+    }
+    bubble = document.querySelector('#' + placeholderId + ' .gen-text');
+
     // —— Psyche v2（活人感 v2，0.5.3.6）：这一轮先把"心里那层"和"怎么应付"想清楚，再动笔 ——
     //
     // 顺序：decayPsyche → deriveLife →（runInner 并行 runDirector）→
@@ -7054,6 +7175,9 @@ let namedInText = false;
     //    判断层的 move/mood 只作用在这一轮该说话的那个人身上（见 director.js 的 roster/target）。
     // ⚠️ 任何一步失败都不许挡住聊天：状态坏了归零、独白失败空串、判断失败 null。
     //    全空的时候，提示词与 0.5.3.5 逐字相同（老路径原样）。
+    // 活人感 v2 总开关 = 函数顶层的 const LIVE（见 send() 开头那段说明）。
+    // ⚠️ 只影响【这一轮多出来的那几步】：状态自己照常衰减、照常写回，
+    //    这样从关切回开时她不会带着一份三天前的旧情绪上场。
     const psyKey = (isGroup(myChar) && speaker)
       ? 'psyche:' + myChar.id + ':' + speaker.id
       : 'psyche:' + myChar.id;
@@ -7068,7 +7192,7 @@ let namedInText = false;
       psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: Date.now(), char: myChar }) });
     } catch { /* 推导失败就沿用读到的旧生活状态，不影响下面的判断 */ }
 
-    if (S.apiKey) {
+    if (LIVE && S.apiKey) {
       const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 };
       const recentForJudge = (pastRaw || []).slice(-12).map(m => ({ role: m.role, content: m.content }));
       // 独白和判断没有先后依赖 —— 串行就是白等一倍。两个都失败也能继续。
@@ -7112,13 +7236,18 @@ let namedInText = false;
       memBlock,
       // Psyche v1（0.5.3.6）：这一轮开始时她的状态（衰减后）+ 这一轮的判断结果。
       // 两个都可能为空 —— 空的时候那两段提示词根本不出现（老角色提示词逐字不变）。
-      psyche: psyBefore,
-      director: psyDir,
+      // ⚠️ 关掉总开关时这五样全传空 —— persona 那边整段不出现，
+      //    拼出来的东西与 0.5.3.5 逐字相同（这也是验收标准：开关关掉要真的回去）。
+      psyche: LIVE ? psyBefore : null,
+      director: LIVE ? psyDir : null,
       // 活人感 v2（0.5.3.6）：她这一轮没说出口的那一层、你们之间的距离、她这会儿在做什么。
       // 三个都可能是空串 —— 空的时候那三段提示词整段不出现。
-      inner: innerText,
-      relation: relationLine(psyBefore),
-      lifeLine: lifeLine(psyBefore),
+      inner: LIVE ? innerText : '',
+      relation: LIVE ? relationLine(psyBefore) : '',
+      lifeLine: LIVE ? lifeLine(psyBefore) : '',
+      // 识图（0.5.3.6 补）：这一轮有没有图。有图时 persona 会多一段「先看清图」——
+      // 不加这段，模型会把「图有点糊」演成「图没显示出来，你再发一次」（实测复现）。
+      vision: useVision,
       clock: clockFull(clockState), clockLocked: !!clockState.locked,
       clockState, prevStory,
       // 临时场景（v1.21.47）：只进本轮段，不进稳定前缀
@@ -7323,6 +7452,13 @@ let namedInText = false;
     // 前置步骤（写库 / 读历史 / 读记忆）失败时：把内容还给输入框并马上解锁。
     // 以前这些 await 在 try 之外，抛出去等于白打一段话，界面上什么都不显示。
     console.error(err);
+    // ⚠️ 占位气泡必须在这里删（0.5.3.6 复查）：它是本轮第一段 try 里建的，
+    //    但下面只有 umSaved 那条路径会 renderMessages（重绘顺手把气泡冲掉），
+    //    cont（续写）/ noUser（分支重来）两条路径 umSaved 恒为 false ——
+    //    建气泡之后任何一步抛错，屏幕上就永久留着三个点：
+    //    busy 已经回 false、又没人再动这个元素，看着像她卡在「正在输入」。
+    //    哪怕它已经被冲掉，getElementById 也只是拿到 null，删一下没有代价。
+    try { document.getElementById(placeholderId)?.remove(); } catch { /* 已经不在屏幕上 */ }
     input.value = text;   // 原文（含 /搜 前缀）还回去，重发即可
     pendingImages = images;
     pendingNotes = imageNotes;
@@ -7363,16 +7499,8 @@ let namedInText = false;
     return;
   }
 
-  // 3) 渲染占位气泡
-  placeholderId = 'gen-' + uid();
-  if (curCharId === myCharId) {
-    $('messages').insertAdjacentHTML('beforeend',
-      `<div class="msg ai" id="${placeholderId}">${avatarHtml(myChar, 'av')}<div class="bub${P.showTyping === false ? ' no-dots' : ''}"><span class="gen-text"><span class="typing-dots"><i></i><i></i><i></i></span></span></div></div>`);
-    markFresh($('messages').lastElementChild);
-    scrollBottom();
-  }
-
-  const bubble = document.querySelector('#' + placeholderId + ' .gen-text');
+  // 注意：占位气泡与 bubble 已经在这一轮最上面（psyche 之前）建好了 ——
+  // 别在这里再建一个：多一个 id 不同的占位，停止时只会删掉后面那个。
   // 注意：abortCtl 在最上面那段就建好了，这里不要再建第二个 ——
   // 否则切角色时发的中断会打在那个已经被丢弃的 controller 上。
 
@@ -7397,30 +7525,58 @@ let namedInText = false;
     let attempt = 0;
     let usage = null;
     let cands = null;   // 三条候选（v2）；评审挑中的那条才进 full
+    let candsRetry = false;   // 三候选全失败时只退回老路径一次，别来回打转
     for (;;) {
       try {
         // 三条候选并行（v2 §2 P3）：温度 0.85 / 1.00 / 1.15，风格不是一个模子。
         // 只有第 0 条往气泡里流式打字 —— 屏幕上先有个东西在长，不至于干等二十秒；
         // 三条全回来后再评审挑一条，最终上屏的永远是挑中的那条（见下面 cadence 那段）。
+        if (LIVE) {
         cands = await genCandidates({
           baseMsgs: apiMsgs,
           signal: abortCtl && abortCtl.signal,
+          // ⚠️ 只有第 0 条往气泡里长（0.5.3.6 修，用户 m02892 第 3 条）。
+          //    原来：候选 0 边流边打 → 评审挑了第 2 条 → 气泡被删 → 从头再打一遍，
+          //    用户看到的就是「先出一遍、消失、再出一遍」。
+          //    现在：流式只负责让屏幕先有字（别干等二十秒），
+          //    评审结束后由 paintFlow 把这个气泡【原地换】成最终那条（见上屏段）。
           onDelta: (t) => {
-            if (!bubble) return;   // 切了角色就没气泡了，别硬写
-            // 流式期间先把星号隐掉（0.5.3.4 复查）：否则那几秒满屏 *_她心里的话_* 的字面记号。
-            // ⚠️ 只对【正在流式的这一个气泡】、只做显示，text 里星号一个不动；
-            //    结束后整体重绘时再变成 <em class="inner-thought"> 斜体。
-            //    不做流式 innerHTML 拼接：半截的 * 会让每一帧的高亮位置乱跳。
-            bubble.textContent = String(t).replace(/\*/g, '');
+            if (!bubble) return;
+            bubble.textContent = String(t || '').replace(/\*/g, '');
             scrollBottom();
           },
           genOpts: {
             apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
+            // 角色自己的温度档位是【基准】：默认 1.0 → 0.85/1.0/1.15；设 0.5 → 0.35/0.5/0.65。
+            // 不传的话 candidate.js 会按 1.0 算，角色设置里的温度就静默失效了。
+            temperature: P.temperature,
             maxTokens: P.maxTokens, topP: P.topP,
             reasoningEffort: P.reasoningEffort,
             onThink: (t) => { thinkBuf = t; }   // 收尾时回调（v1.21.30）；三路里最后写完的那路赢
           }
         });
+        } else {
+          // 总开关关掉：0.5.3.5 的单条流式，边流边打（用户熟悉的那条老路）。
+          let acc = '';
+          const st1 = streamChat({
+            apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
+            messages: apiMsgs, temperature: P.temperature,
+            maxTokens: P.maxTokens, topP: P.topP,
+            reasoningEffort: P.reasoningEffort,
+            signal: abortCtl && abortCtl.signal,
+            onThink: (t) => { thinkBuf = t; },
+            onFinish: (r) => { finishReason = r; },
+            onUsage: (u) => { usage = u; }
+          });
+          for await (const ch of st1) {
+            acc += ch;
+            if (bubble) { bubble.textContent = String(acc).replace(/\*/g, ''); scrollBottom(); }
+          }
+          // 包成一个单元素候选池：下面评审、pick、重写全都照原样走，
+          // pickIdx 必然是 0。usage 传 null —— 它已经由 onUsage 记过一次了，
+          // 这里再给一份会被 addUsage 加两遍。
+          cands = { list: [{ idx: 0, temp: P.temperature, text: acc, finish: finishReason, usage: null }], usage: null };
+        }
         bubble?.classList.remove('dots');
         break;
       } catch (err) {
@@ -7453,6 +7609,21 @@ let namedInText = false;
           console.warn('[ctx] 上下文超长，但已经没有可再丢的历史了（额度 ' + histBudget + '）—— 不重发，直接报错');
           throw err;
         }
+        // 三条候选全都没回来（v2，文档 §2 约束②）：这不是「服务端拒绝」，是这一次三条
+        // 都没出话 —— 退回 v1 的单条流式，照样能聊；不许因为候选层出问题把这一轮挡死。
+        if (!candsRetry && /三条候选全都没回来/.test(String((err && err.message) || ''))) {
+          candsRetry = true;
+          console.warn('[v2] 三条候选全都没回来，退回单条流式：' + ((err && err.message) || err));
+          // 分两种情况，别混：
+          //  ① 三条都回来了、只是内容是空的 → 不是网络问题，交一张空候选下去，
+          //     让「空回复 → 本地兜底一句」那条老路接住（v25fix 覆盖的就是这条）。
+          //  ② 三条全是请求失败（500/断网）→ 这是真失败，照旧报错卡让人重试，
+          //     假装兜底一句才是最糟的：用户以为发出了，其实服务端全挂了。
+          if (err && err.cause) throw err;
+          cands = { list: [{ idx: 0, temp: P.temperature, text: '', finish: 'empty', usage }], usage };
+          bubble?.classList.remove('dots');
+          break;
+        }
         // ⚠️ 不能重试的错误别重试（v0.5.3.2，清单 §3.1）：
         //    key 错、余额空、模型名打错、参数不支持、内容被拦 —— 再问一遍答案一样，
         //    只是白花一次请求、多等 700ms，用户还看不出为什么没反应。
@@ -7480,7 +7651,8 @@ let namedInText = false;
     // —— 选出这一轮真正要发出去的那条（v2 §2 P4/P5）——
     // 候选 0 是底：评审没回来（超时 / JSON 坏了 / 被中断）就发它。
     let crit = null;
-    if (cands && cands.list && cands.list.length) {
+    // 总开关关掉时不评审：没有三条候选可挑，再让模型评一句只是多花一次钱。
+    if (LIVE && cands && cands.list && cands.list.length) {
       try {
         crit = await runCritique({
           pool: cands.list,
@@ -7606,18 +7778,10 @@ let namedInText = false;
             onFinish: (r) => { fr2 = r; },
             // 重写的这一趟同样是花钱的（输入还更长：整条原稿又发了一遍）。
             // 原来这里是空函数，角标只记第一趟 —— 实际花了两趟的钱，界面只报一趟。
-            onUsage: (u2) => {
-              if (!u2) return;
-              if (!usage) { usage = u2; return; }
-              const n = (x) => Number(x) || 0;
-              usage = {
-                ...usage,
-                prompt_tokens: n(usage.prompt_tokens) + n(u2.prompt_tokens),
-                completion_tokens: n(usage.completion_tokens) + n(u2.completion_tokens),
-                total_tokens: n(usage.total_tokens) + n(u2.total_tokens),
-                prompt_cache_hit_tokens: n(usage.prompt_cache_hit_tokens) + n(u2.prompt_cache_hit_tokens),
-              };
-            }
+            // ⚠️ 用 addUsage 逐字段加（0.5.3.6 复查）：原来手写只加 4 个字段，
+            //    端点回什么就漏什么 —— 缓存没命中的那部分（prompt_cache_miss_tokens）
+            //    尤其要命：它才是真按全价算钱的那一截，漏掉之后角标看着很省。
+            onUsage: (u2) => { if (u2) usage = addUsage(usage, u2); }
           });
           for await (const ch of st2) alt += ch;
           alt = alt.trim();
@@ -7631,7 +7795,8 @@ let namedInText = false;
           const okInner = !_needInner || /\*[^*\n]{1,300}\*/.test(alt);
           if (alt && okFn && okTxt && okTpl && okInner) {
             full = alt;
-            if (bubble) bubble.textContent = full;
+            // ⚠️ 不往气泡里写（v2 视觉）：重写版提前显示出来、随后又被打字动画顶掉，
+            //    正好就是用户说的「先出一遍、消失、再出一遍」。气泡全程只留三个点。
             innerMiss.delete(myCharId);
             console.warn('[重写] 采用重写版（' + full.length + ' 字）');
           } else {
@@ -7798,17 +7963,43 @@ let namedInText = false;
     // 主动消息通知（0.5.3.6 §6）：囤几句她「不在你身边时」会说的话，交给原生到点弹。
     // 不 await —— 它要两次请求（独白 + 写三句），不能拖住这一轮的收尾。
     // 门槛在函数里：存货够、关系不够熟、群聊、没有原生插件，都不发请求。
-    prewriteProactive(myCharId).catch(() => { /* 预写失败不影响任何东西 */ });
+    if (LIVE) prewriteProactive(myCharId).catch(() => { /* 预写失败不影响任何东西 */ });
     // 她说完自动读出来（v1.21.56，开关默认关）。
     // ⚠️ 放在【整段都落库之后】：分段发送时逐段念会一顿一顿的，连起来念才像说话。
     if (S.ttsOn) speak(pieces.map(x => x.text).join(''));
-    document.getElementById(placeholderId)?.remove();
-    if (curCharId === myCharId) {
-      await paintFlow(added, myChar, myCharId, (psyBefore && psyBefore.life) || {});
+    // 占位气泡：v2 不在这里删 —— 里头还留着候选 0 流式长出来的正文，
+    // 交给 paintFlow 原地换成正式那条（换了候选也不重打一遍，见 paintFlow 的 phEl 参数）。
+    const _phEl = document.getElementById(placeholderId);
+    if (curCharId === myCharId && LIVE) {
+      // v2：按拟真节奏逐条上屏（停顿、逐字、偶尔一条极短的语气条）。
+      await paintFlow(added, myChar, myCharId, (psyBefore && psyBefore.life) || {}, _phEl);
+      // 上屏这一段按的停止【不会抛异常】（流早就结束了，paintFlow 只是提前收手），
+      // 所以「已停止生成」这句得在这里补 —— 否则消息一次性全出来，
+      // 用户根本看不出他那下「停止」有没有被听见。
+      if (abortCtl && abortCtl.signal.aborted) toast('已停止生成', 1800);
+    } else {
+      _phEl?.remove();
+      if (curCharId === myCharId) {
+        // 0.5.3.5 的老节奏：一条一条贴上去，中间隔 350ms。
+        for (let i = 0; i < added.length; i++) {
+          if (curCharId !== myCharId) break;
+          // 老节奏（v2 关掉）也认停止键：一条条贴的间隔虽短，切角色/停止都得立刻收手。
+          if (abortCtl && abortCtl.signal.aborted) break;
+          $('messages').insertAdjacentHTML('beforeend', msgHtml(added[i]));
+          if (i > 0) markFresh($('messages').lastElementChild);
+          attachMsgActions();
+          scrollBottom();
+          if (i < added.length - 1) await new Promise(r => setTimeout(r, 350));
+        }
+      }
     }
 
   } catch (e) {
     console.error(e);
+    // 活人感 v2：中断如果发生在「三条候选还在跑」的时候，正文还在 candidate.js 手里 ——
+    // 它把已经流出来的半截挂在 AbortError.partial 上，这里接过来，按老规矩落「（已中断）」。
+    // 不接的话中断那一轮只剩一句 toast，用户以为刚才那半句被吞了。
+    if (e && e.name === 'AbortError' && !String(full || '').trim() && e.partial) full = String(e.partial);
     // ⚠️ 先记日志再动界面（0.5.3.5）：下面几条分支会改 toast / 删消息，
     //    真出问题时诊断页里要留下【原始】错误，而不是被处理过的那一份。
     //    AbortError 是用户按停止，不算错误，只记一条 act 便于对齐时间线。
@@ -15842,13 +16033,79 @@ function bindSettings() {
   // 记忆节奏：全局统一，对所有角色生效
   $('s-mem-sum').value = S.memSummarizeEvery || 50;
   $('s-mem-limit').value = S.memLimit || 20;
-  $('s-mem-sum').onchange = e => saveSettings({ memSummarizeEvery: Math.max(10, Number(e.target.value) || 50) });
-  $('s-mem-limit').onchange = e => saveSettings({ memLimit: Math.max(5, Number(e.target.value) || 20) });
+  // ⚠️ 夹取之后要把结果写回输入框（同一处 ctx-budget / archive-keep 早就这么做了）：
+  //    不然输入 5 会存成 10，框里还显示 5 —— 看起来就是「这个设置没生效」。
+  $('s-mem-sum').onchange = async e => {
+    const v = Math.max(10, Number(e.target.value) || 50);
+    e.target.value = v;
+    await saveSettings({ memSummarizeEvery: v });
+  };
+  $('s-mem-limit').onchange = async e => {
+    const v = Math.max(5, Number(e.target.value) || 20);
+    e.target.value = v;
+    await saveSettings({ memLimit: v });
+  };
   // v0.4.2.3 审计（F26）：全局的长期记忆总开关。
   //   以前这一项只有角色编辑页有，而 DEFAULTS.longMemory = false ——
   //   新装用户在界面上根本没法把它打开（唯一出路是进每个角色的编辑页手动勾）。
   $('s-longmem').checked = !!S.longMemory;
-  $('s-longmem').onchange = e => saveSettings({ longMemory: e.target.checked });
+  // ⚠️ 长记忆同时是【角色级】参数（CHAR_KEYS 成员）—— 角色编辑页那个勾只要保存过一次，
+  //    角色身上就留了一份快照，而 effSettings 是「角色值优先」：
+  //    于是这里的全局开关对那个角色【完全无效】，界面上还看不出来。
+  //    所以这个开关的语义定为「一键管所有角色」：改完自己顺手把每个角色那份也改掉。
+  $('s-longmem').onchange = async e => {
+    const on = !!e.target.checked;
+    await saveSettings({ longMemory: on });
+    let synced = 0;
+    try {
+      for (const ch of allChars) {
+        if (!ch) continue;
+        // 没有这个键 = 本来就在跟随全局，【别写】—— 写进去就把「跟随」钉成快照了，
+        // 跟 FOLLOW_KEYS / 群设置那几处是同一个坑（见 app.js 里 delete g.temperature 的注释）。
+        // 群记录也照这个走：群设置页没有这一项，正常永远是跟随；
+        // 但老版本/导入进来过一份快照的话，全局改了对那个群同样无效 —— 一并改掉。
+        if (ch.longMemory === undefined || ch.longMemory === null) continue;
+        if (!!ch.longMemory === on) continue;    // 已经是这个值的不用写
+        await chars.put({ ...ch, longMemory: on });
+        synced++;
+      }
+      if (synced) {
+        await loadChars();
+        // ⚠️ loadChars 只重填 allChars，不碰 curChar（app.js:1405 那段注释说得很明白）。
+        //    不在这里换掉 curChar，正在聊的这个角色身上还是【改之前】那份快照 ——
+        //    用户在这页关掉长记忆、转身回去发一句，这一轮照样跑记忆整理。
+        if (curCharId) curChar = allChars.find(x => x.id === curCharId) || curChar;
+      }
+    } catch (err) {
+      console.error('[settings] 长记忆没能同步到角色', err);
+      toast('全局改好了，但有角色没同步上：' + ((err && err.message) || err), 4600);
+      return;
+    }
+    toast(synced
+      ? ('长期记忆已' + (on ? '打开' : '关掉') + ' —— ' + synced + ' 个角色跟着改了')
+      : ('长期记忆已' + (on ? '打开' : '关掉') + '（所有角色）'), 3200);
+  };
+  // 活人感 v2 总开关（0.5.3.6）。两档，管全部 v2 特性，见 DEFAULTS.liveV2 的注释。
+  // ⚠️ 读的是 `!== false`：老库里没这个键，undefined 当成开。
+  $('s-livev2').checked = S.liveV2 !== false;
+  $('s-livev2').onchange = async e => {
+    const on = !!e.target.checked;
+    await saveSettings({ liveV2: on });
+    if (on) { toast('活人感 v2 已打开：从下一条开始生效', 3200); return; }
+    // ⚠️ 关掉时只存设置是不够的（0.5.3.6 复查）—— 三样东西已经交出去了，
+    //    光「以后不再写」管不了它们，用户关完开关还会被她找上门：
+    //    ① 原生队列里预写好的句子（proactiveSetQueue 交过去的）
+    //    ② 已经弹过通知、停在待展示位里的那条（下次进角色会被补成一条消息）
+    //    ③ WorkManager 的定时（到点照样弹）
+    //    所以关的时候要主动清，而不是等它自己过期。清不掉也不算失败：
+    //    原生没装（浏览器 / 旧包）时这些接口本来就不存在。
+    let ok = 0;
+    try { await proactiveClear(); ok++; } catch { /* 原生没装也正常 */ }
+    try { await proactiveStop(); ok++; } catch { /* 同上 */ }
+    try { await pwPoolSet([]); } catch { /* 本地预写池清不掉只是白占一点空间 */ }
+    toast('活人感 v2 已关掉：独白 / 判断 / 三候选 / 评审 / 节奏 / 主动开场与通知全停' +
+      (ok ? '' : '（原生那侧没响应，可能本来就没启用）'), 4200);
+  };
 
   // 时间细化（全局）：控制聊天栏是否显示时:分、记忆能否设到小时
   $('s-clock-detail').checked = !!S.clockDetail;

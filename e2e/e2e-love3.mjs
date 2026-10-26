@@ -82,9 +82,9 @@ const makeChar = async (name) => {
 };
 
 for (const [name, probes] of [
-  ['伊吹萃香', ['我想你了', '抱一下']],
-  ['西行寺幽幽子', ['我想你了']],
-  ['冴月麟', ['我想你了']]
+  ['测试丙', ['我想你了', '抱一下']],
+  ['测试丁', ['我想你了']],
+  ['测试乙', ['我想你了']]
 ]) {
   console.log('████ ' + name + ' ████');
   const g = await makeChar(name);

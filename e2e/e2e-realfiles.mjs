@@ -62,9 +62,16 @@ const send = async (txt) => {
 };
 
 // ── 从文件里现算期望值 ──
+// 世界书导出那份不写死角色名（名字属于用户数据）：在目录里找「梦弦居世界书-*.json」，有多份取最新的一份。
+const pickWbExport = () => {
+  try {
+    const hit = fs.readdirSync(DIR).filter(n => /^梦弦居世界书-.*\.json$/.test(n)).sort();
+    return hit.length ? DIR + hit[hit.length - 1] : DIR + '__no_worldbook_export__.json';
+  } catch { return DIR + '__no_worldbook_export__.json'; }
+};
 const F = {
   b1013: DIR + '梦弦居备份-2026-10-13.json',
-  wbZi: DIR + '梦弦居世界书-八云紫-2026-09-24.json',
+  wbZi: pickWbExport(),
   b0924: DIR + '梦弦居备份-2026-09-24.json',
   b0929: DIR + '梦弦居备份-2026-09-29.json',
 };
@@ -124,11 +131,11 @@ const importBackup = async (file) => {
   await sleep(9000);
 };
 
-console.log('=== A. 世界书「单组条目」文件（八云紫 2026-09-24）===');
+console.log('=== A. 世界书「单组条目」文件 ===');
 const entList = Array.isArray(J.wbZi.entries) ? J.wbZi.entries : Object.values(J.wbZi.entries || {});
 console.log('   文件里 ' + entList.length + ' 条，标题例：' + entList.slice(0, 3).map(e => e.title || e.comment).join(' / '));
 await reset();
-await seedChars(page, [{ name: '八云紫', id: 'yukari1' }, { name: '灵梦', id: 'reimu1' }]);
+await seedChars(page, [{ name: '测试甲', id: 'testc1' }, { name: '测试乙', id: 'testc2' }]);
 await page.reload({ waitUntil: 'networkidle0' }); await sleep(800);
 await page.evaluate(() => document.getElementById('btn-settings').click()); await sleep(700);
 await page.evaluate(() => { const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'worldbook'); if (b) b.click(); });
@@ -366,7 +373,7 @@ if (soloAlways) {
 
 console.log('');
 console.log('=== H. 角色卡往返（真实角色：带单独世界书的那位）===');
-// 库此时是 10-13 那份（E 节重导过）。挑 灵梦（有 35 条单独条目）
+// 库此时是 10-13 那份（E 节重导过）。挑单独条目最多的那个角色
 // ⚠️ yl / soloAlways 都在 G 节的块作用域里，这里拿不到（第一版就 ReferenceError 了）——
 //    重新算一份：挑"单独条目最多"的那个角色。
 const soloPick = (J.b1013.worldbook.solo || [])

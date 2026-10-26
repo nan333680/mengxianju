@@ -123,7 +123,9 @@ export async function runInner(o) {
       maxTokens: INNER_MAX_TOKENS,
       // 思考照开：写"没说出口的话"需要一点琢磨，关掉反而容易写成语录。
       noThink: false,
-      timeoutMs: Number(api.timeoutMs) || 20000
+      timeoutMs: Number(api.timeoutMs) || 20000,
+      // 跟着这一轮一起断（同 critique.js）：不然点停止后 busy 还要挂满 20 秒。
+      signal: signal || null
     });
   } catch (err) {
     console.warn('[inner] 独白失败，这一轮没有内心那一层：' + ((err && err.message) || err));

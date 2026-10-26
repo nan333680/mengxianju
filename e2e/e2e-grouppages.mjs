@@ -41,11 +41,12 @@ await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let chatReq = null;
+let chatTemps = [];   // 活人感 v2：一轮并发三条候选（角色温度 ±0.15），温度要按集合断言
 await page.setRequestInterception(true);
 page.on('request', req => {
   if (req.url().includes('/chat/completions')) {
     if (req.method() === 'OPTIONS') { req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'*', 'Access-Control-Allow-Methods':'*' } }); return; }
-    try { const b = JSON.parse(req.postData() || '{}'); if (b.stream) chatReq = b; } catch (e) { /* ignore */ }
+    try { const b = JSON.parse(req.postData() || '{}'); if (b.stream) { chatReq = b; chatTemps.push(Number(b.temperature)); } } catch (e) { /* ignore */ }
     const chunk = JSON.stringify({ choices: [{ delta: { content: '【甲】嗯。' } }] });
     req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
       body: 'data: ' + chunk + NL + NL + 'data: [DONE]' + NL + NL }); return;
@@ -278,8 +279,9 @@ t('她的角色卡【没有】被改', !st.a || st.a.temperature === undefined |
 await click('btn-gm-back');
 await sleep(500);
 chatReq = null;
+chatTemps = [];
 await send('在吗');
-t('这一轮的请求温度就是她的 1.8', chatReq && Number(chatReq.temperature) === 1.8, chatReq && chatReq.temperature);
+t('这一轮的请求温度就是她的 1.8（三条候选以它为中值）', chatTemps.some(x => Math.abs(x - 1.8) < 0.001), JSON.stringify(chatTemps));
 t('稳定前缀里带上了「群里的他住哪」', !!chatReq && (chatReq.messages || []).some(m => String(m.content || '').includes('群里的他住在城西')), '');
 t('本轮段里带上了「她私下怎么看别人」', !!chatReq && (chatReq.messages || []).some(m => String(m.content || '').includes('她私下怎么看别人')), '');
 

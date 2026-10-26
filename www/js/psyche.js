@@ -207,6 +207,58 @@ export function normalizePsyche(raw) {
   };
 }
 
+// —— 短期记忆的保质期（0.5.3.6，用户 m02892 第 3 条）——
+//
+// 症状：隔了几天再打开，她还在说「上一次那件事」「还没问出口的」。
+// 根因：psyche 里原来【只有情绪会衰减，清单一律不过期】——
+//   三天前咽回去的那句话，三天后照样被当成「刚刚」注入进提示词。
+//
+// 判据只用条目自己的 at（写进去的时间戳）：
+//   · 没有 at 的老数据【不删】—— 老库认不出它是什么时候的，删了就是无声丢数据。
+//   · 情绪 / 火气仍走 decayPsyche 的按次数衰减（那是另一套语义，别混）。
+//   · 关系（relation）、秘密（secrets）、底线（boundaries）、认定（beliefs）不设期限 ——
+//     那些本来就是慢变量，过期反而会让她忘掉自己瞒着什么。
+const TTL = {
+  withheld: 24 * 3600 * 1000,     // 这一轮没说出口的：过了今天就不算「刚刚」
+  openLoops: 48 * 3600 * 1000,    // 还没问出口的事：两天还没问，基本就是没打算问
+  selfEvents: 96 * 3600 * 1000,   // 她自己这两天的事：四天
+  grudges: 14 * 24 * 3600 * 1000, // 记仇比什么都久，但也不是一辈子
+  moves: 12 * 3600 * 1000,        // 上一轮打算怎么应付：只对上一轮有意义
+  body: 12 * 3600 * 1000          // 头发还湿着、手上还沾着 —— 半天后就不成立了
+};
+
+function pruneByAge(p, now) {
+  if (!now) return p;
+  const keep = (list, ttl) => (Array.isArray(list) ? list.filter(x => {
+    const at = Number(x && x.at) || 0;
+    return !at || (now - at) < ttl;
+  }) : []);
+  p.withheld = keep(p.withheld, TTL.withheld);
+  p.openLoops = keep(p.openLoops, TTL.openLoops);
+  p.selfEvents = keep(p.selfEvents, TTL.selfEvents);
+  p.grudges = keep(p.grudges, TTL.grudges);
+  const last = Number(p.updatedAt) || 0;
+  if (last && (now - last) > TTL.moves) p.moves = [];
+  if (last && (now - last) > TTL.body) p.body = [];
+  return p;
+}
+
+/**
+ * 这条是多久以前的。给提示词用 —— 她得知道自己想的是「刚才」还是「前几天」。
+ * 不写具体分钟数（模型会对齐到分钟上，反而假），只给量级。
+ */
+function ageNote(at, now) {
+  const a = Number(at) || 0;
+  if (!a || !now || now <= a) return '';
+  const h = (now - a) / 3600000;
+  if (h < 2) return '';
+  if (h < 24) return '（' + Math.round(h) + ' 小时前）';
+  const d = Math.round(h / 24);
+  if (d < 2) return '（昨天）';
+  if (d < 30) return '（' + d + ' 天前）';
+  return '（一个多月前）';
+}
+
 /**
  * 每轮开始前先让她"冷静一点"。
  *
@@ -230,6 +282,8 @@ export function decayPsyche(raw, now = Date.now(), stepMs = 30 * 60 * 1000) {
     p.stance.irritation = Math.round(p.stance.irritation * 0.9 * 10) / 10;
     if (Math.abs(p.stance.irritation) < 0.3) p.stance.irritation = 0;
   }
+  // 清单一的过期（见上面 TTL）：跨过一段真实时间再回来，她不该还停在三天前那口气上。
+  pruneByAge(p, now);
   return p;
 }
 
@@ -379,6 +433,9 @@ function stanceLine(s) {
 export function psychePrompt(raw, opts = {}) {
   const p = normalizePsyche(raw);
   if (!psycheActive(p)) return '';
+  // 用现在的时间给每条标个年龄：同样一句「还没问出口的」，
+  // 是十分钟前还是三天前，她该说出来的口气完全不一样（用户 m02892 第 3 条）。
+  const now = Number(opts && opts.now) || Date.now();
   const L = [];
   const moodTxt = p.mood.label
     ? p.mood.label + (p.mood.intensity ? '（' + p.mood.intensity + '/5）' : '')
@@ -401,26 +458,26 @@ export function psychePrompt(raw, opts = {}) {
       + (p.want.urgency >= 0.6 ? '（很急）' : '')
       + (p.want.blockedBy ? ' —— 但 ' + p.want.blockedBy : ''));
   }
-  const gr = p.grudges.filter(g => g && !g.dead && g.t).map(g => g.t);
+  const gr = p.grudges.filter(g => g && !g.dead && g.t).map(g => g.t + ageNote(g.at, now));
   if (gr.length) L.push('· 还没消的：' + gr.join('；'));
-  const op = p.openLoops.map(x => x.t).filter(Boolean);
+  const op = p.openLoops.map(x => x.t + ageNote(x.at, now)).filter(Boolean);
   if (op.length) L.push('· 还没问出口的：' + op.join('；'));
   const bl = p.beliefs.filter(b => b.t).map(b => b.t + (b.conf >= 0.6 ? '（你比较确信）' : '（你自己也没底）'));
   if (bl.length) L.push('· 你心里认定的：' + bl.join('；'));
   // 信息差（活人感 v2）：她瞒着的事。这里必须写「别主动交代」——
   // 只要列出来不约束，模型会把它当成"待揭示的剧情"顺手讲掉，隐瞒就消失了。
   const sc = p.secrets.filter(x => x && x.t)
-    .map(x => x.t + (x.reveal ? '（除非他先问起' + x.reveal + '，否则别主动说）' : ''));
+    .map(x => x.t + ageNote(x.at, now) + (x.reveal ? '（除非他先问起' + x.reveal + '，否则别主动说）' : ''));
   if (sc.length) L.push('· 你瞒着他的：' + sc.join('；'));
   // 她自己的生活（活人感 v2）：跟他没关系的事。人是先有自己的日子，才有他的话。
   // 不给"所以要不要提"的指令 —— 提不提都行，她不是来汇报的。
-  const se = p.selfEvents.map(x => x && x.t).filter(Boolean);
+  const se = p.selfEvents.map(x => (x && x.t) ? x.t + ageNote(x.at, now) : '').filter(Boolean);
   if (se.length) L.push('· 你自己这两天：' + se.join('；'));
   // 底线（活人感 v2）：她不吃的那一套。写「不需要假装没事」是为了防她
   // 被踩了还替对方圆场 —— 那是最典型的 AI 式懂事。
   const bd = p.boundaries.map(x => x && x.t).filter(Boolean);
   if (bd.length) L.push('· 你的底线：' + bd.join('；') + '。踩到你会真的不高兴，不需要假装没事');
-  const wd = p.withheld.map(x => x.t).filter(Boolean);
+  const wd = p.withheld.map(x => x.t + ageNote(x.at, now)).filter(Boolean);
   if (wd.length) L.push('· 上一轮你咽回去了：' + wd.join('；'));
 
   if (!L.length) return '';

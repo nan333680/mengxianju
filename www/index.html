@@ -716,6 +716,21 @@
       <p class="hint-text off-ctl" data-i18n-en-html="⚠️ Both can be overridden per character on the <b>character edit page</b>; choosing &quot;follow global&quot; there falls back to these.">⚠️ 这两项都能在<b data-i18n-en="Character edit page">角色编辑页</b>单独覆盖；那边选「跟随全局」就回到这里的设置。</p>
     </section>
 
+    <!-- 活人感 v2 总开关（0.5.3.6）：用户 m02892 第 2 条 ——「开关做两档：开/关，直接管理全部」。
+         放在【描写与表达】之后、【记忆】之前：它管的是「这一轮怎么想」，比记忆节奏更靠前。 -->
+    <section class="group">
+      <h3 data-i18n-en="How she thinks">她怎么想</h3>
+      <label class="look-switch" data-i18n-nodes>
+        <input type="checkbox" id="s-livev2">
+        <span data-i18n-en="Thinking pipeline (live feel v2)">活人感管线（v2）</span>
+      </label>
+      <p class="hint-text" data-i18n-en-html="<b>On</b>: she thinks first (an inner monologue), decides how to handle this turn, writes three drafts and picks the least AI-sounding one, then criticises herself. About six requests per turn, so it takes 12-20 seconds, and the reply carries the layer she didn't say out loud.<br><b>Off</b>: back to 0.5.3.5 - one request, one stream, no waiting games. Cheap and fast, but no second layer.<br>Turning it off stops <b>all</b> of it: monologue, judgement, three drafts, critique, cadence, and her opening a conversation on her own.">
+        <b>开</b>：她先在脑子里过一遍（独白）→ 判断这一轮怎么应付 → 一次写三条、挑最像人的那条 → 再自己挑毛病。一轮大约六次请求，多等 12~20 秒；回复里会带上她没说出口的那一层。<br>
+        <b>关</b>：回到 0.5.3.5 的老路 —— 一次请求、一条流式、不用等。快、便宜，但没有那一层。<br>
+        关掉会把这一整套一起停：独白、判断、三条候选、评审、拟真节奏，以及她自己先开口。
+      </p>
+    </section>
+
     <section class="group">
       <h3 data-i18n-en="Composer">写字台</h3>
       <p class="hint-text" data-i18n-en-html="What the input box looks like. This page only changes the <b>input</b>; it never changes how she replies.">输入框长什么样。这一页只改<b data-i18n-en="Input">输入</b>，不影响她怎么回。</p>

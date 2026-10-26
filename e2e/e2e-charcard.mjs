@@ -58,20 +58,20 @@ console.log('JSON 卡解析');
 const v2 = {
   spec: 'chara_card_v2', spec_version: '2.0',
   data: {
-    name: '西行寺幽幽子', description: '西行寺家的大小姐', first_mes: '呀，你来啦。',
+    name: '测试丁', description: '测试用的角色描述', first_mes: '呀，你来啦。',
     alternate_greetings: ['第二句开场', '第三句'],
     tags: ['东方'],
     character_book: { entries: [
-      { keys: ['西行妖', '樱花'], content: '她与西行妖有约定', enabled: true },
-      { keys: ['冥界'], content: '她住在冥界', enabled: false },
+      { keys: ['约定', '樱花'], content: '她和谁有个约定', enabled: true },
+      { keys: ['老家'], content: '她住在老家', enabled: false },
       { keys: [], content: '没有触发词，v0.3.1 起保留待确认' },
       { keys: ['空'], content: '', enabled: true },
     ] },
   },
 };
 const c2 = CC.parseCardJson(JSON.stringify(v2));
-t('V2 name', c2.name === '西行寺幽幽子', c2.name);
-t('V2 description（→ persona）', c2.description === '西行寺家的大小姐');
+t('V2 name', c2.name === '测试丁', c2.name);
+t('V2 description（→ persona）', c2.description === '测试用的角色描述');
 t('V2 first_mes（→ greeting）', c2.first_mes === '呀，你来啦。');
 t('V2 备选开场白被保留待调用方提示', c2.alternate_greetings.length === 2);
 // ⚠️ 断言更新（v0.3.1）：空 content 的仍然丢掉（没内容可注入），
@@ -81,13 +81,13 @@ t('V2 世界书：空 content 丢掉、没有触发词的保留 → 3 条', c2.e
 t('那条没有触发词的被标了待确认', c2.entries.some(e => e.needsReview === true && /没有触发词/.test(e.reviewWhy || '')));
 t('只有它一条待确认', c2.entries.filter(e => e.needsReview === true).length === 1);
 t('V2 条目 on 跟随 enabled', c2.entries[0].on === true && c2.entries[1].on === false);
-t('V2 keys 数组原样', JSON.stringify(c2.entries[0].keys) === JSON.stringify(['西行妖', '樱花']));
+t('V2 keys 数组原样', JSON.stringify(c2.entries[0].keys) === JSON.stringify(['约定', '樱花']));
 
 // V1：字段平铺，没有 data 外壳
-const v1 = { name: '爱丽丝', description: '人偶师', first_mes: '要来我家吗', character_book: { entries: [{ keys: ['人偶'], content: '她做很多人偶' }] } };
+const v1 = { name: '测试戊', description: '测试用的角色描述', first_mes: '你好呀', character_book: { entries: [{ keys: ['手艺'], content: '她会做手工艺品' }] } };
 const c1 = CC.parseCardJson(JSON.stringify(v1));
-t('V1 name', c1.name === '爱丽丝');
-t('V1 世界书', c1.entries.length === 1 && c1.entries[0].keys[0] === '人偶');
+t('V1 name', c1.name === '测试戊');
+t('V1 世界书', c1.entries.length === 1 && c1.entries[0].keys[0] === '手艺');
 t('V1 条目默认 on（enabled 缺省视为开）', c1.entries[0].on === true);
 
 // V1 旧字段名 key（单数）

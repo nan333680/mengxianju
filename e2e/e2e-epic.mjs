@@ -47,7 +47,13 @@ await page.evaluateOnNewDocument(() => {
         return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }),
           { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      window.__hits.chat.push(body);
+      // 活人感 v2：一轮并发 3 条候选（messages 完全相同、只有 temperature 不同）——
+      // 这里一轮只留一条，否则「这一轮发了几次请求」全按 3 倍算。
+      const _sig = JSON.stringify(body.messages || '');
+      const _now = Date.now();
+      if (_sig !== window.__lastSig || _now - (window.__lastAt || 0) > 3000) {
+        window.__lastSig = _sig; window.__lastAt = _now; window.__hits.chat.push(body);
+      }
       const chunk = (o) => 'data: ' + JSON.stringify(o) + String.fromCharCode(10,10);
       const payload =
         chunk({ choices: [{ delta: { content: '新的一条。' } }] }) +

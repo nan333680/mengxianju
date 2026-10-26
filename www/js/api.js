@@ -483,6 +483,7 @@ export async function onceChat(opts) {
     reasoningEffort = 'none',   // 见下面 ⚠️
     noThink = false,            // 见下面 ⚠️⚠️
     onUsage = null,             // v2：要把这一步的用量交给调用方累加时传回调
+    signal = null,              // v2：调用方的中断信号（见下 ⚠️）
     // v0.5.2：小说正文一次要写 1200 字，90 秒不够用（记忆整理那种短活仍用默认）。
     timeoutMs = 90000,
   } = opts;
@@ -493,6 +494,17 @@ export async function onceChat(opts) {
   // 永远保持 true，之后所有记忆任务都静默不再执行。
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(new Error('等太久了：' + Math.round(timeoutMs / 1000) + ' 秒没有回数据')), timeoutMs);
+  // ⚠️ v2（0.5.3.6）：独白 / 判断 / 评审都是"这一轮的辅助步骤"，必须能跟着这一轮一起断。
+  //    原来这个函数只管自己的 20 秒超时，不认调用方的 signal —— 用户点「停止」或切角色，
+  //    这两个请求还在后台跑，busy 一直挂到 20 秒：界面上发送键不见了、再点只弹「她还在打字」，
+  //    看着像卡死。外部一断，这里立刻跟着断。
+  const onOuterAbort = () => {
+    try { ctl.abort(Object.assign(new Error('已停止'), { name: 'AbortError' })); } catch { /* 已经断了 */ }
+  };
+  if (signal) {
+    if (signal.aborted) onOuterAbort();
+    else if (typeof signal.addEventListener === 'function') signal.addEventListener('abort', onOuterAbort, { once: true });
+  }
   let res;
   try {
     // ⚠️ 必须显式关掉思考模式（2026-09-26 修）
@@ -522,7 +534,12 @@ export async function onceChat(opts) {
       ...(eff ? { reasoning_effort: eff } : {}),
       ...(thinkOff || {}),
     }, ctl.signal);
-  } finally { clearTimeout(t); }
+  } finally {
+    clearTimeout(t);
+    if (signal && typeof signal.removeEventListener === 'function') {
+      try { signal.removeEventListener('abort', onOuterAbort); } catch { /* 无所谓 */ }
+    }
+  }
   if (!res.ok) {
     // 同 streamChat：400/422 的 body 已被 postChat 读走，取缓存那份；
     // 这里以前只报状态码，服务端说了什么一概看不到（v1.21.54 修）。

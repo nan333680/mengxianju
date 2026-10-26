@@ -23,13 +23,24 @@ let pass=0, fail=0;
 const t=(n,ok,ex='')=>{ if(ok){pass++;console.log('  OK   '+n);}else{fail++;console.log('  FAIL '+n+(ex?'  -> '+ex:''));} };
 
 let sysAll = '';
+// 活人感 v2：一轮会并发发 3 条流式候选（messages 完全相同、只有 temperature 不同），
+// 另外还有独白/判断/评审这类非流式辅助请求。断言只能看「这一轮真正发出去的正文」——
+// 辅助请求的 messages 里没有本轮段，会把读数冲成空。
+let _v2sig = '', _v2at = 0;
 await page.setRequestInterception(true);
 page.on('request', req => {
   const u = req.url();
   if (u.includes('deepseek') || u.includes('/chat/completions')) {
     if (req.method()==='OPTIONS') { req.respond({status:204,headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'*'}}); return; }
     const b = JSON.parse(req.postData()||'{}');
-    sysAll = (b.messages||[]).filter(m=>m.role==='system').map(m=>m.content||'').join('\n---\n');
+    if (b.stream !== false) {
+      const _sig = JSON.stringify(b.messages || '');
+      const _now = Date.now();
+      if (_sig !== _v2sig || _now - _v2at > 3000) {
+        _v2sig = _sig; _v2at = _now;
+        sysAll = (b.messages||[]).filter(m=>m.role==='system').map(m=>m.content||'').join('\n---\n');
+      }
+    }
     if (b.stream) {
       const pl='data: '+JSON.stringify({choices:[{delta:{content:'好。'}}]})+String.fromCharCode(10,10)+'data: [DONE]'+String.fromCharCode(10,10);
       req.respond({status:200,headers:{'Access-Control-Allow-Origin':'*'},contentType:'text/event-stream',body:pl}); return;

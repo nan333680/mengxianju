@@ -18,6 +18,29 @@ let failMode = false;   // 打开后 /api/chat/completions 一律回 500
 let holdOpen = false;   // 打开后流只吐几段就挂着不结束（用来测「点停止」）
 const server = http.createServer((req,res) => {
   if (req.url.startsWith('/api/chat/completions')) {
+    // 活人感 v2：这一轮先跑独白/判断（非流式），再流式出三条候选。
+    // holdOpen 只该挂住【正文】那条流 —— 把辅助请求也挂住的话，1.4 秒时正文根本没开始，
+    // 点「停止」时手上没有半截可留，第 7 段测的就不是「中断的那半截」了。
+    let _raw = '';
+    req.on('data', c => { _raw += c; });
+    req.on('end', () => { _chat(req, res, _raw); });
+    return;
+  }
+  let p = decodeURIComponent(req.url.split('?')[0]); if (p==='/') p='/index.html';
+  const f = path.join(WWW, p);
+  if (!fs.existsSync(f)) { res.writeHead(404); res.end('404'); return; }
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' }); res.end(fs.readFileSync(f));
+});
+const _chat = (req, res, _raw) => {
+  {
+    let _b = null;
+    try { _b = JSON.parse(_raw || '{}'); } catch { _b = null; }
+    if (_b && _b.stream === false) {
+      // 辅助请求（独白/判断/评审）：立刻回一个空的 JSON，别把它挂住。
+      res.writeHead(200, { 'Content-Type':'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { content: '{}' } }] }));
+      return;
+    }
     if (failMode) {
       res.writeHead(500, { 'Content-Type':'application/json' });
       res.end(JSON.stringify({ error: { message: '模拟失败(测试用)' } }));
@@ -36,11 +59,7 @@ const server = http.createServer((req,res) => {
     setTimeout(() => { try { res.write('data: [DONE]\n\n'); res.end(); } catch {} }, 340);
     return;
   }
-  let p = decodeURIComponent(req.url.split('?')[0]); if (p==='/') p='/index.html';
-  const f = path.join(WWW, p);
-  if (!fs.existsSync(f)) { res.writeHead(404); res.end('404'); return; }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' }); res.end(fs.readFileSync(f));
-});
+};
 await new Promise(r => server.listen(0,'127.0.0.1',r));
 const port = server.address().port;
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 120000, args: ['--no-sandbox','--disable-dev-shm-usage','--disable-gpu'] });

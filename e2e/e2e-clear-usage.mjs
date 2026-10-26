@@ -35,7 +35,7 @@ await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只�
 
 // 建一个【带开场白】的角色并进去 —— 这个测试后面要断言
 // 「清空后重新补的正是开场白」，所以角色必须有 greeting。
-// 原来靠默认模板（键山雏有开场白），模板删了就得自己准备。
+// 原来靠默认模板（自带开场白），模板删了就得自己准备。
 await seedChar(page, '清空测试', { greeting: '（她放下手里的杯子）你来了。' });
 await page.reload({ waitUntil:'networkidle0' });
 await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;

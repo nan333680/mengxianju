@@ -65,7 +65,13 @@ await page.setRequestInterception(true);
 page.on('request', req => {
   if (req.url().includes('/chat/completions')) {
     if (req.method() === 'OPTIONS') { req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'*', 'Access-Control-Allow-Methods':'*' } }); return; }
-    try { lastReq = JSON.parse(req.postData() || '{}'); } catch { lastReq = null; }
+    let _b = null; try { _b = JSON.parse(req.postData() || '{}'); } catch { _b = null; }
+    // 活人感 v2：独白/判断/评审是非流式辅助请求，不是「这一轮发给模型的正文」——
+    // 既不该记录进 lastReq（提示词断言全靠它），也不该用 SSE 回它。
+    if (_b && _b.stream === false) {
+      return req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: '{}' } }] }) });
+    }
+    lastReq = _b;
     const NL = String.fromCharCode(10);
     req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
       body: 'data: ' + JSON.stringify({ choices: [{ delta: { content: '嗯。' } }] }) + NL + NL + 'data: [DONE]' + NL + NL }); return;

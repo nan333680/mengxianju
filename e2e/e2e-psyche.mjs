@@ -308,6 +308,49 @@ const uf = await page.evaluate(async () => {
 });
 for (const x of uf) t(x.n, x.ok, x.ex);
 
+console.log('— 6b. psyche.js：短期清单按真实时间过期（0.5.3.6，用户第 3 条）—');
+// 症状：隔几天再打开，她还在接几天前那件事、那个口气。
+// 根因：清单一律不过期，三天前咽回去的话三天后照样当「刚刚」注入。
+const ug = await page.evaluate(async () => {
+  const P = await import('/js/psyche.js');
+  const out = [];
+  const T = (n, ok, ex) => out.push({ n, ok: !!ok, ex: ex === undefined ? '' : String(ex) });
+  const NOW = Date.now();
+  const H = 3600 * 1000, D = 24 * H;
+  const old = {
+    v: 1,
+    mood: { label: '不耐', intensity: 2, cause: '三天前那件事' },
+    withheld: [{ t: '其实我一直在等', at: NOW - 3 * D }],
+    openLoops: [{ t: '问他那通电话', at: NOW - 3 * D }],
+    grudges: [{ t: '他那天没来', at: NOW - 3 * D }],
+    selfEvents: [{ t: '我去剪了头发', at: NOW - 3 * D }],
+    moves: ['deflect'],
+    updatedAt: NOW - 3 * D,
+    relation: { warmth: 1, trust: 1, bond: 4, since: NOW - 30 * D }
+  };
+  const p = P.decayPsyche(old, NOW);
+  T('三天前的「没说出口的」过期了（24h）', (p.withheld || []).length === 0, JSON.stringify(p.withheld));
+  T('三天前的「还没问出口的」过期了（48h）', (p.openLoops || []).length === 0, JSON.stringify(p.openLoops));
+  T('三天前的仇还在（14 天）', (p.grudges || []).length === 1, JSON.stringify(p.grudges));
+  T('三天前的「她自己的事」还在（96h）', (p.selfEvents || []).length === 1, JSON.stringify(p.selfEvents));
+  T('放了三天的「上一轮打算」清掉（12h）', (p.moves || []).length === 0, JSON.stringify(p.moves));
+  T('关系不会因为放置而过期', !!(p.relation && p.relation.bond === 4), JSON.stringify(p.relation));
+
+  // 老数据没有 at：认不出是什么时候的，删了就是无声丢数据 —— 必须留着
+  const noAt = P.decayPsyche({ v: 1, withheld: [{ t: '没有时间戳的老条目' }], updatedAt: 0 }, NOW);
+  T('没有时间戳的老条目不会被删', (noAt.withheld || []).length === 1, JSON.stringify(noAt.withheld));
+
+  // 提示词里带年龄：同样一句「还没问出口的」，十分钟前和三天前口气不一样
+  const s1 = P.psychePrompt({ v: 1, withheld: [{ t: '刚咽回去的一句', at: NOW - 60 * 1000 }], mood: { label: '烦', intensity: 2 } }, { now: NOW });
+  T('两小时内的条目不标年龄（说「刚刚」反而假）', s1.indexOf('小时前') < 0 && s1.indexOf('天前') < 0, s1.slice(-70));
+  const s2 = P.psychePrompt({ v: 1, grudges: [{ t: '他那天没来', at: NOW - 3 * D }], mood: { label: '烦', intensity: 2 } }, { now: NOW });
+  T('几天前的条目带上「3 天前」', s2.indexOf('3 天前') >= 0, s2.slice(-80));
+  const s3 = P.psychePrompt({ v: 1, grudges: [{ t: '他那天没来', at: NOW - 5 * H }], mood: { label: '烦', intensity: 2 } }, { now: NOW });
+  T('几小时前的条目带上「5 小时前」', s3.indexOf('5 小时前') >= 0, s3.slice(-80));
+  return out;
+});
+for (const x of ug) t(x.n, x.ok, x.ex);
+
 // ---------- B. 端到端 ----------
 console.log('— 7. 端到端：判断与生成共用同一段 system —');
 const baseChar = (id, name, extra) => Object.assign({

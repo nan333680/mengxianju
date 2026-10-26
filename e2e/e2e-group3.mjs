@@ -65,7 +65,10 @@ page.on('request', req => {
     if (isSum) { memReqs.push(lastReq); }
     // ⚠️ 生成完之后后台记忆任务还会发请求，lastReq 会被它顶掉 ——
     //    所以"聊天那次"要单独留一份，不然后面读提示词读到的全是记忆提示词。
-    else chatReq = lastReq;
+    // 活人感 v2：一轮并发 3 条流式候选（messages 相同、只有 temperature 不同），
+    // 另外还有独白/判断/评审这类非流式辅助请求 —— 只有流式那条才是「这一轮发给模型的正文」。
+    // 让辅助请求盖掉 chatReq，后面读提示词读到的是评审的候选清单。
+    else if (lastReq && lastReq.stream !== false) chatReq = lastReq;
     // 流式：把 replyText 一次性吐出去（换行用 \n 转义成真换行再拼进 SSE）
     const chunk = JSON.stringify({ choices: [{ delta: { content: isSum ? '[]' : replyText } }] });
     req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',

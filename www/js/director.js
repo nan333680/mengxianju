@@ -362,7 +362,9 @@ export async function runDirector(o) {
       // 判断是用来帮忙的，不是用来卡人的：20 秒拿不到就退回老路径。
       // （onceChat 默认 90 秒 —— 手机上遇到慢网会让用户盯着转圈，
       //   这个代价比「这一轮没有内心戏」大得多。）
-      timeoutMs: Number(api.timeoutMs) || 20000
+      timeoutMs: Number(api.timeoutMs) || 20000,
+      // 跟着这一轮一起断（同 critique.js）：不然点停止后 busy 还要挂满 20 秒。
+      signal: signal || null
     });
   } catch (err) {
     console.warn('[director] 判断失败，这一轮退回老路径：' + ((err && err.message) || err));

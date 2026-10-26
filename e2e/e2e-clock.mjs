@@ -172,7 +172,7 @@ let captured = null;
 await page.setRequestInterception(true);
 page.on('request', (req) => {
   // 注意：别在这个回调里调 page.evaluate，会把页面挂住
-  if (req.url().includes('/chat/completions')) { try { captured = req.postData(); } catch {} }
+  if (req.url().includes('/chat/completions')) { try { const _b = JSON.parse(req.postData()||'{}'); if (_b.stream !== false) captured = req.postData(); } catch {} }
   req.continue();
 });
 await sleep(300);
@@ -224,9 +224,18 @@ if (!(await page.$eval('#clock-lock', el => el.checked))) { await page.click('#c
 await page.click('#clock-phase button[data-v="evening"]'); await sleep(150);
 await page.click('#clock-ok'); await sleep(500);
 captured = null;
+// v2 一轮要等三候选 + 评审（12~20 秒），上一段那次发送到这儿可能还没收尾；
+// 生成中 send() 会直接 return，点了也不会发请求，captured 就一直是 null。
+for (let i = 0; i < 600; i++) {
+  const busyNow = await page.$eval('#btn-stop', el => !el.classList.contains('hidden')).catch(()=>false);
+  if (!busyNow) break;
+  await sleep(50);
+}
 await page.click('#input');
 await page.type('#input', '（其实已经是第二天早上了）', { delay: 4 });
-await page.click('#btn-send');
+// 用 DOM click：发送键在「上一条还没收尾」时是 hidden，puppeteer 的坐标点击会直接抛
+// 「Node is either not clickable」—— 那不是被测定点，换成直接派发点击。
+await page.evaluate(() => document.getElementById('btn-send').click());
 for (let i = 0; i < 40 && !captured; i++) await sleep(500);
 const sys2 = captured ? JSON.parse(captured).messages.filter(m => m.role === 'system').map(m => m.content).join('\n') : '';
 t('注入里带了小时范围（17:00-20:00）', sys2.includes('17:00-20:00'), (sys2.match(/剧情里现在是[^\n]*/) || [''])[0]);

@@ -52,13 +52,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 //   第 2 行没名字、又被括号包住 → 【旁白开关就决定它属于谁】
 const REPLY = '【甲】嗯，我知道了。' + NL + '（窗外风停了，屋里安静下来。）';
 const reqs = [];
+// 活人感 v2：一轮并发 3 条候选 —— 用「messages 签名 + 3 秒窗口」把同一轮并成一条。
+let _v2sig = '', _v2at = 0;
 await page.setRequestInterception(true);
 page.on('request', req => {
   if (req.url().includes('/chat/completions')) {
     if (req.method() === 'OPTIONS') { req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'*', 'Access-Control-Allow-Methods':'*' } }); return; }
     let b = null;
     try { b = JSON.parse(req.postData() || '{}'); } catch (e) { b = null; }
-    if (b && b.stream) reqs.push(b);
+    // 活人感 v2：一轮并发 3 条候选（messages 相同、只有 temperature 不同）—— reqs 里一轮只留一条。
+    if (b && b.stream) {
+      const _sig = JSON.stringify(b.messages || '');
+      const _now = Date.now();
+      if (_sig !== _v2sig || _now - _v2at > 3000) { _v2sig = _sig; _v2at = _now; reqs.push(b); }
+    }
     const chunk = JSON.stringify({ choices: [{ delta: { content: REPLY } }] });
     req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
       body: 'data: ' + chunk + NL + NL + 'data: [DONE]' + NL + NL }); return;

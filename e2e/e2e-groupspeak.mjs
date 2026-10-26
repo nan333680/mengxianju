@@ -43,6 +43,8 @@ const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let replyText = '嗯。';
 let chatReq = null, chatN = 0;
+// 活人感 v2：一轮并发 3 条候选 —— 用「messages 签名 + 3 秒窗口」把同一轮并成一条。
+let _v2sig = '', _v2at = 0;
 // v0.5.3.4：重写回路会为同一条回复补发一次请求（最后一条 user 带「上面这条不合格」）。
 // 断言「这一轮只发一次请求」时要把它排除，否则数出来是 2。
 const chatBodies = [];
@@ -57,7 +59,13 @@ page.on('request', req => {
     if (req.method() === 'OPTIONS') { req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'*', 'Access-Control-Allow-Methods':'*' } }); return; }
     let body = {}; try { body = JSON.parse(req.postData() || '{}'); } catch (e) { /* ignore */ }
     if (body.stream) {
-      chatReq = body; chatN++; chatBodies.push(body);
+      // 活人感 v2：一轮并发 3 条候选（messages 相同、只有 temperature 不同）——
+      // chatBodies 里一轮只留一条，否则「这一轮发了几次请求」按 3 倍算。
+      const _sig = JSON.stringify(body.messages || '');
+      const _now = Date.now();
+      if (_sig !== _v2sig || _now - _v2at > 3000) {
+        _v2sig = _sig; _v2at = _now; chatReq = body; chatN++; chatBodies.push(body);
+      } else { chatReq = body; }
       const chunk = JSON.stringify({ choices: [{ delta: { content: replyText } }] });
       req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
         body: 'data: ' + chunk + NL + NL + 'data: [DONE]' + NL + NL }); return;

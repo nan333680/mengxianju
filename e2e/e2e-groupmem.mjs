@@ -64,8 +64,12 @@ page.on('request', req => {
       req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',
         body: 'data: ' + chunk + NL + NL + 'data: [DONE]' + NL + NL }); return;
     }
+    // 活人感 v2：非流式请求多了独白/判断/评审，第一个已经不再是「记忆整理」——
+    // 无脑给第一条喂 MEM_JSON 的话，喂进去的是独白，记忆一条都不会落。
+    // 用记忆提示词自己的标记【不要记】认人（跟 e2e-group3 同一个判据）。
+    const _isMem = (body.messages || []).some(x => String(x.content || '').includes('【不要记】'));
     req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'application/json',
-      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: (memBurst++ === 0 ? MEM_JSON : '[]') } }] }) }); return;
+      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: (_isMem && memBurst++ === 0 ? MEM_JSON : '[]') } }] }) }); return;
   }
   req.continue();
 });

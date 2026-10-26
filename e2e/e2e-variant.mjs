@@ -29,12 +29,23 @@ await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let replyNo = 0, lastReq = null;
+// 活人感 v2：一轮并发 3 条候选（messages 相同、只有 temperature 不同）—— 同一轮的 3 条算【一个】版本号。
+// messages 变了、或距上次超过 3 秒，才算新一轮（重新生成 / 下一轮对话）。
+let lastTurnSig = '', lastTurnAt = 0;
 await page.setRequestInterception(true);
 page.on('request', req => {
   if (req.url().includes('/chat/completions')) {
     if (req.method() === 'OPTIONS') { req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'*', 'Access-Control-Allow-Methods':'*' } }); return; }
-    try { lastReq = JSON.parse(req.postData() || '{}'); } catch { lastReq = null; }
-    replyNo++;
+    let _b = null; try { _b = JSON.parse(req.postData() || '{}'); } catch { _b = null; }
+    if (_b && _b.stream === false) {
+      return req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: '{}' } }] }) });
+    }
+    lastReq = _b;
+    {
+      const _sig = JSON.stringify(_b && _b.messages || '');
+      const _now = Date.now();
+      if (_sig !== lastTurnSig || _now - lastTurnAt > 3000) { replyNo++; lastTurnSig = _sig; lastTurnAt = _now; }
+    }
     const NL = String.fromCharCode(10);
     const text = '第' + replyNo + '版回复。';
     req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin':'*' }, contentType: 'text/event-stream',

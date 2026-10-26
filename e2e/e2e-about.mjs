@@ -65,10 +65,10 @@ await page.$eval('#s-apikey',(el,k)=>{el.value=k;el.dispatchEvent(new Event('cha
 await page.click('#btn-set-back');
 await new Promise(r=>setTimeout(r,500));
 
-// 建键山雏
+// 建测试甲
 await page.click('#btn-chars');
 await new Promise(r=>setTimeout(r,700));
-await seedChar(page, '键山雏'); await new Promise(r=>setTimeout(r,600));
+await seedChar(page, '测试甲'); await new Promise(r=>setTimeout(r,600));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
 
 console.log('=== 测试：是否按你的性格来对待你 ===');

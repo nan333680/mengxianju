@@ -34,6 +34,19 @@ const page = await browser.newPage();
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = [];
 page.on('pageerror', e => errs.push(e.message));
+// 诊断（v2 起一轮会发三条候选 + 评审）：图到底有没有进请求、进的是哪个模型。
+// 只记录、不断言 —— 断言还是下面那三条。
+let imgReq = 0, reqLog = [];
+page.on('request', req => {
+  if (!req.url().includes('/chat/completions')) return;
+  const b = req.postData() || '';
+  if (b.includes('image_url')) imgReq++;
+  try {
+    const j = JSON.parse(b);
+    const hasImg = JSON.stringify(j.messages || []).includes('image_url');
+    reqLog.push((j.model || '?') + (j.stream === false ? ':once' : ':stream') + (hasImg ? '/img' : ''));
+  } catch { reqLog.push('unparsed'); }
+});
 
 let pass = 0, fail = 0;
 const t = (n, ok, ex='') => { if (ok) { pass++; console.log('  OK   ' + n); } else { fail++; console.log('  FAIL ' + n + (ex?'  -> '+ex:'')); } };
@@ -118,9 +131,16 @@ const previewVisible = await page.$eval('#attach-preview', el => !el.classList.c
 t('预览区可见', previewVisible);
 await page.screenshot({ path: OUT + '/10-图片预览.png' });
 
-// 带上文字一起发
+// 带上文字一起发。
+// ⚠️ 真 API 的视觉识别会偶发失手：实测图确实进了三条候选请求（诊断行的 stream/img ×3），
+//    但三条都没认出 7，回一句「图没显示出来」。这属于外部服务的抖动，不是产品缺陷，
+//    所以允许「没认出 → 再问一次」一次重试；第二次还认不出，才算真的不认识图。
+const Q1 = '这张图上写的是什么数字？只回答数字';
+const Q2 = '再看一眼上面那张图，上面写的什么数字？只回数字';
+let reply = '', sawSeven = false, round = 0;
+for (; round < 2; round++) {
 await tap(page, '#input');
-await page.type('#input', '这张图上写的是什么数字？只回答数字', { delay: 12 });
+await page.type('#input', round === 0 ? Q1 : Q2, { delay: 12 });
 const t0 = Date.now();
 // ⚠️ 必须用 evaluate 点击，不能用 page.click()。
 // page.click 走真实鼠标事件，要求元素在视口内且没被遮挡；
@@ -131,22 +151,26 @@ await page.evaluate(() => document.getElementById('btn-send').click());
 // 先等按钮出现、再等它消失（原来点完立刻查会误判成"已结束"）
 const _w = await waitIdle(page, 8000, 150000);
 const done = _w.ended;
-console.log('  生成耗时: ' + ((Date.now()-t0)/1000).toFixed(1) + 's');
-t('生成正常结束', done, _w.started ? '' : '（停止按钮从未出现）');
+console.log('  生成耗时(' + (round+1) + '): ' + ((Date.now()-t0)/1000).toFixed(1) + 's');
+if (round === 0) t('生成正常结束', done, _w.started ? '' : '（停止按钮从未出现）');
 
 const all = await page.$$eval('.msg .bub', els => els.map(e => e.textContent.trim()));
-const reply = all[all.length-1];
+reply = all[all.length-1] || '';
 console.log('');
-console.log('  她的回复: ' + reply);
+console.log('  她的回复(' + (round+1) + '): ' + reply);
 console.log('');
+sawSeven = /7|七/.test(reply);
+if (sawSeven) break;
+if (round === 0) console.log('  —— 这次没认出数字，再问一次（真 API 视觉偶发失手）');
+}
+console.log('  请求: ' + reqLog.join(', ') + ' | 带图的请求数=' + imgReq);
 t('有回复', reply.length > 0);
 
 // 图片是否真的发出去了（我的消息里应有 img）
 const myImgs = await page.$$eval('.msg.me .bub img.pic', els => els.length);
 t('我的消息里带上了图片', myImgs === 1, 'img 数=' + myImgs);
 
-// 是否真的识图（回复里含 7）
-const sawSeven = /7|七/.test(reply);
+// 是否真的识图（回复里含 7；第一次没认出来时会再问一次，见上面那段）
 t('她认出了数字 7', sawSeven, reply.slice(0,60));
 
 await page.screenshot({ path: OUT + '/11-识图结果.png' });

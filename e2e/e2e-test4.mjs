@@ -88,20 +88,30 @@ const sendMsg = async (text) => {
     if (!busy) break;
   }
 };
-const lastCap = () => page.evaluate(() => window.__cap[window.__cap.length - 1] || null);
+// 活人感 v2：这一轮会先发独白/判断（stream:false），再并发三条流式候选 ——
+// 「最后一次请求」现在是评审，不是正文。这里只取流式的几条。
+const lastCap = () => page.evaluate(() => {
+  const a = window.__cap.filter(x => x && x.stream !== false);
+  return a[a.length - 1] || null;
+});
+// 三条候选的温度 = 角色温度 ±0.15，中间那条正好是角色设置里的值。
+const lastTemps = (n) => page.evaluate((k) => {
+  const a = window.__cap.filter(x => x && x.stream !== false);
+  return a.slice(-k).map(x => x.temperature);
+}, n);
 
 await page.goto('http://127.0.0.1:' + port + '/', { waitUntil:'networkidle0', timeout:40000 });
 await new Promise(r => setTimeout(r, 1600));
 
 // 建一个角色（原来靠默认模板，模板删了要自己准备）
-await seedChar(page, '键山雏', { greeting: '（她看了你一眼）你来了。' });
+await seedChar(page, '测试甲', { greeting: '（她看了你一眼）你来了。' });
 await page.reload({ waitUntil:'networkidle0' });
 await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
 await page.click('#btn-chars');
 await new Promise(r => setTimeout(r, 700));
 await page.evaluate(() => {
   const c = [...document.querySelectorAll('#char-list .char-card')]
-    .find(x => x.textContent.includes('键山雏'));
+    .find(x => x.textContent.includes('测试甲'));
   if (c) c.click();
 });
 await new Promise(r => setTimeout(r, 1200));
@@ -125,7 +135,7 @@ await new Promise(r => setTimeout(r, 600));
 // 按名字点编辑 —— 列表顺序不保证，别用第一个
 await page.evaluate(() => {
   const c = [...document.querySelectorAll('#char-list .char-card')]
-    .find(x => x.textContent.includes('键山雏'));
+    .find(x => x.textContent.includes('测试甲'));
   if (c) { const b = c.querySelector('[data-edit]'); if (b) b.click(); }
 });
 await new Promise(r => setTimeout(r, 900));
@@ -137,7 +147,7 @@ for (const [id, name] of [['#e-temp','温度'],['#e-maxtok','最大长度'],['#e
 await page.screenshot({ path: OUT + '/20-角色参数.png' });
 
 console.log('');
-console.log('=== 2. 给键山雏设 温度0.5 / 颜文字关闭 ===');
+console.log('=== 2. 给测试甲设 温度0.5 / 颜文字关闭 ===');
 await setSlider('#e-temp', 0.5);
 await pickFreq('#e-kao-freq', '关闭');
 await new Promise(r => setTimeout(r, 300));
@@ -147,7 +157,8 @@ await new Promise(r => setTimeout(r, 1000));
 await sendMsg('测试一下');
 const c1 = await lastCap();
 console.log('  捕获请求:', JSON.stringify(c1));
-t('键山雏用了温度 0.5', c1 && Math.abs(c1.temperature - 0.5) < 0.001, c1 ? c1.temperature : 'null');
+const t4a = await lastTemps(3);
+t('测试甲用了温度 0.5（三条候选以它为中值）', t4a.some(x => Math.abs(x - 0.5) < 0.001), JSON.stringify(t4a));
 
 console.log('');
 console.log('=== 3. 新建角色「测试乙」设 温度1.5 / 颜文字总是 ===');
@@ -171,34 +182,35 @@ t('已切到新角色「测试乙」', nameNow === '测试乙', nameNow);
 await sendMsg('再测一下');
 const c2 = await lastCap();
 console.log('  捕获请求:', JSON.stringify(c2));
-t('测试乙用了温度 1.5', c2 && Math.abs(c2.temperature - 1.5) < 0.001, c2 ? c2.temperature : 'null');
-t('两个角色温度确实不同', c1 && c2 && c1.temperature !== c2.temperature, 'A=' + (c1?c1.temperature:'?') + ' B=' + (c2?c2.temperature:'?'));
+const t4b = await lastTemps(3);
+t('测试乙用了温度 1.5（三条候选以它为中值）', t4b.some(x => Math.abs(x - 1.5) < 0.001), JSON.stringify(t4b));
+t('两个角色温度确实不同', t4a.join() !== t4b.join(), 'A=' + JSON.stringify(t4a) + ' B=' + JSON.stringify(t4b));
 
 console.log('');
-console.log('=== 4. 切回键山雏，参数应复原为 0.5 ===');
+console.log('=== 4. 切回测试甲，参数应复原为 0.5 ===');
 await page.click('#btn-chars');
 await new Promise(r => setTimeout(r, 600));
-// 点第一个卡片（键山雏）
+// 点第一个卡片（测试甲）
 await page.evaluate(() => {
   const cards = [...document.querySelectorAll('.char-card')];
-  const c = cards.find(x => x.querySelector('.info b').textContent.trim() === '键山雏');
+  const c = cards.find(x => x.querySelector('.info b').textContent.trim() === '测试甲');
   if (c) c.click();
 });
 await new Promise(r => setTimeout(r, 900));
 const backName = await page.$eval('#chat-name', el => el.textContent.trim());
-t('已切回键山雏', backName === '键山雏', backName);
+t('已切回测试甲', backName === '测试甲', backName);
 
 await page.click('#btn-chars');
 await new Promise(r => setTimeout(r, 500));
 await page.evaluate(() => {
   const cards = [...document.querySelectorAll('.char-card')];
-  const c = cards.find(x => x.querySelector('.info b').textContent.trim() === '键山雏');
+  const c = cards.find(x => x.querySelector('.info b').textContent.trim() === '测试甲');
   const b = c.querySelector('.icon-btn[data-edit]');
   if (b) b.click();
 });
 await new Promise(r => setTimeout(r, 800));
 const tempBack = await page.$eval('#e-temp', el => el.value);
-t('编辑页显示键山雏自己的温度 0.5', Math.abs(Number(tempBack) - 0.5) < 0.001, tempBack);
+t('编辑页显示测试甲自己的温度 0.5', Math.abs(Number(tempBack) - 0.5) < 0.001, tempBack);
 
 const kaoOn = await page.$eval('#e-kao-freq-brief', el => el.textContent.trim());
 t('颜文字频率显示「关闭」', kaoOn === '关闭', JSON.stringify(kaoOn));

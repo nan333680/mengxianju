@@ -47,7 +47,13 @@ await page.evaluateOnNewDocument(() => {
         return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }),
           { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      window.__hits.chat.push(body);
+      // 活人感 v2：一轮并发 3 条候选（messages 完全相同、只有 temperature 不同）——
+      // 这里一轮只留一条，否则「这一轮发了几次请求」全按 3 倍算。
+      const _sig = JSON.stringify(body.messages || '');
+      const _now = Date.now();
+      if (_sig !== window.__lastSig || _now - (window.__lastAt || 0) > 3000) {
+        window.__lastSig = _sig; window.__lastAt = _now; window.__hits.chat.push(body);
+      }
       const chunk = (o) => 'data: ' + JSON.stringify(o) + String.fromCharCode(10,10);
       const payload =
         chunk({ choices: [{ delta: { content: '新写的一段。' } }] }) +
@@ -305,13 +311,27 @@ await seed({
 });
 await page.evaluate(() => document.getElementById('btn-continue') && document.getElementById('btn-continue').click());
 await waitIdle();
-await sleep(6000);
-let hits = await page.evaluate(() => window.__hits.chat.length);
+// 活人感 v2 之后一轮要多跑 6 次调用（独白/判断/三候选/评审），自动串联按 2500ms 间隔 ——
+// 写死 sleep 6000 只够写完两段。改成等它写完（最多 20 秒），再看停在第几段。
+let hits = 0;
+for (let i = 0; i < 40; i++) {
+  await sleep(500);
+  hits = await page.evaluate(() => window.__hits.chat.length);
+  if (hits >= 3) break;
+}
 t('★ 对照组：不管它，它真的会自己接着往下写（至少 2 次请求）', hits >= 2, '请求数 ' + hits);
 t('对照组：连续写到了第 3 段就停（epicChain=3）', hits === 3, '请求数 ' + hits);
 
 // 实验组：重来一次，第一段一结束就拉抽屉
-await page.evaluate(() => { window.__hits.chat.length = 0; });
+// 先等对照组那一段真的收尾（canChain 的判定在收尾之后），再清计数 ——
+// 否则清空前发出的请求被抹掉，后面断言拿到 0，看起来像"没发请求"。
+for (let i = 0; i < 400; i++) {
+  const busyNow = await page.$eval('#btn-stop', el => !el.classList.contains('hidden')).catch(()=>false);
+  if (!busyNow) break;
+  await sleep(50);
+}
+await sleep(800);
+await page.evaluate(() => { window.__hits.chat.length = 0; window.__lastSig = ''; window.__lastAt = 0; });
 await page.evaluate(() => document.getElementById('btn-continue').click());
 // 等第一段结束（btn-stop 从显示到隐藏）
 await sleep(300);
@@ -326,7 +346,7 @@ hits = await page.evaluate(() => window.__hits.chat.length);
 t('★ 拉抽屉之后不再往下写（只剩第 1 段那一次请求）', hits === 1, '请求数 ' + hits);
 
 // 阅读模式同样能刹住
-await page.evaluate(() => { window.__hits.chat.length = 0; const m = document.getElementById('drawer'); if (m) m.click(); });
+await page.evaluate(() => { window.__hits.chat.length = 0; window.__lastSig = ''; window.__lastAt = 0; const m = document.getElementById('drawer'); if (m) m.click(); });
 await sleep(500);
 await page.evaluate(() => document.getElementById('btn-continue').click());
 await sleep(300);

@@ -1,6 +1,6 @@
 
 import puppeteer from 'puppeteer-core';
-import { seedChar, seedChars, waitIdle , tap } from './e2e-helper.mjs';
+import { seedChar, seedChars, waitIdle , tap, LEGACY_TEMPLATES } from './e2e-helper.mjs';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -65,7 +65,16 @@ const sendMsg = async (text) => {
 await page.evaluate(() => document.getElementById('btn-send').click());
   await waitIdle(page);   // 先等按钮出现、再等它消失
 };
-const lastCap = () => page.evaluate(() => window.__cap[window.__cap.length-1] || null);
+// 活人感 v2：独白/判断是 stream:false，正文是三条流式候选 —— 只取流式的。
+const lastCap = () => page.evaluate(() => {
+  const a = window.__cap.filter(x => x && x.stream !== false);
+  return a[a.length - 1] || null;
+});
+// 三条候选 = 角色温度 ±0.15
+const lastTemps = (n) => page.evaluate((k) => {
+  const a = window.__cap.filter(x => x && x.stream !== false);
+  return a.slice(-k).map(x => x.temperature);
+}, n);
 
 await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeout:40000 });
 await new Promise(r=>setTimeout(r,1600));
@@ -93,7 +102,7 @@ const names = await page.$$eval('#preset-list .char-card .info b', els => els.ma
 console.log('  预设列表:', JSON.stringify(names));
 t('只剩 1 个预设（空白角色）', names.length === 1, names.length);
 t('是「空白角色」', names.includes('空白角色'));
-for (const n of ['键山雏','冴月麟','伊吹萃香','西行寺幽幽子']) {
+for (const n of LEGACY_TEMPLATES) {
   t('已删除「'+n+'」', !names.includes(n));
 }
 
@@ -122,7 +131,8 @@ t('已切到萃香测试', cur === '萃香测试', cur);
 await sendMsg('你好呀');
 const c = await lastCap();
 console.log('  捕获:', JSON.stringify(c).slice(0,180));
-t('请求温度 = ' + P_SUIKA.temperature, c && Math.abs(c.temperature-P_SUIKA.temperature) < 0.001, c?c.temperature:'null');
+const t5a = await lastTemps(3);
+t('请求温度 = ' + P_SUIKA.temperature + '（三条候选以它为中值）', t5a.some(x => Math.abs(x-P_SUIKA.temperature) < 0.001), JSON.stringify(t5a));
 
 console.log('');
 console.log('=== 3. 切到幽幽子，参数应各自独立 ===');
@@ -138,8 +148,9 @@ const cur2 = await page.$eval('#chat-name', el => el.textContent.trim());
 t('已切到幽幽子测试', cur2 === '幽幽子测试', cur2);
 await sendMsg('你好');
 const c2 = await lastCap();
-t('幽幽子请求温度 = ' + P_YUYU.temperature, c2 && Math.abs(c2.temperature-P_YUYU.temperature) < 0.001, c2?c2.temperature:'null');
-t('两人温度确实不同', c && c2 && c.temperature !== c2.temperature);
+const t5b = await lastTemps(3);
+t('幽幽子请求温度 = ' + P_YUYU.temperature + '（三条候选以它为中值）', t5b.some(x => Math.abs(x-P_YUYU.temperature) < 0.001), JSON.stringify(t5b));
+t('两人温度确实不同', t5a.join() !== t5b.join(), 'A=' + JSON.stringify(t5a) + ' B=' + JSON.stringify(t5b));
 
 console.log('');
 console.log('=== 4. 编辑页读的也是各自的参数 ===');
@@ -171,7 +182,8 @@ await new Promise(r=>setTimeout(r,1200));
 t('已切回萃香测试', (await page.$eval('#chat-name', el=>el.textContent.trim())) === '萃香测试');
 await sendMsg('再聊一句');
 const c3 = await lastCap();
-t('萃香温度仍是 ' + P_SUIKA.temperature, c3 && Math.abs(c3.temperature-P_SUIKA.temperature) < 0.001, c3?c3.temperature:'null');
+const t5c = await lastTemps(3);
+t('萃香温度仍是 ' + P_SUIKA.temperature + '（三条候选以它为中值）', t5c.some(x => Math.abs(x-P_SUIKA.temperature) < 0.001), JSON.stringify(t5c));
 
 t('无 JS 错误', errs.length === 0, errs.slice(0,2).join(' | '));
 

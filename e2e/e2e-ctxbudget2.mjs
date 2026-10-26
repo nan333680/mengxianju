@@ -92,6 +92,10 @@ await sleep(300);
 console.log('');
 console.log('=== 2. 第一次请求故意回 400 context_length_exceeded ===');
 const caught = [];
+// 活人感 v2：一轮会并发 3 条候选（messages 相同、只有 temperature 不同），
+// 外加独白/判断/评审这类非流式辅助请求 —— caught 只留「每轮正文的第一条」，
+// 否则 caught[0]/caught[1] 会是同一轮的两条候选，「第二次比第一次短」永远不成立。
+let _v2sig = '', _v2at = 0;
 await page.setRequestInterception(true);
 page.on('request', (req) => {
   const u = req.url();
@@ -99,7 +103,20 @@ page.on('request', (req) => {
     if (req.method() === 'OPTIONS') {
       return req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': '*' } }).catch(() => {});
     }
-    caught.push(req.postData() || '');
+    const _raw = req.postData() || '';
+    let _b = null; try { _b = JSON.parse(_raw); } catch { _b = null; }
+    // 活人感 v2：独白/判断/评审是非流式辅助请求 —— 不是正文请求，给个合法 JSON 放走。
+    if (_b && _b.stream === false) {
+      return req.respond({ status: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choices: [{ message: { content: '{}' } }] }) }).catch(() => {});
+    }
+    {
+      const _sig = JSON.stringify((_b && _b.messages) || '');
+      const _now = Date.now();
+      if (_sig !== _v2sig || _now - _v2at > 3000) { _v2sig = _sig; _v2at = _now; caught.push(_raw); }
+    }
+    // 同一轮的 3 条候选都会进到这里（caught 只留了第一条），所以这一轮三条一起被拒 ——
+    // 必须整轮失败才会触发客户端的历史降级，只拒一条等于那轮还有两条能出话。
     if (caught.length === 1) {
       // 第一次：装作"上下文太长"，看客户端怎么办
       return req.respond({

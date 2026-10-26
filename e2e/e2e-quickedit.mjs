@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer-core';
+import { LEGACY_TEMPLATES } from './e2e-helper.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 // 工作目录自适应（原来写死 C:/A-DSH-Tool/ai-companion）
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
@@ -35,11 +36,8 @@ t('进了选模板页', await page.$eval('#view-preset', el => el.classList.cont
 const names = await page.$$eval('#preset-list .char-list-item, #preset-list > *', els => els.map(e => e.textContent.trim()).filter(Boolean));
 const html = await page.$eval('#preset-list', el => el.textContent);
 console.log('   列表内容: ' + JSON.stringify(html.replace(/\s+/g,' ').trim().slice(0,120)));
-t('只剩空白角色', html.includes('空白角色') && !html.includes('键山雏') && !html.includes('冴月麟'), html.slice(0,80));
-t('没有键山雏', !html.includes('键山雏'));
-t('没有冴月麟', !html.includes('冴月麟'));
-t('没有伊吹萃香', !html.includes('伊吹萃香'));
-t('没有西行寺幽幽子', !html.includes('西行寺幽幽子'));
+t('只剩空白角色', html.includes('空白角色') && LEGACY_TEMPLATES.every(n => !html.includes(n)), html.slice(0,80));
+for (const n of LEGACY_TEMPLATES) t('没有' + n, !html.includes(n));
 
 console.log('');
 console.log('=== 2. 空白角色还能正常建 ===');

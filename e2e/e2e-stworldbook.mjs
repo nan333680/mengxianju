@@ -39,8 +39,12 @@ page.on('request', req => {
   if (u.includes('deepseek') || u.includes('/chat/completions')) {
     if (req.method()==='OPTIONS') { req.respond({status:204,headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'*'}}); return; }
     const b = JSON.parse(req.postData()||'{}');
-    lastBody = b;
-    lastSys = (b.messages||[]).map(m=>m.content||'').join(String.fromCharCode(10));
+    // 活人感 v2：独白/判断/评审是非流式辅助请求 —— 不是「这一轮发给模型的正文」。
+    // 让它们盖掉 lastSys，世界书注入的断言就全读成空。
+    if (b.stream !== false) {
+      lastBody = b;
+      lastSys = (b.messages||[]).map(m=>m.content||'').join(String.fromCharCode(10));
+    }
     if (b.stream) {
       const pl='data: '+JSON.stringify({choices:[{delta:{content:'好。'}}]})+String.fromCharCode(10,10)+'data: [DONE]'+String.fromCharCode(10,10);
       req.respond({status:200,headers:{'Access-Control-Allow-Origin':'*'},contentType:'text/event-stream',body:pl}); return;

@@ -390,6 +390,27 @@ let pendingNotes = [];   // 和 pendingImages 一一对应，每张图自己的�
 //    chip 画在输入行上、肉眼可见，不是「隐形开关」，所以不必跟着角色清。
 //    真要改就得连正文一起清（「输入行状态跟着角色走」），那是另一套交互。
 let pendingCmds = [];
+// 「绝对指令」（0.5.3.7）：用户 m03812/m03848 要的那个「比软件层面优先级还高的绝对最高」。
+//
+// 和「本轮更改」的区别：
+//   · 本轮更改（direct）只活一轮，发出去就清空，优先级只是「高于固定写法规则」；
+//   · 绝对指令（hard）【一直存在】，跨轮跨重启，只有手动点 ✕ 才撤，
+//     并且明写「和上面任何一条冲突，让位的是那一条」。
+// 存放：角色级（用户明确「单独角色使用，不要全局」），kv 键 'hard:' + charId，
+//   值 { arg, at }。null = 没挂；挂上但没写内容时 arg 是空串（不注入，只占着槽）。
+// 为什么走 kv 而不是 char 字段：它是「临时挂着的指令」，不是角色设定的一部分 ——
+//   写进 char 会被角色导出/角色卡带走，也会被「恢复默认」之类的地方当成性格。
+let hardCmd = null;
+// 正在打字（绝对指令的槽改了要存盘，但不必每个按键都写一次库）
+let hardSaveT = null;
+// 0.5.3.7 修：防抖期间那一份还没落盘的内容 { id, on, arg, at }。
+// 为什么必须有它：定时器到点才去读【全局】curCharId / hardCmd —— 而 400ms 里
+// 用户完全可能已经切了角色（selectChar 会 loadHardCmd 把 hardCmd 换成新角色的），
+// 那时写进去的是新角色的键，旧角色最后那几个字就永远没了。
+let hardSaveP = null;
+/** 绝对指令的字数上限（0.5.3.7）：它原样进提示词，几千字会把上下文整段吃掉 */
+const HARD_MAX = 2000;
+let hardLongWarned = false;
 // 「缺星号那一层」连续没补到的次数（0.5.3.4 复查）：charId → 次数。
 // 为什么要有放弃机制：只要历史里一条星号都没有，`_needInner` 每轮都为真，
 // 于是【每一轮】都多发一次完整请求（输入还更长），实测连续两轮请求数都是 2。
@@ -1740,6 +1761,9 @@ async function selectChar(id) {
   // v0.5.3.2（清单 §3.5）：这个角色上次没打完的字放回来。
   // 放在最后 —— 它要写 input.value 并重算高度，前面那些重绘不能把它盖掉。
   await restoreDraft(id);
+  // 绝对指令（0.5.3.7）：每个角色各自一份，切过来要读他自己的（没有就是 null）。
+  // 放在 restoreDraft 之后：它只重画参数槽，不碰输入框内容。
+  await loadHardCmd(id);
   // 活人感 v2（0.5.3.6）：她是不是该先开口。
   // 不 await —— 最坏要等两次请求二十秒，而用户可能只是进来翻记录；
   // 判据全部在函数内部本地判（单聊 / 距上一句 6 小时 / 关系够熟 / 今天没主动过 / 三成签），
@@ -1784,7 +1808,9 @@ async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
   const sig = (abortCtl && abortCtl.signal) || null;
   const stopNow = () => !!(sig && sig.aborted);
   let _wake = () => {};
-  const woken = new Promise(r => { _wake = r; });
+  // 用 resolve(undefined) 而不是直接把 resolve 赋给 _wake：后者在 tsc 眼里是
+  // (value:any)=>void 赋给 ()=>void（TS2322），而无参调用 resolve() 会报 TS2810。
+  const woken = new Promise(resolve => { _wake = () => { resolve(undefined); }; });
   if (sig) {
     if (sig.aborted) _wake();
     else if (typeof sig.addEventListener === 'function') sig.addEventListener('abort', _wake, { once: true });
@@ -1793,7 +1819,8 @@ async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
     const t = setTimeout(r, Math.max(0, Math.round(Number(ms) || 0)));
     // 被停掉时【立刻】醒，不是 reject：抛出来会走 catch 的「发送失败」那条路，
     // 把刚落库的段和用户那条消息一起撤掉 —— 停止不该等于「当作没发」。
-    woken.then(() => { clearTimeout(t); r(); });
+    // r(undefined) 不是 r()：tsc 对无参 resolve 会报 TS2810（纯噪音，但会让基线变高）
+    woken.then(() => { clearTimeout(t); r(undefined); });
   });
   const life = lifeNow || {};
   // ⚠️ 落库的消息字段是 content，不是 text（send 里 `{ id, charId, role, content }`）——
@@ -1839,7 +1866,11 @@ async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
   //    随后把真正的第一条当临时气泡重画一遍 —— 画面最终是对的，但收尾
   //    drawn < added.length 会白触发一次整段重绘，而且两条相邻文本相同时会错位。
   let skipFirst = consumed0;
-  for (const step of plan.steps) {
+  // JSDoc 标注是给 tsc 看的：cadence.js 返回的每个 step 都带 inserted，
+  // 但纯 JS 推断不出动态字段（TS2339）——不标注会平白多一条类型噪音。
+  /** @type {any} */
+  const _steps = plan.steps;   // any 是故意的：step 上还有 inserted，纯 JS 推断不出动态字段
+  for (const step of _steps) {
     if (curCharId !== myCharId) break;
     if (stopNow()) break;            // 他按了停止：剩下的不再打（库里是全的，收尾会补上）
     if (skipFirst && !step.inserted) { skipFirst = false; continue; }
@@ -1907,6 +1938,16 @@ function dayStamp(ts) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
+/** 绝对指令对「不走 buildTurnNote 的那几条路」的补齐（0.5.3.7 修）。
+ *  主动开场、预写池都是 buildStablePrompt + 自己的 ask 直连 onceChat ——
+ *  它们根本不过 buildTurnNote，所以用户挂了 ⚡ 之后，她主动开口那一句以前完全不受约束。 */
+function hardSuffix() {
+  const hc = String((hardCmd && hardCmd.arg) || '').trim().slice(0, HARD_MAX);
+  if (!hc) return '';
+  return '\n\n（另外，他给你挂了一句死命令。跟上面这些规矩、还有字数限制冲突时，以它为准：\n'
+    + hc + '\n这一句也照它来写。）';
+}
+
 /** 主动开口那一条的指令（§4.8 逐字）。innerText 来自独白，activity 来自 deriveLife。 */
 function proactiveAsk(innerText, activity, hours) {
   return [
@@ -1916,7 +1957,7 @@ function proactiveAsk(innerText, activity, hours) {
     '他已经 ' + hours + ' 小时没跟你说话了。你先开口。',
     '只写一句话，最多 20 个字：可以是问他在干嘛、可以是说你自己这会儿的事、可以是一句没头没尾的话。',
     '不要寒暄，不要「在吗」，不要问「你怎么不理我」，不要解释你为什么找他。'
-  ].join('\n');
+  ].join('\n') + hardSuffix();
 }
 
 /**
@@ -2106,7 +2147,7 @@ async function prewriteProactive(charId) {
       '你要在他没看手机的时候，过一阵子给他发一句话。现在先写好三句。',
       '一句一行，每句最多 20 个字，三句彼此不一样：一句问他、一句说你自己这会儿的事、一句没头没尾的。',
       '不要寒暄，不要「在吗」，不要问「你怎么不理我」，不要解释你为什么找他，不要编号。'
-    ].join('\n');
+    ].join('\n') + hardSuffix();
     let got = '';
     try {
       got = await onceChat({
@@ -2323,7 +2364,10 @@ function msgHtml(m, depth = 0) {
     const c = cmdCfg(t.k);
     const name = c ? (c.ico + ' ' + tt(c.label)) : t.k;
     return '<span class="tag-chip" title="' + esc(name + (t.arg ? '：' + t.arg : '')) + '">' + esc(name) + '</span>';
-  }).join('');
+  }).join('') + (m.hard
+    // 绝对指令下写出来的那一条（0.5.3.7）：单独一颗，不进 tags（见落库处注释）。
+    ? '<span class="tag-chip hard-chip" title="' + esc(tt('这一条是在你挂的绝对指令下写的')) + '">⚡ ' + esc(tt('绝对指令')) + '</span>'
+    : '');
   // 用户反馈（2026-10-16）：四个字太占地方，时间行又是「左按钮 / 右时间」的定格布局，
   // 中间那排 tag chip 一多就被挤。按钮缩成一个「附」，全称挪进 title —— 少占宽度但不丢可发现性。
   const moreBtn = tags.length
@@ -6185,6 +6229,12 @@ const TURN_CMDS = [
   // 剧情方向（v0.4.3.2）：和「本轮更改」不同层 —— 那个管"怎么写/怎么演"，
   // 这个管"事往哪发生"。她要照方向推进，但不必一步走完。
   { k: 'plot', ico: '🧭', label: '剧情方向', cmd: '向', ph: '这一轮大概往哪走？例如：她开始起疑心，气氛往下沉' },
+  // 绝对指令（0.5.3.7）：比「本轮更改」高一层 —— 一直挂着，直到手动撤，
+  // 并且明写「和上面任何一条冲突，让位的是那一条」。会盖掉人设和写法规则，
+  // 所以挂上时要提醒一次「写歪了算你的」。
+  // 注意：它【没有】cmd 字段 —— 手打命令（/搜 /改 /向）解析不到的就不进这张表，
+  // 只能从「＋」抽屉挂。它跨轮活着，做成一次性手打命令反而容易让人误以为只这一轮。
+  { k: 'hard', ico: '⚡', label: '绝对指令', ph: '她必须照这个来。会盖掉软件的写法规则和人设 —— 写歪了算你的，点 ✕ 随时撤。' },
   { k: 'image', ico: '🖼', label: '发送图片' },
 ];
 
@@ -6627,6 +6677,9 @@ async function send(opts) {
   //    CI 只认语法错、不认这个，所以静态检查是绿的、运行时却会 ReferenceError。
   //    这类「跨 try 块的作用域」坑在本文件里踩过不止一次，别再挪位置。
   const LIVE = S.liveV2 !== false;
+  // 绝对指令（0.5.3.7）：这会儿挂着的（角色级、跨轮）。空串 = 没挂，那一段不出现。
+  // 在这里取一次快照：发送过程中用户再去改槽，这一轮仍按发出去那一刻的那句算。
+  const _hardArg = (hardCmd && String(hardCmd.arg || '').trim()) || '';
   const cont = !!(opts && opts.cont);
   // 分支重来（v0.5.1.2）：「从这里重聊」之后接着生成，但【不写新的用户消息】。
   // 用户已经停在那条消息上，再存一遍同一句会在历史里留下两个一模一样的问句，
@@ -7254,6 +7307,9 @@ let namedInText = false;
       scene: sceneOf(myChar),
       // 「本轮更改」（v0.4.4）：这一轮他要怎么演 —— 只此一轮，不进人设、不进历史
       directives: _cmds.filter(c => c.k === 'direct' && c.arg).map(c => c.arg),
+      // 「绝对指令」（0.5.3.7）：一直挂着的那一句，比软件所有写法规则都高（见 persona.js 末段）。
+      // 空串时那一段整段不出现 —— 没挂的角色提示词逐字不变。
+      hardCmd: _hardArg,
       // 「剧情方向」（v0.4.3.2）：他这一轮想让事态往哪走 —— 只这一轮，不进人设、不进历史。
       plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
       // 「剧情卡」（v0.5.0）：跨轮的方向层（当前拍）。没在跑就是 off，提示词里不出现。
@@ -7868,6 +7924,11 @@ let namedInText = false;
       if (i === 0 && usage) am.usage = usage;   // 这轮的用量记在第一条上
       // 这一轮注入了什么（v0.5.1.1）：也记在第一条上，菜单里按消息查
       if (i === 0 && turnInj) am.inj = turnInj;
+      // 绝对指令（0.5.3.7）：这一条是在他挂的绝对指令下写出来的。
+      // 记在【第一条】上（和 usage / inj 同一个位置）—— 一轮多段是一件事，不逐段打标。
+      // 只用于显示一颗 ⚡ 让用户知道这条为什么这么写；不进 tags，免得被
+      // 「编辑重发」当成挂着的功能回填进 pendingCmds。
+      if (i === 0 && _hardArg) am.hard = 1;
       // 分支（v0.5.1.2）：第一段挂在这次 user 消息后面（续写时没有 um，就挂活动叶子），
       // 后面几段依次串起来 —— 分段是一条链，不是并排的兄弟。
       am.parentId = i === 0 ? ((um && um.id) || _parent0) : added[i - 1].id;
@@ -10032,7 +10093,9 @@ function renderCmdDrawer() {
   const box = $('cmd-drawer');
   if (!box) return;
   box.innerHTML = TURN_CMDS.map(c => {
-    const on = c.k === 'image' ? pendingImages.length > 0 : pendingCmds.some(x => x.k === c.k);
+    // 绝对指令不存 pendingCmds（它跨轮活着），单独看 hardCmd
+    const on = c.k === 'image' ? pendingImages.length > 0
+      : (c.k === 'hard' ? !!hardCmd : pendingCmds.some(x => x.k === c.k));
     return `<button class="cmd-item${on ? ' on' : ''}" data-cmd="${esc(c.k)}">`
       + `<span class="ci-box">${c.ico}</span><span>${esc(tt(c.label))}</span></button>`;
   }).join('');
@@ -10060,20 +10123,119 @@ function toggleCmdDrawer(open) {
 /** 挂上一个功能；已经挂过就不重复挂，直接把光标送进它的输入框 */
 function addCmd(k) {
   if (!cmdCfg(k)) return;
+  if (k === 'hard') { addHard(); return; }   // 绝对指令不走 pendingCmds（它跨轮活着）
   if (!pendingCmds.some(c => c.k === k)) pendingCmds.push({ k, arg: '' });
   toggleCmdDrawer(false);
   renderCmdSlots();
   renderCmdDrawer();
   syncInput();
-  const inp = $('cmd-slots') && $('cmd-slots').querySelector('input[data-cmd="' + k + '"]');
+  const inp = $('cmd-slots') && $('cmd-slots').querySelector('textarea[data-cmd="' + k + '"], input[data-cmd="' + k + '"]');
+  if (inp) inp.focus();
+}
+
+/** 挂上绝对指令（0.5.3.7）。已经挂着就把光标送进去，不重置内容。
+ *  挂上的那一下必须提醒一次 —— 用户自己要求「这个功能带来的 ooc 和崩坏由用户承担，
+ *  只需要提醒就行」，所以提醒不能省，也不能只写在小字里。 */
+function addHard() {
+  // 没有角色就没有「角色级」可言 —— 挂上只会是一个存不了、也注入不了的空槽
+  if (!curCharId) { toast('先选一个角色，绝对指令是挂在角色上的'); return; }
+  if (!hardCmd) {
+    hardCmd = { arg: '', at: Date.now() };
+    saveHardCmd(curCharId, hardCmd);
+    toast('绝对指令挂上了：她会一直照这一句演，盖掉软件所有写法规则和人设。写歪了算你的 —— 想撤点 ⚡ 那一行的 ✕。', 4600);
+  }
+  toggleCmdDrawer(false);
+  renderCmdSlots();
+  renderCmdDrawer();
+  syncInput();
+  const inp = $('cmd-slots') && $('cmd-slots').querySelector('textarea[data-cmd="hard"]');
   if (inp) inp.focus();
 }
 
 function delCmd(k) {
+  if (k === 'hard') {
+    // 撤掉就是真撤：kv 里那条一起删，重进 App 也不会又冒出来
+    hardCmd = null;
+    saveHardCmd(curCharId, null);
+    toast('绝对指令撤了，写法回到原来的规则。', 2400);
+  }
   pendingCmds = pendingCmds.filter(c => c.k !== k);
   renderCmdSlots();
   renderCmdDrawer();
   syncInput();
+}
+
+// ---- 绝对指令的存取（0.5.3.7）----
+// 放在 kv 里、按角色分开存：'hard:' + charId。
+// 为什么不进 char：它不是角色设定 —— 写进 char 会被角色导出带走、
+// 也会被「恢复默认 / 从角色卡重建」这类地方当成性格的一部分。
+// 为什么不进 pendingCmds：那个发一次就清空，而这个要一直挂着。
+/** 落库。val 为 null 就删键（撤掉 = 真撤，重进 App 也不会又冒出来）。
+ *  0.5.3.7 修：id 与 val 都由调用方传进来，不再在函数里读全局 ——
+ *  防抖的那一路保存的是「当时的角色 + 当时的内容」快照，切角色也不会串键。 */
+async function saveHardCmd(id, val) {
+  if (hardSaveT) { clearTimeout(hardSaveT); hardSaveT = null; }
+  hardSaveP = null;
+  const cid = id || curCharId;
+  if (!cid) return;
+  try {
+    if (!val) await kv.del('hard:' + cid);
+    else await kv.set('hard:' + cid, {
+      arg: String(val.arg || '').slice(0, HARD_MAX),
+      at: val.at || Date.now(),
+    });
+  } catch (err) {
+    console.error('[hard] 存不下来', err);
+    toast('绝对指令没能存下来（重启后会丢）：' + ((err && err.message) || err));
+  }
+}
+/** 打字时的落库：防抖 400ms —— 绝对指令可能是一大段，不必每个键写一次库。
+ *  0.5.3.7 修：存的是【快照】（哪个角色 + 那一刻的内容），定时器到点写快照，
+ *  不读全局；而且挂着的那个快要到点、角色却已经换了时，先把旧的冲掉再排新的，
+ *  否则新角色的输入会把旧角色那一次 clearTimeout 掉，旧角色最后几个字就丢了。 */
+function saveHardCmdSoon() {
+  const snap = {
+    id: curCharId,
+    arg: hardCmd ? String(hardCmd.arg || '') : '',
+    at: (hardCmd && hardCmd.at) || Date.now(),
+    on: !!hardCmd,
+  };
+  if (hardSaveT && hardSaveP && hardSaveP.id !== snap.id) {
+    // 换了角色：旧的那一份立刻落盘，别让它被下面的 clearTimeout 吃掉
+    clearTimeout(hardSaveT);
+    hardSaveT = null;
+    const oldP = hardSaveP;
+    hardSaveP = null;
+    saveHardCmd(oldP.id, oldP.on ? oldP : null);
+  }
+  if (hardSaveT) clearTimeout(hardSaveT);
+  hardSaveP = snap;
+  hardSaveT = setTimeout(() => {
+    const p = hardSaveP;
+    hardSaveT = null;
+    hardSaveP = null;
+    if (p) saveHardCmd(p.id, p.on ? p : null);
+  }, 400);
+  if (!hardLongWarned && snap.arg.length > HARD_MAX) {
+    hardLongWarned = true;
+    toast('绝对指令太长了，只取前 ' + HARD_MAX + ' 字进提示词（写短一点她才抓得住重点）。', 3600);
+  }
+}
+/** 切角色时读一次。没有就是 null（= 这个角色没挂绝对指令） */
+async function loadHardCmd(id) {
+  const cid = id || curCharId;
+  hardCmd = null;
+  if (cid) {
+    try {
+      const v = await kv.get('hard:' + cid, null);
+      // 0.5.3.7 修：await 期间用户可能已经切到别的角色了，这时读回来的是旧角色的，
+      // 直接赋值会把新角色刚 load 好的内容覆盖掉（快速 A→B 切换时出现过）。
+      if (cid !== curCharId) return;
+      if (v && typeof v === 'object') hardCmd = { arg: String(v.arg || ''), at: Number(v.at) || 0 };
+    } catch (err) { console.error('[hard] 读不出来', err); }
+  }
+  renderCmdSlots();
+  renderCmdDrawer();
 }
 
 /** 参数槽：挂在输入行【上方】，每个功能一行「图标 + 名称 + 它自己的输入框 + ✕」 */
@@ -10094,13 +10256,16 @@ function growSlot(el) {
 function renderCmdSlots() {
   const box = $('cmd-slots');
   if (!box) return;
-  if (!pendingCmds.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  // 绝对指令不在 pendingCmds 里（它跨轮活着），但槽要一起画 —— 拼一份只读的 list
+  const slots = pendingCmds.slice();
+  if (hardCmd) slots.push({ k: 'hard', arg: hardCmd.arg });
+  if (!slots.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
   box.classList.remove('hidden');
   // CSS 那边的 max-height 吃这个变量，和上面 growSlot() 的 inputMaxPx() 同源
   box.style.setProperty('--input-max', inputMaxPx() + 'px');
-  box.innerHTML = pendingCmds.map(c => {
+  box.innerHTML = slots.map(c => {
     const cfg = cmdCfg(c.k) || { ico: '·', label: c.k, ph: '' };
-    return '<div class="cmd-slot">'
+    return '<div class="cmd-slot' + (c.k === 'hard' ? ' hard-slot' : '') + '">'
       + '<span class="cs-ico">' + cfg.ico + '</span>'
       + '<span class="cs-name">' + esc(tt(cfg.label)) + '</span>'
       // v0.4.2.3：原来这里是单行 <input type="text">，长参数一路往右延伸，
@@ -10114,8 +10279,15 @@ function renderCmdSlots() {
   box.querySelectorAll('[data-cmd]').forEach(inp => {
     growSlot(inp);                // 回填历史参数（编辑重发）时也要按内容撑开
     inp.oninput = () => {
-      const c = pendingCmds.find(x => x.k === inp.dataset.cmd);
-      if (c) c.arg = inp.value;
+      const k = inp.dataset.cmd;
+      if (k === 'hard') {
+        // 绝对指令是【一直挂着】的，所以每改一次都要落库（防抖 400ms，别每个键写一次）
+        if (hardCmd) hardCmd.arg = inp.value;
+        saveHardCmdSoon();
+      } else {
+        const c = pendingCmds.find(x => x.k === k);
+        if (c) c.arg = inp.value;
+      }
       inp.title = inp.value;      // 和参数槽同源，title 跟着一起更新
       growSlot(inp);
       syncInput();
@@ -10741,12 +10913,13 @@ async function openCharEdit(id, presetKey) {
     // 上下文轮数
     $('e-ctx').value = v.ctx;
     $('e-v-ctx').textContent = v.ctx;
-    // ⚠️ 0.5.3.4：非对话描写 / 描写详细程度两档已停用（index.html 里挂了 off-ctl），
-    //    但这一组预设仍会顺手把它们填成旧值 —— detectMode 要靠这两个值判「像哪一档」。
-    //    所以说明里不许再承诺「描写拉满 / 中等描写」：那是假承诺，填了也不生效。
+    // ⚠️ 0.5.3.7：非对话描写 / 描写详细程度两档【恢复生效】（长度管写多长、
+    //    详细程度管镜头推多近，见 persona.js 的 PAREN_LEN / LENS）。
+    //    这一组预设会顺手把这两项填成旧值 —— detectMode 靠这两个值判「像哪一档」。
+    //    现在填了是真生效，所以可以照实说填了什么。
     $('e-mode-note').innerHTML = isWriter
-      ? '已填入<b>作家</b>那套推荐值：第三人称跟随、长回复、强制聊天模式、不要颜文字和表情、上下文 30 轮。<br>（非对话描写那两档已停用，这里仍会顺手填成旧值，不影响输出。）<br>想微调就改下面任意一项 —— 最后别忘了右上角 <b>✓</b>。'
-      : '已填入<b>陪伴</b>那套推荐值：只写她感知到的、中等长度、颜文字偶尔、上下文 20 轮。<br>（非对话描写那两档已停用，这里仍会顺手填成旧值，不影响输出。）<br>想微调就改下面任意一项 —— 最后别忘了右上角 <b>✓</b>。';
+      ? '已填入<b>作家</b>那套推荐值：第三人称跟随、长回复、强制聊天模式、不要颜文字和表情、上下文 30 轮、括号写得多且镜头推得近。<br>想微调就改下面任意一项 —— 最后别忘了右上角 <b>✓</b>。'
+      : '已填入<b>陪伴</b>那套推荐值：只写她感知到的、中等长度、颜文字偶尔、上下文 20 轮、括号中等长度、镜头中等距离。<br>想微调就改下面任意一项 —— 最后别忘了右上角 <b>✓</b>。';
     renderMode(kind);   // 按钮立刻亮成刚点的那一套
   };
   // 预设按钮该亮哪一个：【按当前参数值现算】，不存任何「模式」字段。
@@ -12607,7 +12780,9 @@ async function purgeCharEverywhere(id) {
     const allKv = await kv.entries();
     for (const e of allKv) {
       const k = String(e.k || '');
-      if (k.endsWith(':' + id) || k.endsWith(':' + id + ':real')) {
+      // v0.5.3.7 补：群聊 psyche 键是【三段】'psyche:<组id>:<成员id>'，以成员 id 结尾 ——
+      //   删【群】时结尾对不上，会留下一堆再也用不到的脏键（删单个成员靠 endsWith 就能清）。
+      if (k.endsWith(':' + id) || k.endsWith(':' + id + ':real') || k.startsWith('psyche:' + id + ':')) {
         try { await kv.del(e.k); } catch { /* 单条清不掉不影响整体 */ }
       }
     }
@@ -12767,15 +12942,18 @@ const EMOJI_PRESETS = FREQ_PRESETS;
 //   DESC_PRESETS 管上限（最多写多长），这个管结构（必须写成什么形状）。
 // 所以刻意不复用同一个键，也不做"设了这个就不用那个"的联动。
 const DRIVE_PRESETS = [
+  // ⚠️ 说明文案跟着提示词一起换过（0.5.3.7）：上面那张 LENS 表已经不用「动作链 /
+  //    三段式 / 感官锚点」这套工程词了，弹窗里还给用户看这套旧词，等于让人按旧理解
+  //    去选新档位。标签（简/中/详/极详）保留 —— 用户认的是这几个字。
   { v: 'off',  t: '不额外约束', d: '保持现状，不加任何描写要求。' },
   { v: 'low',  t: '简',
-    d: '每轮至少写 1 个具体动作，不许整条只有台词和心理。' },
+    d: '镜头停在几步外：只写看得见的大动作，不往细里钻。' },
   { v: 'mid',  t: '中',
-    d: '括号里写成动作链：他做了什么 → 你怎么应的 → 哪里因此变了。' },
+    d: '镜头推近一层：在动作上加一样具体的东西 —— 手感、冷热、糙还是滑。' },
   { v: 'high', t: '详',
-    d: '动作链 + 每个动作落到具体感官（温度、黏、声音、重量）。' },
+    d: '镜头再近一层：拆到身上的反应 —— 呼吸、起鸡皮疙瘩、被牵连的地方也跟着动。' },
   { v: 'max',  t: '极详',
-    d: '整条消息挑一件事，按三段式写透（他做了什么 → 你身体怎么应 → 哪里因此变了）；写到的每段都要有感官锚点；环境真没变就省掉那一段。' },
+    d: '镜头贴到最近：拆到能感到温度、重量、湿度为止。是多拆几层，不是多堆形容词；环境真没变就省掉那一段。' },
 ];
 
 let _drivePick = null;   // 弹窗打开时挂着的回调；关掉就置空
@@ -16110,8 +16288,12 @@ function bindSettings() {
   // 时间细化（全局）：控制聊天栏是否显示时:分、记忆能否设到小时
   $('s-clock-detail').checked = !!S.clockDetail;
   // 描写详细程度（v1.21.31）：全局档。点开弹窗选。
+  // ⚠️ 设置页设的就是全局本身，「跟随全局」在这里同样没有意义（同下面 s-desc 那条）：
+  //    老数据里要是存了 'global'，按钮会显示一个设置页不该有的档位。
+  //    注意必须每次现算：写成常量的话，选完档位再 renderDriveGlobal() 还是显示旧值。
+  const driveGlobalCur = () => (S.detailDrive && S.detailDrive !== 'global') ? S.detailDrive : 'off';
   const renderDriveGlobal = () => {
-    $('s-drive-brief').textContent = driveLabel(S.detailDrive || 'off');
+    $('s-drive-brief').textContent = driveLabel(driveGlobalCur());
   };
   renderDriveGlobal();
   renderMemHealth();
@@ -16119,11 +16301,18 @@ function bindSettings() {
   // 起因：以前【只有角色页有】descLevel，设置页只有 detailDrive。
   // 而设置页文案却写着"和角色页那个非对话描写是两个独立开关"，
   // 引导用户去找一个【根本不存在的开关】。
-  renderSeg('s-desc', DESC_PRESETS, S.descLevel || 'mid', async v => {
+  // ⚠️ 设置页不能出现「跟随全局」这一档（0.5.3.7 复查）：DESC_PRESETS 是给
+  //    【角色页 / 群设置】用的三态表，第一项就是 'global' —— 而设置页设的正是全局本身，
+  //    「跟随全局」在这里等于「把全局设成跟随它自己」。点下去实际写入 descLevel='global'，
+  //    persona 那边两张表（PAREN_LEN / LENS）都没有这个键，于是静默兜底成 mid + off，
+  //    界面显示「跟随全局」、实际输出却从 high 掉到中档 —— 用户改完看不出变化，就是他说的「设置不生效」。
+  //    老数据里已经存成 'global' 的，这里按 mid 显示（否则一个按钮都不高亮）。
+  const descGlobalCur = (S.descLevel && S.descLevel !== 'global') ? S.descLevel : 'mid';
+  renderSeg('s-desc', DESC_PRESETS.filter(x => x.value !== 'global'), descGlobalCur, async v => {
     await saveSettings({ descLevel: v });
     toast('非对话描写已改为「' + (DESC_PRESETS.find(x => String(x.value) === String(v)) || {}).label + '」，下一条回复生效', 3000);
   });
-  $('s-drive').onclick = () => openDrivePicker(S.detailDrive || 'off', async v => {
+  $('s-drive').onclick = () => openDrivePicker(driveGlobalCur(), async v => {
     if (v === null) return;
     await saveSettings({ detailDrive: v });
     renderDriveGlobal();
@@ -17438,7 +17627,17 @@ const BACKUP_KV_PREFIXES = [
   // v0.5.1.7：切支时"被放回来的归档"记账 'unarch:<charId>'。
   // 它是这条支自己的折叠状态，不带过去的话导入后线是完整的、却少了"更早"的折叠 ——
   // 表现是整条历史一次全铺开，长对话直接把屏幕撑爆。
-  'unarch:'
+  'unarch:',
+  // v0.5.3.7 补（数据静默丢失级）：
+  //   psyche:<charId>（群聊是 psyche:<组id>:<成员id>）—— 这是【她这个人】的一部分：
+  //     「你瞒着他的」「你自己这两天」「你心里认定的」「还没消的」，全都是长期内容，
+  //     不是本轮读数。以前不在备份表里 → 换台机器导回来，她还是她，但心里的东西
+  //     全没了，用户只会觉得「性格突然变了」，而且没有任何提示。
+  //     三段键也没问题：导入时的 remap 逐段试，组 id 和成员 id 都会被换成新的。
+  //   hard:<charId> —— 用户手写的一句死命令，和剧情卡同类（写起来最费时的那种）。
+  //     但它【不进清空聊天表】，理由同 arc: —— 那是他手写的东西，清聊天不该顺手删。
+  'psyche:',
+  'hard:'
 ];
 
 // ⚠️ 有几个键【没有冒号】，前缀表装不下它们（v0.4.0）。
@@ -17450,7 +17649,9 @@ const BACKUP_EXACT_KEYS = ['stRegex'];
 /** 清空聊天时要【一起】清掉的键（v0.5.0.2）。
  *  就是备份表去掉 arc：那几个全是「这段对话的记账」，对话没了它们毫无意义。
  *  剧情卡不一样 —— 它是【这段剧情】本身，清聊天不该顺手删掉用户手写的东西。 */
-const WIPE_CHAT_PREFIXES = BACKUP_KV_PREFIXES.filter(p => p !== 'arc:');
+// ⚠️ v0.5.3.7：'hard:' 也要排掉。绝对指令是用户一个字一个字敲的，
+//    不是这段对话产生的记账 —— 清空聊天（或换个分支重来）不该把他的指令一起删了。
+const WIPE_CHAT_PREFIXES = BACKUP_KV_PREFIXES.filter(p => p !== 'arc:' && p !== 'hard:');
 // v0.5.3.2（清单 §3.5）：输入草稿随「清空聊天」一起清 —— 草稿就是这一轮没说出口的话，
 // 对话都清空了，它再冒出来只会让人莫名其妙。
 // ⚠️ 它【不进】备份表（BACKUP_KV_PREFIXES）：备份该还原「记得什么」，
@@ -19494,7 +19695,9 @@ function bindEvents() {
       for (const e of allKv) {
         const k = String(e.k || '');
         if (!WIPE_CHAT_PREFIXES.some(p => k.startsWith(p))) continue;
-        if (k.endsWith(':' + id) || k.endsWith(':' + id + ':real')) {
+        // v0.5.3.7：清空【群聊】时，群内每人的 psyche 键是 'psyche:<组id>:<成员id>' ——
+        //   结尾是成员 id，endsWith 对不上，会留下「她还在惦记着不存在的那段对话」的状态。
+        if (k.endsWith(':' + id) || k.endsWith(':' + id + ':real') || k.startsWith('psyche:' + id + ':')) {
           try { await kv.del(e.k); } catch { /* 单条清不掉不影响整体 */ }
         }
       }
@@ -19608,7 +19811,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.3.6';
+const WEB_VERSION_FALLBACK = '0.5.3.7';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

@@ -42,7 +42,11 @@ export const MOVE_NAME = {
 export const LENGTHS = ['short', 'normal', 'long'];
 
 /** 判断调用的输出上限。JSON 有 400 字就够，给 700 是留思考的余量。 */
-const DIRECTOR_MAX_TOKENS = 700;
+// ⚠️ 700 在真模型上会截断（0.5.3.7 真 key 实测）：这张 JSON 有十五个字段，
+// deepseek-flash 会替每个都认真写一句话，写到 inner 就用完了，`}` 永远等不到 →
+// parseDirector 返回 null → 这一轮退回老路径（独白还在，判断层整层丢）。
+// 1100 留出余量；真被截断还有 salvageDirector 兜底。
+const DIRECTOR_MAX_TOKENS = 1100;
 
 /** 喂给判断的历史条数。8 条：太少读不出情绪惯性，太多变成重读整段。 */
 const RECENT_N = 8;
@@ -99,6 +103,47 @@ const ASK = [
 const FENCE = String.fromCharCode(96, 96, 96);
 const FENCE_RE = new RegExp(FENCE + '(?:json)?\\s*([\\s\\S]*?)' + FENCE, 'i');
 
+/**
+ * 从【被截断的 JSON】里抢救判断。
+ *
+ * 真 key 实测（0.5.3.7）：这条 JSON 十五个字段，模型写到 inner 就被 max_tokens 截断，
+ * 整个对象不闭合。整轮作废的代价是【判断层整层丢失】（独白还有，mood/move/withhold
+ * 全没），而 pick 类的东西往往早就写出来了。
+ *
+ * 只收【结构上确定】的：字符串要闭合、数字要有值、mood/stance 要整块闭合。
+ * 一个字段都抠不出来就返回 null（调用方照旧退回老路径）。
+ */
+function salvageDirector(s) {
+  if (s.indexOf('{') < 0) return null;
+  const out = {};
+  const STR = ['reading', 'sting', 'inner', 'goal', 'blockedBy', 'move', 'length', 'risk', 'callback'];
+  for (const k of STR) {
+    const m = s.match(new RegExp('"' + k + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'));
+    if (m) out[k] = m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ');
+  }
+  for (const k of ['confidence', 'urgency']) {
+    const m = s.match(new RegExp('"' + k + '"\\s*:\\s*(-?[0-9]*\\.?[0-9]+)'));
+    if (m) out[k] = Number(m[1]);
+  }
+  for (const k of ['mood', 'stance']) {
+    const m = s.match(new RegExp('"' + k + '"\\s*:\\s*\\{[^{}]*\\}'));
+    if (m) {
+      try { out[k] = JSON.parse(m[0].slice(m[0].indexOf('{'))); } catch (e) { /* 里面有中文引号就放弃这一块 */ }
+    }
+  }
+  const wh = s.match(/"withhold"\s*:\s*\[([^\]]*)\]/);
+  if (wh) {
+    const arr = [];
+    const gre = /"((?:[^"\\]|\\.)*)"/g;
+    let m;
+    while ((m = gre.exec(wh[1])) && arr.length < 3) arr.push(m[1].replace(/\\"/g, '"'));
+    if (arr.length) out.withhold = arr;
+  }
+  // reading / inner / move 是这一层的骨架：一个都没有就当没救回来。
+  if (!out.reading && !out.inner && !out.move) return null;
+  return out;
+}
+
 /** 从模型输出里抠出 JSON 对象。围栏、前后废话、尾逗号、中文引号都认。 */
 export function parseDirector(text) {
   let s = String(text == null ? '' : text).trim();
@@ -108,16 +153,21 @@ export function parseDirector(text) {
   const a = s.indexOf('{');
   const b = s.lastIndexOf('}');
   if (a >= 0 && b > a) s = s.slice(a, b + 1);
-  // 尾逗号 / 中文引号：模型偶尔写出来。不修的话整段判断作废。
-  s = s.replace(/,\s*([}\]])/g, '$1').replace(/[\u201c\u201d]/g, '"');
-  try {
-    const o = JSON.parse(s);
-    // 只认对象：模型偶尔吐一个数组（[{"move":...}]），数组进 normalizeDirector 只会变成空判断，
-    // 不如在这里就认成失败 —— 调用方看到 null 才知道这一轮退回老路径。
-    return (o && typeof o === 'object' && !Array.isArray(o)) ? o : null;
-  } catch {
-    return null;
+  // 三步，顺序不能换：
+  // ① 原样解析 —— 合法 JSON 里的中文引号是【正文】（例如 reading 里引用他的话），
+  //    先替换会把一条判断劈成两半（critique.js 那边踩过同样的坑）。
+  // ② 原样不成，才把尾逗号 / 中文引号当定界符洗一遍。
+  // ③ 还是不成，多半是 max_tokens 截断（真模型常事），从原文里抢救字段。
+  let o = null;
+  try { o = JSON.parse(s); } catch (e) { o = null; }
+  if (!o) {
+    const clean = s.replace(/,\s*([}\]])/g, '$1').replace(/[\u201c\u201d]/g, '"');
+    try { o = JSON.parse(clean); } catch (e) { o = null; }
   }
+  if (!o) o = salvageDirector(s);
+  // 只认对象：模型偶尔吐一个数组（[{"move":...}]），数组进 normalizeDirector 只会变成空判断，
+  // 不如在这里就认成失败 —— 调用方看到 null 才知道这一轮退回老路径。
+  return (o && typeof o === 'object' && !Array.isArray(o)) ? o : null;
 }
 
 function cut(v, n) {

@@ -133,9 +133,10 @@ body{
 /* 自己那一侧气泡是亮紫底，.82 的白字会发灰，收一点 */
 .msg.me .bub .inner-thought{ opacity:.92; }
 
-/* 0.5.3.4：非对话描写 / 描写详细程度 两个档位停用。
-   只隐藏、不删 DOM —— JS 还在往里渲染，角色身上的 descLevel/detailDrive 也照旧保留，
-   将来要恢复只要去掉这个类。用 !important 是因为 .field 自己有布局，hidden 属性压不住。 */
+/* 0.5.3.7：非对话描写 / 描写详细程度 两个档位【恢复】。
+   0.5.3.4 曾用 .off-ctl 把这两组控件藏起来（当时改成三通道，档位不进提示词）；
+   0.5.3.7 把档位重新接回提示词（长度管写多长、详细程度管镜头推多近），控件也放出来。
+   .off-ctl 这个类留着不删 —— 以后的临时停用还能用同一条路，只是现在没人挂它。 */
 .off-ctl{ display:none !important; }
 .bub .t{
   font-size:10.5px; color:var(--fg3); margin-top:4px; text-align:right;
@@ -252,6 +253,14 @@ body{
   background:var(--bg3); color:var(--fg3); font-size:12px; font-family:inherit;
   cursor:pointer;
 }
+/* 绝对指令那一行（0.5.3.7）：比普通功能高一档，所以要一眼看得出来。
+   左边一道金线 + 图标带底色 —— 不做大改，免得每一轮都被它抢走注意力。 */
+.cmd-slot.hard-slot{
+  border-left:3px solid #d9a441;
+  padding-left:7px; margin-left:-3px;
+}
+.cmd-slot.hard-slot .cs-name{ color:#d9a441; font-weight:600; }
+.cmd-slot.hard-slot textarea{ border-color:rgba(217,164,65,.55); }
 /* 「附加内容」弹层里的一行（v0.4.4） */
 .tt-row{ padding:8px 0; border-top:1px solid var(--line); }
 .tt-row:first-child{ border-top:none; }
@@ -722,6 +731,13 @@ input + .hint-text{ margin-top:8px; }
   color:var(--pri2); white-space:nowrap;
   background:color-mix(in srgb, var(--pri2) 12%, transparent);
   border:1px solid color-mix(in srgb, var(--pri2) 28%, transparent);
+}
+/* 绝对指令下写出来的那一条（0.5.3.7）：金色，和普通功能 chip 区分开。
+   它是个【说明】不是功能入口 —— 所以不可点、不需要「附」按钮。 */
+.bub .tag-chip.hard-chip{
+  color:#d9a441;
+  background:color-mix(in srgb, #d9a441 13%, transparent);
+  border-color:color-mix(in srgb, #d9a441 34%, transparent);
 }
 .bub .more-btn{
   border:none; background:transparent; padding:0; font-family:inherit;

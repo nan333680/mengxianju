@@ -242,6 +242,11 @@ const EXTRA_ZH = {
   "结构": "Structure",
   "描写详细程度（结构 —— 必须写成什么样）": "Narration detail (structure)",
   "不额外约束": "No extra constraint",
+  "保持现状，不加任何描写要求。": "Leave it as is — no extra description requirement.",
+  "镜头停在几步外：只写看得见的大动作，不往细里钻。": "Lens stays a few steps back: only the big visible movements, no close-up detail.",
+  "镜头推近一层：在动作上加一样具体的东西 —— 手感、冷热、糙还是滑。": "Lens one step closer: add one concrete thing to the movement — how it feels, warm or cold, rough or smooth.",
+  "镜头再近一层：拆到身上的反应 —— 呼吸、起鸡皮疙瘩、被牵连的地方也跟着动。": "Lens another step closer: break it down to her body's response — breath, goosebumps, the places pulled along.",
+  "镜头贴到最近：拆到能感到温度、重量、湿度为止。是多拆几层，不是多堆形容词；环境真没变就省掉那一段。": "Lens all the way in: break it down until temperature, weight and dampness are felt. More layers, not more adjectives; skip the passage if the surroundings really did not change.",
   "角色编辑页": "Character edit page",
   "写字台": "Composer",
   "输入": "Input",
@@ -511,6 +516,13 @@ const EXTRA_ZH = {
   '她听到的是：': 'What she heard:',
   '这一轮她打算：': 'What she means to do:',
   '可以主动提起的旧事：': 'Old thread she may reopen:',
+  // v0.5.3.7 绝对指令（附加功能里那条比软件规则还高的死命令）
+  '绝对指令': 'Absolute command',
+  '她必须照这个来。会盖掉软件的写法规则和人设 —— 写歪了算你的，点 ✕ 随时撤。':
+    'She must follow this. It overrides every writing rule and her persona — if it goes wrong, that is on you. Tap ✕ to remove.',
+  '这一条是在你挂的绝对指令下写的': 'Written under your absolute command',
+  '括号里写多长（上限）': 'Parentheses length (cap)',
+  '描写详细程度（镜头推到多近）': 'Description detail (how close the lens gets)',
 };
 /**
  * 动态文本的翻译表：**直接用中文原文当 key**。

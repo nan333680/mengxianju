@@ -236,16 +236,16 @@
             <option value="epic" data-i18n-en="Long-form scene">长篇</option>
           </select>
         </div>
-        <div class="field off-ctl" data-i18n-nodes><span data-i18n-en="Non-dialogue description (parentheses only)">非对话描写（只管括号里的）</span>
+        <div class="field" data-i18n-nodes><span data-i18n-en="Parentheses length (how long the parentheses may get)">括号里写多长（上限）</span>
           <div class="seg" id="g-desc"></div>
         </div>
-        <div class="field off-ctl" data-i18n-nodes><span data-i18n-en="Description detail (what shape the parentheses must take)">描写详细程度（括号里必须写成什么形状）</span>
+        <div class="field" data-i18n-nodes><span data-i18n-en="Description detail (how close the lens gets)">描写详细程度（镜头推到多近）</span>
           <button class="pick-row slim" id="g-drive">
             <em id="g-drive-brief" data-i18n-en="Follow global">跟随全局</em>
             <i class="fold-arrow">›</i>
           </button>
         </div>
-        <p class="hint-text" data-i18n-en-html="<b>Retired.</b> How much she writes now depends on what actually happens in the message: parentheses for the outside, a pair of asterisks for what she doesn't say out loud. Old settings are kept."><b data-i18n-en="Retired">已停用</b>：现在按每条消息的实际内容决定怎么写（括号里写外面，一对 <b>*</b> 里写她没说出口的）。旧设置都还在。</p>
+        <p class="hint-text" data-i18n-en-html="Two separate switches: the first caps <b>how long</b> parentheses may get, the second sets <b>how close the lens gets</b> (the closer, the more it breaks one thing down into concrete layers — actions, what she touches, how her body changes, sounds, what moves around her). Cranking both up means long <i>and</i> detailed.">这两个<b data-i18n-en="two separate switches">各管各的</b>：上面那个管括号里<b>能写多长</b>，下面那个管<b>镜头推到多近</b>（越近越要往下拆一层具体的 —— 手上在做什么、碰到的东西什么手感、身上哪里变了、什么声音、周围什么动静）。两个都拉高，括号里就是又长又细。</p>
         <div class="field" data-i18n-nodes><span data-i18n-en="Narrative point of view (the thing that drifts most in groups)">叙事视角（群聊里最容易飘的就是这个）</span>
           <div class="seg" id="g-pov"></div>
         </div>
@@ -528,18 +528,17 @@
           </select>
           <p class="hint-text" data-i18n-en="Every segment is a separate request and bills separately. Turn this on only when she should keep writing without you clicking again.">每一段都是独立请求、分别计费。只有想让她不用你再点「继续」时才开。</p>
         </div>
-        <div class="field off-ctl" data-i18n-nodes><span data-i18n-en="Narration (what goes in parentheses)">非对话描写（只管括号里的）</span>
+        <div class="field" data-i18n-nodes><span data-i18n-en="Parentheses length (how long the parentheses may get)">括号里写多长（上限）</span>
           <div class="seg" id="e-desc"></div>
         </div>
-        <p class="hint-text" data-i18n-en-html="<b>Retired.</b> How much she writes now depends on what actually happens in the message: parentheses for the outside, a pair of asterisks for what she doesn't say out loud. Old settings are kept."><b data-i18n-en="Retired">已停用</b>：现在按每条消息的实际内容决定怎么写（括号里写外面，一对 <b>*</b> 里写她没说出口的）。旧设置都还在。</p>
-        <div class="field off-ctl" data-i18n-nodes><span data-i18n-en="Narration detail">描写详细程度</span>
+        <p class="hint-text" data-i18n-en-html="Two separate switches: the first caps <b>how long</b> parentheses may get, the second sets <b>how close the lens gets</b>. Both default to following the global setting; tap in to override for this character only.">这两个<b data-i18n-en="two separate switches">各管各的</b>：上面那个管括号里<b>能写多长</b>，下面那个管<b>镜头推到多近</b>（越近越往下拆一层具体的：动作、手感、身上变化、声音、周围动静）。默认<b data-i18n-en="follow global">跟随全局</b>；想给这个角色单独定，点进去选。</p>
+        <div class="field" data-i18n-nodes><span data-i18n-en="Narration detail (how close the lens gets)">描写详细程度（镜头推到多近）</span>
           <button class="pick-row slim" id="e-drive">
             <em id="e-drive-brief" data-i18n-en="Follow global">跟随全局</em>
             <i class="fold-arrow">›</i>
           </button>
         </div>
-        <p class="hint-text off-ctl" data-i18n-en-html="Controls the shape her narration in parentheses <b>has to take</b> (a different thing from the &quot;cap&quot; above).<br> Defaults to <b>following the global setting</b>; tap in to set it for this character only.">控制她括号里的动作描写<b data-i18n-en="What shape it must take">必须写成什么形状</b>（和上面那个「上限」是两回事）。<br>
-          默认<b data-i18n-en="Follow global settings">跟随全局设置</b>；想给这个角色单独定，点进去选。</p>
+        <p class="hint-text" data-i18n-en-html="Controls <b>how close the lens gets</b> (a different thing from the length cap above): the closer, the more it has to break one thing down into concrete layers.">控制她括号里的<b data-i18n-en="How close the lens gets">镜头推到多近</b>（和上面那个「写多长」是两回事）：越近，越要把一件事往下拆成具体的层。</p>
         <div class="field" data-i18n-nodes><span data-i18n-en="Presets (fill everything below in one tap)">表达预设（点一下，把下面这些一次填好）</span>
           <div class="seg" id="e-mode"></div>
         </div>
@@ -703,17 +702,17 @@
 
     <section class="group">
       <h3 data-i18n-en="Description & expression">描写与表达</h3>
-      <p class="hint-text" data-i18n-en-html="<b>Retired.</b> How much she writes now depends on what actually happens in the moment — parentheses for the outside (what can be seen and heard), a pair of asterisks for what she doesn't say out loud, everything else for dialogue."><b data-i18n-en="Retired">已停用</b>：现在按这条消息里<b data-i18n-en="what actually happens">实际发生了什么</b>决定怎么写 —— 括号里写外面看得见、听得见的，一对 <b>*</b> 里写她没说出口的，<b>*</b> 外面才是台词。旧设置都还在。</p>
-      <div class="field off-ctl" data-i18n-nodes><span data-i18n-en="Non-dialogue description (the cap — how long the parentheses may get)">非对话描写（上限 —— 括号里最多写多长）</span>
+      <p class="hint-text" data-i18n-en-html="Three channels decide <b>where</b> things go — parentheses for the outside (what can be seen and heard), a pair of asterisks for what she doesn't say out loud, everything else for dialogue. The two settings below decide <b>how long</b> and <b>how close</b> the parentheses get.">三层通道决定<b data-i18n-en="where things go">写在哪里</b> —— 括号里写外面看得见、听得见的，一对 <b>*</b> 里写她没说出口的，<b>*</b> 外面才是台词。下面这两个设置决定括号里<b data-i18n-en="how long">写多长</b>、<b data-i18n-en="how close">镜头推到多近</b>。</p>
+      <div class="field" data-i18n-nodes><span data-i18n-en="Parentheses length (the cap — how long they may get)">括号里写多长（上限）</span>
         <div class="seg" id="s-desc"></div>
       </div>
-      <p class="hint-text off-ctl" data-i18n-en-html="This and the one below are <b>independent switches</b>: this one caps the <b>length</b>, that one dictates the <b>structure</b>.">它和下面那个是<b data-i18n-en="Two separate switches">两个独立开关</b>：这个管<b data-i18n-en="Cap">上限</b>，那个管<b data-i18n-en="Structure">结构</b>。</p>
-      <button class="pick-row off-ctl" id="s-drive">
-        <span data-i18n-en="Narration detail (structure)">描写详细程度（结构 —— 必须写成什么样）</span>
+      <p class="hint-text" data-i18n-en-html="This and the one below are <b>independent switches</b>: this one caps the <b>length</b>, that one sets <b>how close the lens gets</b>. Cranking both up means long <i>and</i> detailed.">它和下面那个是<b data-i18n-en="Two separate switches">两个独立开关</b>：这个管<b data-i18n-en="Length">写多长</b>，那个管<b data-i18n-en="Lens">镜头推到多近</b>。两个都拉高，括号里就是又长又细。</p>
+      <button class="pick-row" id="s-drive">
+        <span data-i18n-en="Description detail (lens)">描写详细程度（镜头 —— 推到多近）</span>
         <em id="s-drive-brief" data-i18n-en="No extra constraint">不额外约束</em>
         <i class="fold-arrow">›</i>
       </button>
-      <p class="hint-text off-ctl" data-i18n-en-html="⚠️ Both can be overridden per character on the <b>character edit page</b>; choosing &quot;follow global&quot; there falls back to these.">⚠️ 这两项都能在<b data-i18n-en="Character edit page">角色编辑页</b>单独覆盖；那边选「跟随全局」就回到这里的设置。</p>
+      <p class="hint-text" data-i18n-en-html="⚠️ Both can be overridden per character on the <b>character edit page</b>; choosing &quot;follow global&quot; there falls back to these. A message can also carry its own one-off request (<b>+ → This turn's change</b>) — when it conflicts with these fixed rules, its wording wins.">⚠️ 这两项都能在<b data-i18n-en="Character edit page">角色编辑页</b>单独覆盖；那边选「跟随全局」就回到这里的设置。某一轮想破例，用输入框「＋ → 本轮更改」写一句 —— 它和这些固定规则冲突时，以那一句为准。</p>
     </section>
 
     <!-- 活人感 v2 总开关（0.5.3.6）：用户 m02892 第 2 条 ——「开关做两档：开/关，直接管理全部」。

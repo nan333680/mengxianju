@@ -273,6 +273,10 @@ const A2 = await page.evaluate(async () => {
   const bad = P.parseCritique("我今天不太想评价", 3);
   const zero = P.parseCritique('{"pick": 0}', 3);
   const huge = P.parseCritique('{"pick": 1, "flaws": ["' + new Array(200).join("长") + '"], "rewrite": "' + new Array(200).join("长") + '"}', 3);
+  // 真模型会把每条 flaws 写成 40~60 字一整句，700 token 的预算在半截就断了，
+  // JSON 不闭合（0.5.3.7 真 key 实测）。这一条要能从截断文本里抢回 pick 和已闭合的 flaws。
+  const cut = P.parseCritique('{"pick": 2, "flaws": ["候选1太像在接话", "候选2把情绪总结出来了", "候选3', 3);
+  const dead = P.parseCritique('{"pick":', 3);
   return {
     aPick: a ? a.pick : null,
     aFlaws: a ? a.flaws.length : -1,
@@ -283,7 +287,10 @@ const A2 = await page.evaluate(async () => {
     badNull: bad === null,
     zeroNull: zero === null,
     flawLen: huge ? String(huge.flaws[0] || "").length : -1,
-    rwLen: huge ? String(huge.rewriteHint || "").length : -1
+    rwLen: huge ? String(huge.rewriteHint || "").length : -1,
+    cutPick: cut ? cut.pick : null,
+    cutFlaws: cut ? cut.flaws.length : -1,
+    deadNull: dead === null
   };
 });
 t("parseCritique 剥围栏/尾逗号，编号 2 落到下标 1", A2.aPick === 1, "pick=" + A2.aPick);
@@ -293,6 +300,9 @@ t("parseCritique pick 越界返回 null", A2.outNull);
 t("parseCritique 不是 JSON 返回 null", A2.badNull);
 t("parseCritique pick 为 0 返回 null", A2.zeroNull);
 t("parseCritique 截断超长的 flaws/rewrite", A2.flawLen > 0 && A2.flawLen <= 40 && A2.rwLen >= 0 && A2.rwLen <= 80, "flaw=" + A2.flawLen + " rw=" + A2.rwLen);
+t("★ 被 max_tokens 截断的评审也能抢回 pick", A2.cutPick === 1, "pick=" + A2.cutPick);
+t("★ 截断时只收已经闭合的 flaws", A2.cutFlaws === 2, "flaws=" + A2.cutFlaws);
+t("连 pick 都没有的截断才返回 null", A2.deadNull);
 
 const A3 = await page.evaluate(async () => {
   const C = await import("/js/cadence.js");

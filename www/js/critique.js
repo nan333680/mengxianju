@@ -14,8 +14,14 @@
 
 import { onceChat } from './api.js';
 
-/** 评审的输出上限。JSON + 几条 flaws，700 够。 */
-const CRITIQUE_MAX_TOKENS = 700;
+/** 评审的输出上限。
+ *
+ * ⚠️ 700 不够（0.5.3.7 真 key 实测）：deepseek-flash 会把 flaws 每条写成 40~60 字的一整句，
+ * 6 条就是 300 多字，加上 pick 与引言，700 token 直接截断 → JSON 不闭合 →
+ * parseCritique 返回 null → 这一轮评审白花一次调用，还退化成「永远用候选 1」。
+ * 1200 留足余量；真被截断还有下面 salvageCritique 兜底。
+ */
+const CRITIQUE_MAX_TOKENS = 1200;
 
 /** flaws 条数与每条字数上限。写长了它就开始写小作文，而不是挑毛病。 */
 const MAX_FLAWS = 6;
@@ -86,6 +92,48 @@ export function critiqueAsk(o = {}) {
 }
 
 /**
+ * 从【被截断的 JSON】里抢救出还能用的判断。
+ *
+ * 真 key 实测（0.5.3.7）：模型把 flaws 写到超出 max_tokens，输出停在半个字符串上，
+ * `}` 永远等不到 → JSON.parse 必然失败。但 pick 通常在第一个字段，早就写出来了。
+ * 这时整条作废，用户付了这次调用却永远拿不到「评审挑的那条」，等于评审没做。
+ *
+ * 只认【结构上确定】的东西：pick 必须落在 1..n；flaws 只收已经闭合的字符串
+ * （尾巴那半句丢掉）；rewrite 只收闭合的。没有 pick 就返回 null，和原来一样。
+ */
+function salvageCritique(s, n) {
+  const pm = s.match(/"pick"\s*:\s*(\d+)/);
+  if (!pm) return null;
+  const pick = Number(pm[1]) - 1;
+  if (!Number.isFinite(pick) || pick < 0) return null;
+  if (Number.isFinite(Number(n)) && Number(n) > 0 && pick >= Number(n)) return null;
+  const flaws = [];
+  const fAt = s.search(/"flaws"\s*:\s*\[/);
+  if (fAt >= 0) {
+    let arrText = s.slice(fAt);
+    arrText = arrText.slice(arrText.indexOf('[') + 1);
+    const close = arrText.indexOf(']');
+    if (close >= 0) arrText = arrText.slice(0, close);
+    else {
+      // 数组没闭合：后面若出现 rewrite 的键名，就不许再算进 flaws。
+      const rw = arrText.search(/"rewrite"\s*:/);
+      if (rw >= 0) arrText = arrText.slice(0, rw);
+    }
+    const gre = /"((?:[^"\\]|\\.)*)"/g;
+    let m;
+    while ((m = gre.exec(arrText)) && flaws.length < MAX_FLAWS) {
+      const v = cut(m[1].replace(/\\"/g, '"'), FLAW_MAX);
+      if (v) flaws.push(v);
+    }
+  }
+  const rm = s.match(/"rewrite"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const rewriteHint = rm ? cut(rm[1].replace(/\\"/g, '"'), REWRITE_MAX) : '';
+  // ⚠️ 这里必须还回【1 起】的编号：下游统一按模型的 1..N 写法再减一次。
+  // 一开始这里返回的是 0 起，结果 pick=1 被下游减成 -1 判成越界，抢救出来的判断又被扔掉。
+  return { pick: pick + 1, flaws, rewriteHint, rewrite: rewriteHint };
+}
+
+/**
  * 从评审输出里抠出判断。
  *
  * 容忍：markdown 围栏、前后废话、尾逗号、中文引号、单引号。
@@ -104,15 +152,28 @@ export function parseCritique(text, n) {
   const a = s.indexOf('{');
   const b = s.lastIndexOf('}');
   if (a >= 0 && b > a) s = s.slice(a, b + 1);
-  // 尾逗号 / 中文引号 / 单引号包裹的键值：模型偶尔会这么写。
-  s = s.replace(/,\s*([}\]])/g, '$1')
-    .replace(/[\u201c\u201d]/g, '"')
-    .replace(/'([^'\\]*)'/g, '"$1"');
-  let raw;
+  // 解析分三步，顺序不能换：
+  //
+  // ① 原样解析。合法 JSON 里的「中文引号」是【正文内容】（例如 flaws 里引用她的话），
+  //    先替换就会把一条毛病拆成两三条 —— 真 key 实测踩过：
+  //    「候选1的“行，那就别说话”太像在接话」被拆成「候选1的」+「太像在接话」。
+  // ② 原样不成，才做容错清洗（尾逗号 / 中文引号当定界符 / 单引号包裹的键值）。
+  // ③ 还是不成，说明被 max_tokens 截断了（真模型常事），从原文里抢救 pick。
+  let raw = null;
   try {
     raw = JSON.parse(s);
-  } catch {
-    return null;
+  } catch { raw = null; }
+  if (!raw) {
+    const clean = s.replace(/,\s*([}\]])/g, '$1')
+      .replace(/[\u201c\u201d]/g, '"')
+      .replace(/'([^'\\]*)'/g, '"$1"');
+    try {
+      raw = JSON.parse(clean);
+    } catch { raw = null; }
+  }
+  if (!raw) {
+    raw = salvageCritique(s, n);
+    if (!raw) return null;
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 

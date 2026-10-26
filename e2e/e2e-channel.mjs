@@ -152,7 +152,11 @@ console.log('=== 1. 三通道进没进提示词 ===');
   t('心里要具体（不是情绪标签）', sys.includes('不要写「我感到难过」这种情绪标签'));
   t('不许替对方写心理', sys.includes('不要替对方写他的心理'));
   t('不必每轮都有心里', sys.includes('不要每轮都有心里'));
-  t('长度改成「该有几段就几段」', sys.includes('该有几段就几段'));
+  // 0.5.3.7：这一条改成【只管分组】了 —— 原来它写「该有几段就几段」，
+  // 而新档位 PAREN_LEN.high 明说「一个括号可以好几句话」，两条相邻注入会互相打脸。
+  // 长度归档位管，这里只断言「别把三件事挤进一个括号」这一层还在。
+  t('分组那条只管「同一件事」，不再自己规定长度',
+    sys.includes('一段括号里写的要是同一件事') && !sys.includes('该有几段就几段'));
 }
 
 console.log('');
@@ -306,7 +310,10 @@ console.log('=== 9. 惯性动作：反复出现的括号短语进「别再用」
 }
 
 console.log('');
-console.log('=== 10. 两个档位控件：隐藏了，但数据还在 ===');
+// 0.5.3.7：这两个控件【恢复了】（0.5.3.4 曾用 .off-ctl 藏起来，档位当时不进提示词）。
+// 这一节从「隐藏了、数据还在」改成「可见、数据还在」——
+// 数据那两条是 0.5.3.4 加它们的原因，不能删。
+console.log('=== 10. 两个档位控件：可见（0.5.3.7 恢复），数据还在 ===');
 {
   await putChar({ descLevel: 'low', detailDrive: 'max' });
   const vis = await page.evaluate(() => {
@@ -320,8 +327,8 @@ console.log('=== 10. 两个档位控件：隐藏了，但数据还在 ===');
     }
     return out;
   });
-  t('#s-desc 不可见', vis['s-desc'] === 'none', vis['s-desc']);
-  t('#s-drive 不可见', vis['s-drive'] === 'none', vis['s-drive']);
+  t('#s-desc 可见', vis['s-desc'] !== 'none' && vis['s-desc'] !== 'MISSING', vis['s-desc']);
+  t('#s-drive 可见', vis['s-drive'] !== 'none' && vis['s-drive'] !== 'MISSING', vis['s-drive']);
   await enterChat();
   const keep = await page.evaluate(async (id) => {
     const req = indexedDB.open('ai-companion');

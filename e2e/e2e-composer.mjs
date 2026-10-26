@@ -222,13 +222,15 @@ t('一开始抽屉是收着的', (await isHidden('#cmd-drawer')) === true);
 await openDrawer();
 t('点 ＋ 拉出抽屉', (await isHidden('#cmd-drawer')) === false);
 const items = await page.$$eval('#cmd-drawer .cmd-item', e => e.map(x => x.dataset.cmd));
-t('抽屉里有四个功能', items.length === 4, JSON.stringify(items));
-t('四个是 search / direct / plot / image', items.join(',') === 'search,direct,plot,image', JSON.stringify(items));
+// 0.5.3.7 起多了一项 ⚡ 绝对指令（hard）—— 抽屉从四个变五个。
+t('抽屉里有五个功能', items.length === 5, JSON.stringify(items));
+t('五个是 search / direct / plot / hard / image', items.join(',') === 'search,direct,plot,hard,image', JSON.stringify(items));
 const dtext = await textOf('#cmd-drawer');
 t('抽屉里写着「联网搜索」', dtext.includes('联网搜索'));
 t('抽屉里写着「本轮更改」', dtext.includes('本轮更改'));
 t('抽屉里写着「发送图片」', dtext.includes('发送图片'));
 t('抽屉里写着「剧情方向」', dtext.includes('剧情方向'));
+t('抽屉里写着「绝对指令」', dtext.includes('绝对指令'));
 await page.evaluate(() => document.getElementById('btn-plus').click());
 await sleep(200);
 t('再点一次 ＋ 缩回', (await isHidden('#cmd-drawer')) === true);

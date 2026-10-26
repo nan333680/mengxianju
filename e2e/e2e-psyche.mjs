@@ -252,6 +252,15 @@ const ue = await page.evaluate(async () => {
   T('不是 JSON 返回 null', D.parseDirector('我觉得她应该有点生气') === null, '');
   T('JSON 是数组也返回 null（只认对象）', D.parseDirector('[1,2]') === null, '');
 
+  // 真模型的判断是十五个字段的 JSON，700 token 常常写到 inner 就断了（0.5.3.7 真 key 实测）。
+  // 截断不能整层丢掉：reading / sting 这些已经写完的字段要抢回来。
+  const cut = D.parseDirector('{ "reading": "他以为我嫌他闷。", "confidence": 0.4, "sting": "被当成要赶他走的人", "inner": "我坐这儿就是不想让他一个人待');
+  T('★ 被截断的判断也能抢回 reading', !!cut && cut.reading === '他以为我嫌他闷。', JSON.stringify(cut));
+  T('★ 抢回来的 confidence 还是数字', !!cut && cut.confidence === 0.4, cut && cut.confidence);
+  T('什么都没抢到的截断返回 null', D.parseDirector('{ "reading') === null, '');
+  const keep = D.parseDirector('{"move":"act","reading":"他说“随便你”，那就随便。"}');
+  T('★ 合法 JSON 里的中文引号不许被毁', !!keep && keep.reading === '他说“随便你”，那就随便。', keep && keep.reading);
+
   const b = D.normalizeDirector({ move: 'fly', length: 'huge', risk: 'whatever', reading: '他在试探' });
   T('★ move 不在白名单就是空串（不猜一个相近的）', b.move === '', b.move);
   T('length 不合法回 normal', b.length === 'normal', b.length);

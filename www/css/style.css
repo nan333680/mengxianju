@@ -404,6 +404,12 @@ input[type=checkbox]{
 /* 正文 + 标签装在左列里（竖排），✕ 在最右边 */
 .mem-item .mem-body{ flex:1; min-width:0; }
 .mem-item .txt{ font-size:14px; line-height:1.5; word-break:break-word; }
+/* 原话（v0.5.3.7 修主客对调）：她记下来的这一条，是从哪句原话改的。
+   记忆把「我比你早到」写成「你比我早到」时，光看正文看不出错 ——
+   把原话摆在这儿，谁比谁一眼能对上。灰色小字，不抢正文。 */
+.mem-item .mem-quote{ font-size:12.5px; line-height:1.45; color:var(--fg3); margin-top:5px; word-break:break-word; }
+.mem-item .mem-quote b{ font-weight:400; opacity:.85; }
+.mem-item.sup .mem-quote{ text-decoration:none; }
 /* 标签另起一行、左下角，从左往右排 */
 .mem-item .mem-foot{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
 .mem-item .mem-foot .mem-tag{ margin-right:0; }

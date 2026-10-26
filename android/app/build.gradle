@@ -20,8 +20,8 @@ android {
         applicationId "com.aicompanion.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 169
-        versionName "0.5.3.7"
+        versionCode 170
+        versionName "0.5.3.8"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // 只留手机真会用的两个 ABI（0.5.3.6 引入 onnxruntime-android 后才需要这条）：

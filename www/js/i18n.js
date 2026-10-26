@@ -59,6 +59,9 @@ const EN = {
   'common.language': 'Language',
   'common.language.note': 'Interface language. It does not change what she says — she replies in whatever language you write to her.',
   'about.title': 'About',
+  // 记忆条目里的原话（v0.5.3.7）
+  '原话：': 'Exact words: ',
+  '她当时的原话：': 'What she actually heard: ',
   'about.license': 'License',
   'about.repo': 'Source code',
   'about.contact': 'Contact',
@@ -973,6 +976,9 @@ const ZH = {
   'drawer.shelf.s': '已经写出来的场',
   'common.language': '语言',
   'about.title': '关于',
+  // 记忆条目里的原话（v0.5.3.7 修主客对调时加）
+  '原话：': '原话：',
+  '她当时的原话：': '她当时的原话：',
 };
 export function t(key) {
   const m = _lang === 'en' ? MAP.en : ZH;

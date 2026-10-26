@@ -109,7 +109,9 @@ await page.evaluate(async () => {
   //   a1  active    —— 一定会被注入
   //   d1  draft     —— 收件箱里，绝不能注入
   //   x1  expired   —— 过期，不能注入，但要在检查器的「没进来的」里出现
+  // a1 带 quote：用于「原话」那一行的断言（v0.5.3.7 修主客对调时加的显示）
   await put('memories', { id: 'a1', charId: 'mm1', text: '他在写一本小说', kind: 'goal', key: 'goal.current',
+    quote: '我想写本小说',
     scope: 'character', subject: 'user', status: 'active', sourceKind: 'message', sourceMsgIds: ['src2'], ts: base + 3000, createdAt: base + 3000 });
   await put('memories', { id: 'd1', charId: 'mm1', text: '他妈妈住在杭州', kind: 'fact', key: 'location.home',
     scope: 'character', subject: 'user', status: 'draft', sourceKind: 'message', sourceMsgIds: ['src2'], ts: base + 4000, createdAt: base + 4000 });
@@ -422,6 +424,13 @@ const blobUi = await page.evaluate(() => {
 t('顶部提示有 N 条旧记忆', blobUi.banner.indexOf('旧记忆') >= 0 && blobUi.banner.indexOf('1') >= 0, blobUi.banner.slice(0, 90));
 t('这种条目上标着「建议拆开」', blobUi.tag, '');
 t('给了「拆」的入口', blobUi.hasSplitBtn, '');
+// 原话（v0.5.3.7 修主客对调）：记忆是改写过的，改写时「我/你」会调个个儿，
+// 正文读着通顺、方向却是反的 —— 所以条目下面要把原话照抄摆出来。
+const qUi = await page.evaluate(() => {
+  const el = document.querySelector('#mem-groups .mem-item[data-mid="a1"] .mem-quote');
+  return el ? el.textContent : '';
+});
+t('记忆条目下面摆着原话', qUi.indexOf('我想写本小说') >= 0, qUi.slice(0, 40));
 await page.evaluate(() => { const b = document.querySelector('#mem-groups [data-split]'); if (b) b.click(); });
 await page.waitForFunction(() => {
   const m = document.getElementById('modal'); const ta = document.getElementById('mem-split-text');

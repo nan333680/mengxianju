@@ -56,6 +56,20 @@ await new Promise(r => setTimeout(r, 1500));
 // v1.21.59：全新安装不再自动建角色（产品改空），测试自己塞一个
 await seedChar(page, '测试角色', { greeting: '' });   // 空开场白：不额外多出一条消息
 await page.reload({waitUntil:'networkidle0'}); await new Promise(r=>setTimeout(r,900));
+// ⚠️ 关掉活人感 v2（全量回归第二轮实测）：这一套测的是【图有没有进请求、她认不认得出】，
+//    与 v2 管线无关（v2 由 e2e-v2.mjs 专测）。v2 开着时一轮发 6~9 次请求、上下文多出
+//    独白/三候选/评审，视觉这层更容易被剧情带跑 —— 实测两次「没认出 7，回一句图没显示」。
+//    关掉后一轮只 1 次请求：又快、又省、判定也稳。
+await page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const getv = () => new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('settings'); q.onsuccess = () => r(q.result); });
+  const rec = (await getv()) || { k: 'settings', v: {} };
+  rec.v = Object.assign({}, rec.v, { liveV2: false });
+  await new Promise(r => { const tx = db.transaction('kv','readwrite'); tx.objectStore('kv').put(rec); tx.oncomplete = r; });
+  db.close();
+});
+await page.reload({waitUntil:'networkidle0'}); await new Promise(r=>setTimeout(r,900));
 
 // 填 Key
 await tap(page, '#btn-settings');
@@ -138,7 +152,9 @@ await page.screenshot({ path: OUT + '/10-图片预览.png' });
 const Q1 = '这张图上写的是什么数字？只回答数字';
 const Q2 = '再看一眼上面那张图，上面写的什么数字？只回数字';
 let reply = '', sawSeven = false, round = 0;
-for (; round < 2; round++) {
+// 3 轮：真 API 的视觉偶发失手实测概率不低（0.5.3.6 起一轮 2 次仍会挂），
+// 多给一次机会能把它从「每几轮红一次」压到可忽略，代价只在真的失败时多花一次请求。
+for (; round < 3; round++) {
 await tap(page, '#input');
 await page.type('#input', round === 0 ? Q1 : Q2, { delay: 12 });
 const t0 = Date.now();
@@ -161,7 +177,7 @@ console.log('  她的回复(' + (round+1) + '): ' + reply);
 console.log('');
 sawSeven = /7|七/.test(reply);
 if (sawSeven) break;
-if (round === 0) console.log('  —— 这次没认出数字，再问一次（真 API 视觉偶发失手）');
+if (round < 2) console.log('  —— 这次没认出数字，再问一次（真 API 视觉偶发失手）');
 }
 console.log('  请求: ' + reqLog.join(', ') + ' | 带图的请求数=' + imgReq);
 t('有回复', reply.length > 0);

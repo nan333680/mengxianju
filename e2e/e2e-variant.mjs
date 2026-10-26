@@ -29,9 +29,15 @@ await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let replyNo = 0, lastReq = null;
-// 活人感 v2：一轮并发 3 条候选（messages 相同、只有 temperature 不同）—— 同一轮的 3 条算【一个】版本号。
-// messages 变了、或距上次超过 3 秒，才算新一轮（重新生成 / 下一轮对话）。
-let lastTurnSig = '', lastTurnAt = 0;
+// 版本号怎么数（这是这一套唯一的非确定性来源，全量回归栽过两次）：
+//   messages 变了          = 用户又发了一条 → 版本号从头数（1）
+//   messages 没变          = 同一轮的又一次生成（「换一个版本」/ 重写） → 版本号 +1
+// 早先这里还夹了个「距上次超过 3 秒也算新一轮」。那一条是给 v2 一轮并发多条候选兜底的，
+// 但它本身就是竞态：点「换一个版本」只要快于 3 秒，就被当成同一轮，回的还是第 1 版，
+// 断言「新的是第 2 版」遂挂（12/3 那次就是这么来的；慢一点又全绿，所以是忽红忽绿）。
+// 现在这套里 v2 是关的（见下面 settings 的 liveV2:false），一轮只有 1 次流式请求，
+// 只靠 messages 是不是同一批就足够确定，不需要任何时间窗口。
+let lastTurnSig = '';
 await page.setRequestInterception(true);
 page.on('request', req => {
   if (req.url().includes('/chat/completions')) {
@@ -42,9 +48,15 @@ page.on('request', req => {
     }
     lastReq = _b;
     {
-      const _sig = JSON.stringify(_b && _b.messages || '');
-      const _now = Date.now();
-      if (_sig !== lastTurnSig || _now - lastTurnAt > 3000) { replyNo++; lastTurnSig = _sig; lastTurnAt = _now; }
+      // 判据只取【最后一条 user 消息】：
+      //   它变了 = 用户又发了一条 → 版本号从 1 数起
+      //   它没变 = 同一句话上的又一次生成（「换一个版本」/ 重写）→ 版本号 +1
+      // 不能拿整包 messages 当签名：换版本时 app 会在末尾追加指令、历史也会重排，
+      // 整包签名每次都变，版本号就永远数到 1（实测 12/3）。
+      const _umsg = ((_b && _b.messages) || []).filter(m => m && m.role === 'user').pop();
+      const _sig = String((_umsg && _umsg.content) || '');
+      if (_sig !== lastTurnSig) { replyNo = 1; lastTurnSig = _sig; }
+      else { replyNo++; }
     }
     const NL = String.fromCharCode(10);
     const text = '第' + replyNo + '版回复。';
@@ -63,7 +75,11 @@ await page.evaluate(async () => {
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const put = (st, rec) => new Promise(r => { const tx = db.transaction(st, 'readwrite'); tx.objectStore(st).put(rec); tx.oncomplete = r; });
   const rec = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('settings'); q.onsuccess = () => r(q.result); });
-  await put('kv', { k: 'settings', v: Object.assign({}, (rec && rec.v) || {}, { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', longMemory: false, splitMessages: false }) });
+  // ⚠️ liveV2:false 是这一套的稳定性前提（全量回归第二轮实测）：
+  //    这套测的是「换一个版本」这个 UI 行为，与 v2 管线无关（v2 由 e2e-v2.mjs 专测）。
+  //    v2 开着时一轮发 6~7 次请求（独白/判断/三候选/评审），mock 的版本号就会把候选、
+  //    评审、重写都算进去；关掉后一轮只 1 次流式请求，版本号与「第几次生成」一一对应。
+  await put('kv', { k: 'settings', v: Object.assign({}, (rec && rec.v) || {}, { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', longMemory: false, splitMessages: false, liveV2: false }) });
   await put('kv', { k: 'lastCharId', v: 'vv1' });
   db.close();
 });

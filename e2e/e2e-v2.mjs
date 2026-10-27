@@ -244,7 +244,13 @@ const A1 = await page.evaluate(async () => {
   const leads = ["0","1","2","3","4","5","6","7","8","9","-","*","#",">","·"];
   const badLead = lines.filter(x => leads.indexOf(x.trim().charAt(0)) >= 0);
   const longText = String(M.normalizeInner(new Array(40).fill("一二三四五六七八九十").join(N)) || "");
+  // 真 key 实测：模型会把指令里那四条当成小标题
+  const tagText = String(M.normalizeInner(["（第一反应）问哪句？", "（身上）手机壳在指头里转了一圈", "（怎么应付）装没听清", "（这句我没打算说）"].join(N)) || "");
+  const tagLines = tagText.split(N).filter(x => x.trim());
   return {
+    tagOk: tagLines[0] === "问哪句？" && tagLines[1] === "手机壳在指头里转了一圈" && tagLines[2] === "装没听清",
+    tagKeep: tagLines[3] === "（这句我没打算说）",
+    tagText,
     nonEmpty: s.length > 0,
     lineCount: lines.length,
     text: s,
@@ -261,6 +267,8 @@ t("normalizeInner 行首不留编号/markdown 标记", A1.badLeadCount === 0, "�
 t("normalizeInner 不留 markdown 星号", A1.noStar, A1.text);
 t("normalizeInner 截到 400 字以内", A1.capped);
 t("normalizeInner 空输入/空值返回空串", A1.emptyOk && A1.nullOk);
+t("normalizeInner 削掉「（第一反应）」这类结构标签", A1.tagOk, A1.tagText);
+t("normalizeInner 不动真正带括号的心里话", A1.tagKeep, A1.tagText);
 
 const A2 = await page.evaluate(async () => {
   const P = await import("/js/critique.js");

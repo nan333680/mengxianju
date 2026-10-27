@@ -80,7 +80,9 @@ for (const s of suites) {
   if (!fs.existsSync(file)) continue;   // 上一条已经报过了
   const src = fs.readFileSync(file, 'utf8');
   if (!src.includes('puppeteer') || !/await page\.goto\(/.test(src)) continue;
-  if (/navigator,\s*'language'/.test(src)) continue;
+  // 单双引号都认：这套检查是为了防「本地中文机器永远绿」，不是管代码风格。
+  // v0.5.4 的 e2e-chaos 用双引号钉子，一度被这条误报成没钉。
+  if (/navigator,\s*['"]language['"]/.test(src)) continue;
   langBad++;
   console.log('  ✗ ' + s + ' 启了浏览器却没钉界面语言 → CI（en-US）上会红');
   console.log('      修法：newPage 之后、goto 之前加 evaluateOnNewDocument 钉 zh-CN（照 e2e-menu.mjs 那份写）');

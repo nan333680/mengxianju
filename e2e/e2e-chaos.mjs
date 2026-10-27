@@ -31,6 +31,15 @@ const port = server.address().port;
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] });
 const page = await browser.newPage();
+// ⚠️ CI 的 runner 是 en-US，而界面语言默认「跟随系统」。钉成中文，否则英文界面下
+//    断言中文文案的地方会红（tools/ci-precheck.mjs --lint-only 为此专门有一条静态检查）。
+//    位置必须在 newPage 之后、goto 之前：预检工具自己也插一份 en-US 伪装，
+//    evaluateOnNewDocument 是晚注册的那份生效，放错了就会被它盖掉，本地永远绿、CI 照样红。
+//    configurable: true 是为了能和预检工具自己的伪装共存。
+await page.evaluateOnNewDocument(() => {
+  Object.defineProperty(navigator, "language", { get: () => "zh-CN", configurable: true });
+  Object.defineProperty(navigator, "languages", { get: () => ["zh-CN", "zh"], configurable: true });
+});
 await page.setCacheEnabled(false);
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = [];

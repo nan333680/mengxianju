@@ -321,10 +321,10 @@ App 顶部会有引导条提示。
 
 以下均在真实浏览器 + 真实模型 API 下实测通过（`tools\run-regression.ps1` 可复跑）：
 
-> 现在是 **148 套**。最近一次**全量**回归跑的是 **v0.5.3（versionCode 160）**：
-> **148 套 / 3706 通过 / 1 失败 / 53.9 分钟**（pwsh 7）。
-> 那 1 个失败是 `e2e-ccsync` 的「`canonExtra` 没进角色卡」—— **这是产品缺口，不是断言过时**：补的设定只存在手机里，卡导出去再导回来就没了（和 `scene` / `appearance` 同一类错误）。修完（`www/js/charcard.js` 的 `MK_CARD_KEYS` / `TEXT_KEYS`）该套 42 项全过，等价 **3707 / 0**。
-> 上一轮（v0.5.2.5 / 159）是 147 套 3682 / 5（5 项都在 `e2e-realfiles` 的时序断言上，修后 69/0）；再往前 v0.5.2.4（158）146 套 3649 / 0、v0.5.2.3（157）146 套 3640 / 1、v0.5.2（154）145 套 3566 / 1、v0.5.1（148）3288 / 0、v0.5.0（143）3155 / 0、v0.4.4（142）3114 / 0。详见 `CHANGELOG.md`。
+> 现在是 **160 套**。最近一次**全量**回归跑的是 **v0.5.4（versionCode 172）**：
+> **160 套 / 4147 通过 / 0 失败 / 64.1 分钟**（pwsh 7）。
+> 上一轮（v0.5.3 / 160）是 148 套 3706 / 1：那 1 个失败是 `e2e-ccsync` 的「`canonExtra` 没进角色卡」—— **那是产品缺口，不是断言过时**：补的设定只存在手机里，卡导出去再导回来就没了（和 `scene` / `appearance` 同一类错误）。修完（`www/js/charcard.js` 的 `MK_CARD_KEYS` / `TEXT_KEYS`）该套全过。
+> 再往前（v0.5.2.5 / 159）147 套 3682 / 5（5 项都在 `e2e-realfiles` 的时序断言上，修后 69/0）；v0.5.2.4（158）146 套 3649 / 0、v0.5.2.3（157）146 套 3640 / 1、v0.5.2（154）145 套 3566 / 1、v0.5.1（148）3288 / 0、v0.5.0（143）3155 / 0、v0.4.4（142）3114 / 0。详见 `CHANGELOG.md`。
 
 | 验证项 | 结果 |
 |---|---|
@@ -355,7 +355,7 @@ powershell -ExecutionPolicy Bypass -File tools\build-apk.ps1
 
 构建脚本会自动：同步 Web 资源 → 打签名 Release 包 → 校验版本号一致性 → 输出 APK。
 
-跑全部回归（148 套 e2e 串行，约 54 分钟）：
+跑全部回归（160 套 e2e 串行，约 64 分钟）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\run-regression.ps1
@@ -379,6 +379,6 @@ node tools\release-check.mjs
 本机这两样都不一样 —— **本地绿、CI 红基本都是这两个原因**）：
 
 ```powershell
-node tools\ci-precheck.mjs             # CI 清单里的全部套件（现在是 29 套，清单从 ci.yml 读）
+node tools\ci-precheck.mjs             # CI 清单里的全部套件（现在是 33 套，清单从 ci.yml 读）
 node tools\ci-precheck.mjs --lint-only # 只做"套件有没有引用被 gitignore 的文件"这项静态检查
 ```

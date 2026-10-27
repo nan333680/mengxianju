@@ -30,7 +30,7 @@ const ts = (m) => Number(m && m.ts) || 0;
  *
  * 返回被改动的条数（0 = 本来就是新数据，或者已经补过）。
  */
-export async function seedParents(charId) {
+export async function seedParents(charId, preloaded) {
   if (!charId) return 0;
   // ⚠️ 这里【不能】因为"串过一次"就整体跳过（v0.5.1.4 修）。
   // 起因（e2e-new 崩在「找到中间那条 AI 消息」之后）：串过链之后，任何
@@ -38,7 +38,9 @@ export async function seedParents(charId) {
   // parentId。它们不在任何一条链上 —— 从叶子回溯永远走不到，屏幕上就是
   // "消息明明在库里，却不见了"。所以每次都扫一遍，只补缺的那些；
   // 一条都不缺的时候它就是一次 getAll + 一次遍历，没有任何写入。
-  const all = await msgs.list(charId, 0, true);
+  // preloaded：调用方已经读过的同一批（含归档）。渲染那条约 0.5.4 起会把刚读到的
+  // 全表传进来 —— 否则「进角色」一次要读三遍全表（seedParents / curMsgs / archived）。
+  const all = Array.isArray(preloaded) ? preloaded : await msgs.list(charId, 0, true);
   const sorted = all.slice().sort((a, b) => ts(a) - ts(b));
   // ⚠️ parentId 是【空字符串】也算缺父（v0.5.3.1 修）。
   //

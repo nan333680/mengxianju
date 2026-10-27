@@ -165,6 +165,13 @@ body{
 .arch-toggle:active{ background:var(--bg3); }
 .arch-list{ margin-top:10px; opacity:.72; }
 .arch-list.hidden{ display:none; }
+/* 首屏分页（0.5.4）：对话太长时只画最近一页，更早的那截收在这个按钮后面 */
+.load-earlier{
+  display:block; width:100%; margin:0 0 10px; padding:9px 12px;
+  background:var(--bg2); border:1px dashed var(--line); border-radius:10px;
+  color:var(--fg3); font-family:inherit; font-size:12px; cursor:pointer;
+}
+.load-earlier:active{ background:var(--bg3); }
 
 .dots::after{
   content:'…'; animation:dots 1.2s steps(4,end) infinite;

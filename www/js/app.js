@@ -1723,6 +1723,9 @@ async function selectChar(id) {
     if (inp) inp.value = '';
     syncInput();
   }
+  // 切角色 = 重新进来：展开量回到一页。不然他在一个长对话里点开过「更早的」，
+  // 切走再回来还是全量重绘 —— 一次点开变成永久变慢。
+  if (id) _shownMore.delete(id);
   curCharId = id;
   curChar = await chars.get(id);
   if (!curChar) { await ensureChar(); return; }
@@ -1735,11 +1738,14 @@ async function selectChar(id) {
   // 0.5.4：进来的第一件事是把老消息串成链（消息带 parentId 的树）。
   // 只补缺的那些、补完记一个标记，之后进这个角色是一次 kv 读就返回。
   // 必须在 renderMessages 之前 —— 渲染要沿 parentId 走活动那一条线。
-  try { await seedParents(id); } catch { /* 串链失败就退回全量顺序，不影响聊天 */ }
+  // ⚠️ 一次读全（0.5.4 流畅度）：串链、钉叶子、画消息用的都是同一批，以前读三遍。
+  //    几千条消息时那是每切一次角色多花一百多毫秒。读失败就让它照原来的样子抛。
+  const rawAll = await msgs.list(id, 0, true);
+  try { await seedParents(id, rawAll); } catch { /* 串链失败就退回全量顺序，不影响聊天 */ }
   // 还没有活动叶子的话（老数据 / 新角色），就把叶子钉在最后一条上 ——
   // 没有它，activePath 每次都退化成「取 ts 最大的那条」，行为一样但每次都要全表比一遍。
   try {
-    if (!(await kv.get(leafKey(id), ''))) await setLeaf(id, pickLeaf(await msgs.list(id), ''));
+    if (!(await kv.get(leafKey(id), ''))) await setLeaf(id, pickLeaf(rawAll.filter(m => m && !m.archived), ''));
   } catch { /* 钉不上就靠退化路径，聊天不受影响 */ }
   await refreshArcBar();           // v0.5.0：剧情卡也是每个角色一张
   $('chat-name').textContent = curChar.name || '未命名';
@@ -1750,7 +1756,7 @@ async function selectChar(id) {
     const p = PRESETS.find(p => p.key === curChar.presetKey);
     av.textContent = p ? p.emoji : '🙂';
   }
-  await renderMessages();
+  await renderMessages(rawAll);
   updateStatus();
   // v0.4.2.3 修（审计 F10）：切角色要顺手把输入行下面那排重画一遍。
   //   余温条是按【当前角色】过滤的（activeCarry 比 charId），
@@ -2381,6 +2387,22 @@ let _archOpen = false;   // 归档区的展开状态（重绘后要保住）
 // 不是"这段对话是什么"，关掉 App 就该回到普通视图。
 let _reading = false;
 
+// ==== 首屏分页（0.5.4 流畅度）====
+//
+// 起因：对话攒到几千条之后，进角色是一次【全量重绘】—— 几千段 HTML 拼成一个大字符串，
+// 一次性塞进 innerHTML，再给每个 .msg 挂 4 个事件监听器。备份里最长的一个角色 3798 条，
+// 实测进角色要 1.4 秒（真机比这个还慢，因为 WebView 的布局比桌面 Chrome 贵）。
+// 用户的感觉是「点进去卡一下」，而且切角色回来、删一条、改个设置都要再卡一次。
+//
+// 做法：默认只画最近的 MSG_PAGE 条，更早的那一截在上面留一个「更早的 N 条（点开）」。
+// 点开就把窗口往前推一页，并且【保持视线不动】（新内容插在上面，滚动位置要补回来）。
+//
+// ⚠️ 只影响【画多少】，不影响 [库里有什么]：上下文、记忆、分支、导出全都不看这个窗口。
+// ⚠️ 展开量按角色记，切走再回来要重新从一页开始 —— 否则那个角色永远是重的。
+const MSG_PAGE = 300;
+const _shownMore = new Map();   // charId → 额外展开的条数
+let _keepScroll = false;        // 这一次重绘结束【不要】滚到底（展开更早时用）
+
 // ==== 自动串联的刹车（v0.5.1.7 修，外部评审 §二-3）====
 //
 // 群聊「自动续一幕」和长篇「自动串联」都是"这一轮生成完，再排一次请求"，
@@ -2468,7 +2490,11 @@ function renderMessagesIfIdle() {
   return renderMessages();
 }
 
-async function renderMessages() {
+async function renderMessages(preloaded) {
+  // 「展开更早」那一次不要滚到底（见 load-earlier 的 onclick）：在【开头】就把标记消费掉，
+  // 中途任何一条 return 都不会把它留到下一次重绘去。
+  const keepScroll = _keepScroll;
+  _keepScroll = false;
   if (!curCharId) { await showEmptyChat(); return; }
   const box = $('messages');
   // ⚠️ 每次重绘前先补一次 parentId（v0.5.1.3 修）。
@@ -2477,10 +2503,14 @@ async function renderMessages() {
   // 叶子自己 —— 4 条库里只画 1 条。原来只在 selectChar 里串链，可是 reload 恢复、
   // 导入、测试直接写库这些路径都不经过 selectChar，屏幕上就只剩最后一条。
   // seedParents 自己有 brSeeded 标记，跑第二次是空转，放这里没有代价。
-  try { await seedParents(curCharId); } catch {}
+  // ⚠️ 全表只读【一遍】（0.5.4 流畅度）：以前这里是 seedParents 读一遍、curMsgs 读一遍、
+  //    archived 再读一遍 —— 几千条消息时白花一百多毫秒，而每次重绘都要跑。
+  //    preloaded 是 selectChar 已经读过的那一份（它自己也要用），没有就现读。
+  const rawAll = Array.isArray(preloaded) ? preloaded : await msgs.list(curCharId, 0, true);
+  try { await seedParents(curCharId, rawAll); } catch {}
   // 分支（v0.5.1.2）：只画【活动那一条线】。别的分支还在库里（备份照存），
   // 但屏幕上同一时刻只能有一条路，否则一段对话会同时出现两个版本的后续。
-  const list = await curMsgs(curCharId);
+  const list = await activePath(curCharId, rawAll.filter(m => !m.archived));
   box.innerHTML = '';
 
   // 开场白只自动补一次。以前只要列表为空就补，导致删掉开场白后下一次
@@ -2489,7 +2519,7 @@ async function renderMessages() {
 
   // 先看有没有归档的：有的话即使当前列表为空，也说明这段关系早就开始了，
   // 不该再显示「在等你先开口」。
-  const archEarly = await msgs.archived(curCharId);
+  const archEarly = rawAll.filter(m => m && m.archived);
 
   if (!list.length && !archEarly.length) {
     const nm = esc(curChar?.name || '她');
@@ -2554,10 +2584,12 @@ async function renderMessages() {
   let archHtml = '';
   if (arch.length) {
     // 展开状态存在外面：不然删一条消息触发重绘，看得好好的归档区会自己收回去
+    // ⚠️ 收起时【不拼正文】（0.5.4 流畅度）：归档可能有几千条，而这些内容屏幕上看不见 ——
+    //    以前每次重绘都白拼一遍。点开那一刻才拼（见下面 arch-toggle 的 onclick）。
     archHtml = '<div class="arch-bar" id="arch-bar">'
       + '<button class="arch-toggle" id="arch-toggle">' + (_archOpen ? '收起已归档的对话' : '更早的 ' + arch.length + ' 条已归档（点开查看）') + '</button>'
       + '<div class="arch-list' + (_archOpen ? '' : ' hidden') + '" id="arch-list">'
-      + arch.map((m, i) => msgHtml(m, list.length + (arch.length - 1 - i))).join('')
+      + (_archOpen ? arch.map((m, i) => msgHtml(m, list.length + (arch.length - 1 - i))).join('') : '')
       + '</div></div>';
   }
 
@@ -2570,7 +2602,13 @@ async function renderMessages() {
   let body = '';
   let lastDay = null;
   const chapEn = getActiveLang() === 'en';
-  for (let i = 0; i < list.length; i++) {
+  // 只画最近这一页（见 MSG_PAGE 那段的注释）。更早的给一个「点开」。
+  const from = Math.max(0, list.length - (MSG_PAGE + (_shownMore.get(curCharId) || 0)));
+  if (from > 0) {
+    body += '<button class="load-earlier" id="load-earlier">'
+      + (chapEn ? 'Earlier ' + from + ' messages' : '更早的 ' + from + ' 条（点开）') + '</button>';
+  }
+  for (let i = from; i < list.length; i++) {
     const m = list[i];
     const d = (m && m.story && typeof m.story.day === 'number' && m.story.day > 0) ? m.story.day : null;
     if (_reading && d !== null && d !== lastDay) {
@@ -2583,11 +2621,36 @@ async function renderMessages() {
   const tg = $('arch-toggle');
   if (tg) tg.onclick = () => {
     _archOpen = !_archOpen;
-    $('arch-list').classList.toggle('hidden', !_archOpen);
+    const listEl = $('arch-list');
+    // 收起时没拼正文（省重绘开销），点开的这一刻才补上。
+    // 判定用 innerHTML 空不空，而不是 "_archOpen 刚变成 true" —— 展开状态下重绘过的话
+    // 正文已经在了，再拼一遍就是两份。
+    if (_archOpen && listEl && !listEl.innerHTML.trim()) {
+      listEl.innerHTML = arch.map((m, i) => msgHtml(m, list.length + (arch.length - 1 - i))).join('');
+      attachMsgActions();   // 新加的这些也要能长按
+    }
+    if (listEl) listEl.classList.toggle('hidden', !_archOpen);
     tg.textContent = _archOpen ? '收起已归档的对话' : '更早的 ' + arch.length + ' 条已归档（点开查看）';
   };
+  // 「更早的 N 条（点开）」：往前推一页，然后【保持视线不动】——
+  // 新内容插在上面，滚动位置不补回来就会整个人被弹到底部，等于白点。
+  const le = $('load-earlier');
+  if (le) le.onclick = async () => {
+    // ⚠️ 生成中不许翻页（0.5.4）：翻页走的是整块重绘（box.innerHTML = ''），
+    //    会把正在流式打字的占位气泡清成一个游离节点 —— 那半句就再也不上屏了，
+    //    直到这一轮结束的最终重绘才突然整段出现。和「生成中不换字号」是同一条道理。
+    if (busy) { toast('她还在打字，等这条说完再往上翻'); return; }
+    const box2 = $('messages');
+    const beforeH = box2 ? box2.scrollHeight : 0;
+    const beforeT = box2 ? box2.scrollTop : 0;
+    _shownMore.set(curCharId, (_shownMore.get(curCharId) || 0) + MSG_PAGE);
+    _keepScroll = true;
+    await renderMessages();
+    const box3 = $('messages');
+    if (box3) box3.scrollTop = beforeT + (box3.scrollHeight - beforeH);
+  };
   attachMsgActions();
-  scrollBottom();
+  if (!keepScroll) scrollBottom();
   // 分支提示条（v0.5.3.1）：重绘完再看一眼有没有岔路口。不是 await 也行，
   // 但这一行之后紧跟的就是用户操作，await 让「画完 = 提示条也对了」。
   try { await refreshBranchBar(); } catch { /* 提示条坏了不该把聊天画不出来 */ }
@@ -7626,6 +7689,12 @@ let namedInText = false;
           });
           for await (const ch of st1) {
             acc += ch;
+            // ⚠️ 必须同步到外层 full（0.5.4 修，chaos 场景 2/3 抓到的真 bug）：
+            //    中断时最外层 catch 读的是 full —— 只写局部 acc 的话，
+            //    它读到的永远是空串，于是「用户按停止 / 生成中切角色」这两条路
+            //    都以为【一个字都没收到】：半截不落库、只弹一句「已停止生成」，
+            //    屏幕上刚吐出来的那半句当场消失。总开关关掉时走的就是这条分支。
+            full = acc;
             if (bubble) { bubble.textContent = String(acc).replace(/\*/g, ''); scrollBottom(); }
           }
           // 包成一个单元素候选池：下面评审、pick、重写全都照原样走，
@@ -19896,7 +19965,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.3.9';
+const WEB_VERSION_FALLBACK = '0.5.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

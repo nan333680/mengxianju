@@ -189,11 +189,32 @@ async function waitLastText(need, ms = 25000) {
   }
   return false;
 }
+const CHAR_NAME = { CHA: "甲", CHB: "乙", CHC: "丙" };
+
+// 等到会话头上真显示成这个角色。
+// 不能只 sleep：CI 的 runner 比本机慢，selectChar 里要读库 + 重绘，
+// 固定等 900ms 有时还不够，读 chat-name 会读到上一态（甚至「No character selected」）。
+async function waitChatName(name, ms) {
+  const t0 = Date.now();
+  for (;;) {
+    const cur = await page.evaluate(() => (document.getElementById("chat-name") || {}).textContent || "");
+    if (String(cur).trim() === name) return String(cur).trim();
+    if (Date.now() - t0 > ms) return String(cur).trim();
+    await sleep(80);
+  }
+}
+
 async function openChar(id) {
   await page.evaluate(() => { const b = document.getElementById("btn-chars"); if (b) b.click(); });
-  await sleep(400);
+  // 等卡片真的画出来（列表是异步渲染的），再点。
+  const t0 = Date.now();
+  while (Date.now() - t0 < 6000) {
+    const has = await page.evaluate((cid) => !![...document.querySelectorAll("#char-list .char-card")].find(x => (x.dataset.id || "") === cid), id);
+    if (has) break;
+    await sleep(80);
+  }
   await page.evaluate((cid) => { const cards = [...document.querySelectorAll("#char-list .char-card")]; const c = cards.find(x => (x.dataset.id || "") === cid); if (c) c.click(); }, id);
-  await sleep(900);
+  await waitChatName(CHAR_NAME[id] || id, 8000);
 }
 
 // ================= 1. 生成中连点发送 =================
@@ -317,7 +338,7 @@ await mode("ok");
 const e8 = errs.length;
 for (let i = 0; i < 8; i++) { await openChar(i % 2 ? "CHB" : "CHC"); await sleep(150); }
 await openChar("CHA");
-const nameOk = await page.evaluate(() => (document.getElementById("chat-name") || {}).textContent || "");
+const nameOk = await waitChatName("甲", 8000);
 t("连切八次不崩", errs.length === e8, errs.slice(e8).join(" | "));
 t("最后停在点开的那个角色上", nameOk.trim() === "甲", "chat-name=" + nameOk);
 const msgLen = await page.$$eval("#messages .msg", els => els.length);

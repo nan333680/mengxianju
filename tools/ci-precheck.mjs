@@ -1,4 +1,4 @@
-// tools/ci-precheck.mjs —— 在本地复刻 CI 的环境跑那 20 套（v0.4.1 加）
+// tools/ci-precheck.mjs —— 在本地复刻 CI 的环境跑那批套件（v0.4.1 加；套件数随 ci.yml 的 $suites 变，别在这里写死）
 //
 // 为什么要有它：一天里连踩三次「本地全绿、CI 全红」，全是环境差异，不是代码差异：
 //   ① 系统语言：GitHub runner 是 en-US，本机是中文 → 任何断言中文文案的套件必红

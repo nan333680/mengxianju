@@ -1,6 +1,6 @@
 import { kv, chars, msgs, mem, wb, scenes, uid, wipeAll, dbAdmin, DB_VERSION } from './db.js';
 import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, testConnection, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
-import { buildStablePrompt, buildTurnNote, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR, userSideLines } from './persona.js';
+import { buildStablePrompt, buildTurnNote, askHits, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR, userSideLines } from './persona.js';
 import { assembleSceneContext, cleanExample, cutAtSentence } from './scenectx.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
 import { t, tt, applyI18n, watchI18n, setLang, getLang, getActiveLang, refreshLang, LANGS } from './i18n.js';
@@ -7361,6 +7361,13 @@ let namedInText = false;
       inner: LIVE ? innerText : '',
       relation: LIVE ? relationLine(psyBefore) : '',
       lifeLine: LIVE ? lifeLine(psyBefore) : '',
+      // 「解释型的问」防自污染（0.5.4.1 补）：上一轮她的原话里有没有「先撇清再问」那种写法。
+      // 有就把命中的片段点名给她看（persona 那边注入一段），没有就是空数组、那一段整段不出现。
+      // ⚠️ 不挂 LIVE 开关：这和 stable 里那几条反客服腔的规则是一组 ——
+      //    治的是「AI 味」本身，不是 v2 的思考管线；开关关掉时它们照样生效。
+      // ⚠️ 只读上一轮，不读更早的：这种毛病是「照着上一轮的样子继续写」，
+      //    往更早翻会把早就改掉的一句话一直挂着念。
+      askAvoid: askHits((_aiHist.slice(-1)[0] || {}).content || ''),
       // 识图（0.5.3.6 补）：这一轮有没有图。有图时 persona 会多一段「先看清图」——
       // 不加这段，模型会把「图有点糊」演成「图没显示出来，你再发一次」（实测复现）。
       vision: useVision,
@@ -11321,7 +11328,7 @@ function composeGroupPersona(c) {
       tail += '（在这个群里：' + String(cfg.note).replace(/[\r\n\t ]+/g, ' ').trim().slice(0, GROUP_NOTE_MAX) + '）';
     }
     // 「她怎么看群里这些人」（v0.4.1.4）：写成她的视角，每轮都在。
-    //    用户举的例子是"文文觉得芙兰比自己会照顾人" —— 这种"对人的判断"是设定，
+    //    用户举的例子是"A 觉得 B 比自己会照顾人" —— 这种"对人的判断"是设定，
     //    不是记忆：记忆是事件、会过期、还会被话题相关性筛掉（只留 24 条）。
     const vw = (cfg.views && typeof cfg.views === 'object') ? cfg.views : {};
     const vs = [];
@@ -11598,9 +11605,9 @@ function splitBySpeaker(text, members, primary, allowNarr) {
     //   · 其它 = 模型省略了重复的名字标记，而它写的多半是台词 → 归【上一个说话人】
     //     （认不出上一个就归这一轮的主说话人）
     // ⚠️ 起因（用户实测 + 截图）：模型写成
-    //      【芙兰】（她光着一只脚往前挪了半步）
-    //      回来了就好。那半句话你发了一半，我没看明白。
-    //      【文文】（厨房那边锅盖响了）
+    //      【甲】（一段动作描写）
+    //      一句没有名字标记的台词。
+    //      【乙】（另一段动作描写）
     //    中间那行没标名字，老逻辑把【整句台词】当成了旁白 ——
     //    界面上一句台词躺在虚线框里，看着就是"她说了话但没有说话人"。
     //    解析器原来只认"有没有【】"，不认"这是不是台词"。
@@ -12569,7 +12576,7 @@ function openGroupNoteEditor(gid, cid) {
 }
 
 /** 她怎么看群里这些人（v0.4.1.4 新增）。
- *  用户举的例子是「文文觉得芙兰比自己会照顾人」这种。
+ *  用户举的例子是「A 觉得 B 比自己会照顾人」这种。
  *  ⚠️ 它【不能】靠长期记忆做：记忆是事件、会过期、还会被话题相关性筛掉（只留 24 条），
  *     而"她对某个人的判断"是每轮都该在场的东西 —— 所以它是设定，不是记忆。 */
 function openGroupViewsEditor(gid, cid) {

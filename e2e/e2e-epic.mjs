@@ -158,6 +158,10 @@ t('反客服腔点名「总结一下」', s1.includes('总结一下'), '');
 t('反客服腔点名「首先 / 其次」', s1.includes('首先 / 其次'), '');
 t('★ 禁止把前因后果讲明白（0.5.4.1）', s1.includes('把动机讲明白'), '');
 t('并且禁「也就是说」这类自我注解', s1.includes('替自己上一句做注解'), '');
+// 「解释型的问」（0.5.4.1 补）：先撇清、再问、再解释自己在问什么 —— 像在做笔录，不像在说话。
+t('★ 禁止「先撇清再问」（0.5.4.1）', s1.includes('先申明自己不是在要什么'), '');
+t('★ 禁止问完再补一句说明（0.5.4.1）', s1.includes('问就问一句，不附说明书'), '');
+t('追问也说了形状：一句短的、别铺垫', s1.includes('要问就问一句'), '告诉 CHANNEL_HINT 在不在');
 
 console.log('');
 console.log('=== 2. 普通档：没有长篇要求，max_tokens 保持 2048 ===');
@@ -207,6 +211,30 @@ const msgs4 = (lastReq && lastReq.messages) || [];
 const tailUser = msgs4.filter(m => m.role === 'user').pop() || {};
 t('自动那一段发的是「继续往下写」', String(tailUser.content || '').indexOf('继续往下写') >= 0, String(tailUser.content || '').slice(0, 40));
 t('自动那一段没有重复他那句台词', String(tailUser.content || '').indexOf('雨下大了') < 0, '');
+
+console.log('');
+console.log('=== 3b. 「解释型的问」的检测器（0.5.4.1 补）===');
+// 光在 stable 里加禁令不够：这种写法会自污染（上一轮那样写了，这一轮照着写）。
+// 所以有一个检测器，上一轮命中时点名给她看。这里断言它【不误伤】、命中时给片段、最多两条。
+const ah = await page.evaluate(async () => {
+  const M = await import('/js/persona.js');
+  return {
+    hit: M.askHits('我不是要你别走。我就是想问一句，你到底怎么想的。'),
+    hi: M.askHits('你把话说清楚。'),
+    clean: M.askHits('水凉了。你把外袍披上，别泡太久。'),
+    star: M.askHits('*这一句是心里话，不是问句* 走罢。'),
+    cap: M.askHits('我不是要问你走不走，我是想问一句。你把话说清楚，给我说明白。').length
+  };
+});
+t('命中「先撇清再问」', ah.hit.length >= 1, JSON.stringify(ah.hit));
+t('命中「你把话说清楚」', ah.hi.length >= 1, JSON.stringify(ah.hi));
+t('★ 干净的一句不误伤', ah.clean.length === 0, JSON.stringify(ah.clean));
+t('星号里的心里话不算「问」', ah.star.length === 0, JSON.stringify(ah.star));
+t('一次最多点名两条', ah.cap <= 2, String(ah.cap));
+// 注入的那一段只在命中时出现 —— 断言标题真的写进了 persona 的 turnNote 拼装里。
+const psrc = fs.readFileSync(R + '/www/js/persona.js', 'utf8');
+t('turnNote 有「上一轮你就是这样问的」段', psrc.indexOf('# 上一轮你就是这样问的') >= 0, '');
+t('并且说明了只在命中时才出现', psrc.indexOf('askAvoid = []') >= 0 && psrc.indexOf('askAvoid.length') >= 0, '');
 
 console.log('');
 console.log('=== 4. 没有未捕获错误 ===');

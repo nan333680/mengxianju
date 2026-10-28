@@ -8156,7 +8156,17 @@ let namedInText = false;
     // 活动叶子必须推给它：否则叶子里那条用户消息就成了一条谁都走不到的旁支 ——
     // 屏幕上还看得见，点它的「重试一次」却找不到（curMsgs 走的是活动路径），
     // 下一次发送也会以它的父为父、和它并列成兄弟分支。
-    if (e.name !== 'AbortError' && umSaved && um) {
+    //
+    // ⚠️「用户按了停止」这条路【也必须推】（0.5.4 修，用户报的真 bug）：
+    //   「在她还没输出的时候点停止，长按那条发出去的消息没菜单；再发一条，
+    //     那条就消失；重新编辑/重新思考之后它又冒出来，变成连发两条。」
+    // 一个字都没收到时，AbortError 分支只弹了句 toast —— leaf 还停在【上一轮那条
+    // assistant】上，这条 user 消息于是成了旁支：curMsgs 里没有它 →
+    // showMsgMenu 第 2957 行「if (!m) return」（长按静默无反应）；
+    // 下一次全量重绘 activePath 不含它 → 屏幕上消失。重新编辑/重思考把 leaf 挪过去，
+    // 它才又回到活动路径 —— 而新消息当时已经以旧 assistant 为父落库，于是成了两条。
+    // 有半段内容时下面那支会再把 leaf 推到「（已中断）」那条（父是 um），推两次无害。
+    if (umSaved && um) {
       try { await setLeaf(myCharId, um.id); } catch { /* 推不动也不该盖住真正的原因 */ }
     }
 
@@ -19965,7 +19975,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.4';
+const WEB_VERSION_FALLBACK = '0.5.4.1';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

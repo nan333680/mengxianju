@@ -16,7 +16,7 @@ const FIX = R + '/_fixtures';
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const MIME = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 fs.mkdirSync(FIX, { recursive: true });
-// 形状与用户那份「梦弦居世界书-博丽灵梦.json」一致：charNames + groups + solo
+// 形状与用户导出那份世界书的一致：charNames + groups + solo
 const wbFile = FIX + '/worldbook-full.json';
 fs.writeFileSync(wbFile, JSON.stringify({
   version: 1, kind: 'worldbook', exportedAt: Date.now(),

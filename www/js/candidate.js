@@ -1,9 +1,16 @@
 // www/js/candidate.js —— 一次写三条候选（活人感 v2）
 //
 // 为什么不是"生成一条，不满意再重来"：
-//   重来拿到的是【同一个模型、同一个温度】下的另一个说法，风格是同一个模子。
-//   真正有区分度的是【温度区间】：0.85 稳、1.00 平时、1.15 敢写半截话。
+//   重来拿到的是【同一个模型、同一套提示词】下的另一个说法，风格是同一个模子。
 //   三条同时在跑，评审才有得挑 —— 挑比改便宜，也比"重写一次"更像人。
+//
+// ⚠️ 温度拉不开三条（0.6.x 复查，一手：api-docs.deepseek.com/guides/thinking_mode/）：
+//   DeepSeek 官方写明「思考模式不支持 temperature / presence_penalty / frequency_penalty，
+//   设了不报错也没有任何效果」，并且 deepseek-flash 在【非思考模式】下 top_p 固定 1.0、
+//   你的值被忽略。梦弦居默认就是 deepseek-flash + reasoningEffort:'none'（见 api.js:27/346），
+//   也就是说：三条候选的 temperature 全都不起作用，三条的差别只剩采样随机性本身。
+//   真正能拉开三条的是【结尾那句写法取向】—— 见 CAND_HINTS。温度照旧传，
+//   换到认温度的服务商（ollama / openrouter / 硅基流动…）时它仍然管用。
 //
 // ⚠️ 三条共用一个 AbortController：用户点停止、切角色、发新消息，
 //   三路必须一起断。留着两条在后台跑完，既浪费钱，也可能在切角色后
@@ -15,8 +22,21 @@
 
 import { streamChat } from './api.js';
 
-/** 三条候选的温度。改这里就是改"她今天有多敢"。 */
+/** 三条候选的温度。改这里就是改"她今天有多敢"。（对不认温度的服务商无效，见文件头） */
 export const TEMPS = [0.85, 1.0, 1.15];
+
+/**
+ * 附在第 2、3 条末尾的【写法取向】。第 1 条不附 —— 它是要先滚到屏幕上的那条，
+ * 必须和平时完全一致，否则「先显示的那条」和「最终落库的那条」会是两种笔法。
+ *
+ * ⚠️ 这两句是加在 messages 末尾的一条 user 消息，不是 system：
+ *     system 必须与历史逐字节相同（前缀缓存），往那儿加东西会让整轮缓存失效。
+ */
+export const CAND_HINTS = [
+  '',
+  '（这一条收着写：能两句说完就别三句。动作少一点，话留一截，不用把这一轮的事交代圆。）',
+  '（这一条放开写：想到什么先说什么，允许有半句没说完，别修饰，别给这一轮收尾。）',
+];
 
 /**
  * 这一轮实际用的三条温度。
@@ -65,9 +85,11 @@ export async function genCandidates(o) {
     let text = '';
     let finish = '';
     let usage = null;
+    const hint = CAND_HINTS[idx] || '';
+    const msgs = hint ? baseMsgs.concat([{ role: 'user', content: hint }]) : baseMsgs;
     const stream = streamChat({
       ...opts,
-      messages: baseMsgs,
+      messages: msgs,
       temperature: temp,
       signal: ctl.signal,
       onFinish: (r) => { finish = r || ''; },

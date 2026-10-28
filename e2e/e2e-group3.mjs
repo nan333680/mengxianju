@@ -172,11 +172,11 @@ t('旁白那条的正文里没有【】残留', scene[1] && !scene[1].c.includes
 t('轮次从【最后开口的那个人】往后推（乙 → 丙）', r.turnIndex === 2, r.turnIndex);
 
 console.log('=== 2b. 模型漏标名字的台词：归【上一个说话人】，不再变成旁白 ===');
-// 用户实测截图里的那条：「回来了就好。那半句话你发了一半，我没看明白。」
-// 前面是【芙兰】的一句（旁白），后面是【文文】的一句 —— 中间那行没标名字。
+// 用户实测截图里的那种形状：一段旁白，跟着一句没标名字的台词，再跟另一个人。
+// 前面是【甲】的一句（旁白），后面是【乙】的一句 —— 中间那行没标名字。
 // ⚠️ 第一行必须是【裸的】括号行 —— 带【甲】标记的行本来就归甲（那是她的动作），
 //    不是旁白（第一版把断言打在"有标记的行"上了）。
-replyText = '（她往前挪了半步）' + NL + '回来了就好。那半句话你发了一半，我没看明白。'
+replyText = '（她往前挪了半步）' + NL + '这句台词前面没有名字标记。'
   + NL + '【乙】（锅盖响了）' + NL + '我去看看。';
 await send('接着说');
 const r2b = await aiMsgs();
@@ -188,7 +188,7 @@ t('拆成了四条（两句台词各自成段）', last3b.length === 4, last3b.m
 const starterName = (sysOf().find(x => x.includes('必须有「')) || '').match(/必须有「([^」]+)」/);
 const NAME2ID = { '甲': 'ga', '乙': 'gb', '丙': 'gc' };
 const starterId = starterName ? NAME2ID[starterName[1]] : '';
-t('没标名字的台词归【这一轮的起头人】', last3b[1] && !!starterId && last3b[1].s === starterId && last3b[1].c.indexOf('回来了就好') >= 0,
+t('没标名字的台词归【这一轮的起头人】', last3b[1] && !!starterId && last3b[1].s === starterId && last3b[1].c.indexOf('没有名字标记') >= 0,
   { got: last3b[1], starter: starterName && starterName[1], starterId: starterId });
 t('它【不再】是旁白', last3b[1] && last3b[1].narr !== true, last3b[1]);
 t('括号包住的那行仍然是旁白', last3b[0] && last3b[0].s === null && last3b[0].narr === true, last3b[0]);

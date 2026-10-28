@@ -441,6 +441,13 @@ t("B1 一轮里独白、判断、评审各跑一次", k1 === "crit,dir,inner", "
 const temps1 = h1.stream.filter(x => !x.isRewrite).map(x => Number(Number(x.temp).toFixed(2))).sort((a, b) => a - b);
 t("B1 三条候选并行，温度 0.85/1.0/1.15", temps1.length === 3 && temps1[0] === 0.85 && temps1[1] === 1 && temps1[2] === 1.15, temps1.join(","));
 t("B1 没错可挑时不额外重写", h1.stream.every(x => !x.isRewrite), "流式请求数=" + h1.stream.length);
+// 温度在这家模型上不起作用（DeepSeek 官方：思考模式不支持 temperature，
+// deepseek-flash 非思考模式 top_p 固定 1.0）—— 三条的区分度靠结尾这句写法取向。
+const cands1 = h1.stream.filter(x => !x.isRewrite);
+const hinted1 = cands1.filter(x => String(x.all).indexOf("这一条收着写") >= 0 || String(x.all).indexOf("这一条放开写") >= 0);
+t("B1 三条里两条带写法取向", hinted1.length === 2, "带取向=" + hinted1.length);
+const c085 = cands1.find(x => Math.abs(Number(x.temp) - 0.85) < 1e-6) || {};
+t("B1 要上屏的第 1 条不附写法取向", String(c085.all || "").indexOf("这一条收着写") < 0 && String(c085.all || "").indexOf("这一条放开写") < 0);
 const gen1 = (h1.stream.find(x => !x.isRewrite) || {}).all || "";
 t("B1 生成提示词里带「你脑子里刚转过这几句」", gen1.indexOf("# 你脑子里刚转过这几句") >= 0);
 t("B1 生成提示词里带归一后的独白", gen1.indexOf("第一反应是没懂") >= 0);

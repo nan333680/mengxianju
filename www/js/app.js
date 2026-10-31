@@ -8221,7 +8221,10 @@ let namedInText = false;
     // showMsgMenu 第 2957 行「if (!m) return」（长按静默无反应）；
     // 下一次全量重绘 activePath 不含它 → 屏幕上消失。重新编辑/重思考把 leaf 挪过去，
     // 它才又回到活动路径 —— 而新消息当时已经以旧 assistant 为父落库，于是成了两条。
-    // 有半段内容时下面那支会再把 leaf 推到「（已中断）」那条（父是 um），推两次无害。
+    // 有半段内容时，下面两支各自会把 leaf 再往「（已中断）」那条推一次（父是 um），推两次无害。
+    // ⚠️ 「用户按停止 + 已经有半段」这一路（AbortError 且 full 非空）原来【漏了这次推】：
+    //    那条半截回复只插进了 DOM，没进活动路径 —— 屏幕上看得见、长按没菜单，
+    //    等到下一次全量重绘还会凭空消失。e2e-bugfix2 场景 7「长按能弹出菜单」抓的就是它。
     if (umSaved && um) {
       try { await setLeaf(myCharId, um.id); } catch { /* 推不动也不该盖住真正的原因 */ }
     }
@@ -8263,6 +8266,8 @@ let namedInText = false;
           markFresh($('messages').lastElementChild);
           attachMsgActions();
         }
+        // 半截回复也要进活动路径，否则长按找不到它（与上面非 Abort 的半段分支对齐）
+        try { await setLeaf(myCharId, am.id); } catch {}
       } else if (curCharId === myCharId) {
         // 切角色导致的中断不弹这个提示，不然会莫名其妙跳一下
         toast('已停止生成');

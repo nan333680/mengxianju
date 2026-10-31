@@ -218,6 +218,13 @@ export function normalizePsyche(raw) {
 //   · 情绪 / 火气仍走 decayPsyche 的按次数衰减（那是另一套语义，别混）。
 //   · 关系（relation）、秘密（secrets）、底线（boundaries）、认定（beliefs）不设期限 ——
 //     那些本来就是慢变量，过期反而会让她忘掉自己瞒着什么。
+//
+// 0.5.4.1：到期【封存，不删除】（过时事实标失效而不是丢掉了 —— 见 Zep 的
+// temporal knowledge graph：valid_at / invalid_at 两列，被取代的标失效）。
+// 理由不是洁癖：
+//   · 删了以后她再提起同一件事，状态里是空的，等于这件事从没发生过；
+//   · 封存以后 pushCapped 还能靠 findItem 认出来「这事她想过」，一拍就复活（见下）。
+// 封存的条目不注入 psychePrompt（和 dead 的仇一样），原文留着给检查器和导出看。
 const TTL = {
   withheld: 24 * 3600 * 1000,     // 这一轮没说出口的：过了今天就不算「刚刚」
   openLoops: 48 * 3600 * 1000,    // 还没问出口的事：两天还没问，基本就是没打算问
@@ -229,9 +236,10 @@ const TTL = {
 
 function pruneByAge(p, now) {
   if (!now) return p;
-  const keep = (list, ttl) => (Array.isArray(list) ? list.filter(x => {
+  const keep = (list, ttl) => (Array.isArray(list) ? list.map(x => {
     const at = Number(x && x.at) || 0;
-    return !at || (now - at) < ttl;
+    if (!at || (now - at) < ttl) return x;
+    return { ...x, dead: true, deadAt: now };   // 封存：还在数组里，但不进提示词
   }) : []);
   p.withheld = keep(p.withheld, TTL.withheld);
   p.openLoops = keep(p.openLoops, TTL.openLoops);
@@ -299,7 +307,15 @@ function findItem(list, text) {
 function pushCapped(list, item, cap) {
   if (!item || !item.t) return;
   const i = findItem(list, item.t);
-  if (i >= 0) { list[i] = { ...list[i], ...item }; return; }   // 同一件事不叠加，只更新
+  if (i >= 0) {
+    // 同一件事不叠加，只更新。原来是【封存】的那条也要复活 ——
+    // 她隔了一周又提起同一件事，这就不是过期条目，是这件事还活着。
+    const merged = { ...list[i], ...item };
+    if (!item.dead) { delete merged.dead; delete merged.deadAt; }
+    if (item.at) merged.at = item.at;
+    list[i] = merged;
+    return;
+  }
   list.push(item);
   while (list.length > cap) list.shift();
 }
@@ -460,24 +476,24 @@ export function psychePrompt(raw, opts = {}) {
   }
   const gr = p.grudges.filter(g => g && !g.dead && g.t).map(g => g.t + ageNote(g.at, now));
   if (gr.length) L.push('· 还没消的：' + gr.join('；'));
-  const op = p.openLoops.map(x => x.t + ageNote(x.at, now)).filter(Boolean);
+  const op = p.openLoops.filter(x => x && x.t && !x.dead).map(x => x.t + ageNote(x.at, now)).filter(Boolean);
   if (op.length) L.push('· 还没问出口的：' + op.join('；'));
-  const bl = p.beliefs.filter(b => b.t).map(b => b.t + (b.conf >= 0.6 ? '（你比较确信）' : '（你自己也没底）'));
+  const bl = p.beliefs.filter(b => b && b.t && !b.dead).map(b => b.t + (b.conf >= 0.6 ? '（你比较确信）' : '（你自己也没底）'));
   if (bl.length) L.push('· 你心里认定的：' + bl.join('；'));
   // 信息差（活人感 v2）：她瞒着的事。这里必须写「别主动交代」——
   // 只要列出来不约束，模型会把它当成"待揭示的剧情"顺手讲掉，隐瞒就消失了。
-  const sc = p.secrets.filter(x => x && x.t)
+  const sc = p.secrets.filter(x => x && x.t && !x.dead)
     .map(x => x.t + ageNote(x.at, now) + (x.reveal ? '（除非他先问起' + x.reveal + '，否则别主动说）' : ''));
   if (sc.length) L.push('· 你瞒着他的：' + sc.join('；'));
   // 她自己的生活（活人感 v2）：跟他没关系的事。人是先有自己的日子，才有他的话。
   // 不给"所以要不要提"的指令 —— 提不提都行，她不是来汇报的。
-  const se = p.selfEvents.map(x => (x && x.t) ? x.t + ageNote(x.at, now) : '').filter(Boolean);
+  const se = p.selfEvents.filter(x => x && !x.dead).map(x => (x && x.t) ? x.t + ageNote(x.at, now) : '').filter(Boolean);
   if (se.length) L.push('· 你自己这两天：' + se.join('；'));
   // 底线（活人感 v2）：她不吃的那一套。写「不需要假装没事」是为了防她
   // 被踩了还替对方圆场 —— 那是最典型的 AI 式懂事。
-  const bd = p.boundaries.map(x => x && x.t).filter(Boolean);
+  const bd = p.boundaries.filter(x => x && !x.dead).map(x => x && x.t).filter(Boolean);
   if (bd.length) L.push('· 你的底线：' + bd.join('；') + '。踩到你会真的不高兴，不需要假装没事');
-  const wd = p.withheld.map(x => x.t + ageNote(x.at, now)).filter(Boolean);
+  const wd = p.withheld.filter(x => x && x.t && !x.dead).map(x => x.t + ageNote(x.at, now)).filter(Boolean);
   if (wd.length) L.push('· 上一轮你咽回去了：' + wd.join('；'));
 
   if (!L.length) return '';

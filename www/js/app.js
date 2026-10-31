@@ -43,6 +43,10 @@ import { runDirector, directorDelta, normalizeDirector, MOVE_NAME } from './dire
 // 这一步坏掉不能挡住聊天（文档 §3 第 2 条）。
 import { runInner } from './innerthought.js';
 import { genCandidates, addUsage } from './candidate.js';
+// 周期性反思（0.5.4.1，借 Generative Agents 的 reflection）：
+// 把攒了几天的几件事合成一条更稳的看法，写回 beliefs。
+// 一天最多一次，失败返回 null，不挡聊天。
+import { runReflect, shouldReflect, applyReflect } from './reflect.js';
 import { runCritique } from './critique.js';
 import { planCadence } from './cadence.js';
 // 本地向量（0.5.3.6 辅助层）：模型在 APK 里，用 ONNX Runtime 跑，只做重复检测。
@@ -2117,6 +2121,47 @@ async function syncProactiveQueue() {
  *
  * 调用点：每轮说完话之后（见 send 收尾），fire-and-forget。
  */
+/**
+ * 周期性反思（0.5.4.1）。
+ *
+ * 和 prewriteProactive 的区别：那个是「她想起你」（要话），这个是「她想明白了一件事」
+ * （只写状态，不产生消息）。所以它没有消息副作用，跑失败了也没有任何东西要回滚。
+ *
+ * 什么时候跑：每轮聊完顺手判一次，判据在 shouldReflect 里 ——
+ * 单聊、v2 开着、有素材、距上次 >= 12 小时。真正落地还要 kv 里那枚时间戳。
+ * 为什么不做定时器：软件在手机上随时被杀，定时器不会活过来；挂在聊天的收尾上
+ * 才是「她只有在跟你说话的时候才往前走一点」这个语义。
+ */
+async function maybeReflect(charId) {
+  if (!charId || !S.apiKey) return;
+  try {
+    const c = await chars.get(charId);
+    if (!c || isGroup(c)) return;                       // 群聊不做：群里的"她"是几个人，反思谁的？
+    const pk = 'psyche:' + charId;
+    const lastAt = Number(await kv.get('reflect:' + charId, 0)) || 0;
+    let psy = null;
+    try { psy = normalizePsyche(await kv.get(pk, null)); } catch { psy = null; }
+    if (!psy) return;
+    if (!shouldReflect(psy, lastAt)) return;
+    const P2 = effSettings(c, S);
+    let stable = '';
+    try { stable = buildStablePrompt(c, P2, await worldbookConst(charId)); } catch { stable = ''; }
+    if (!stable) return;
+    const got = await runReflect({
+      stable,
+      psyche: psy,
+      api: { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider }
+    });
+    if (!got || !got.belief) return;
+    const next = applyReflect(psy, got.belief, Date.now());
+    await kv.set(pk, next);
+    await kv.set('reflect:' + charId, Date.now());
+    console.log('[reflect] ' + got.belief);
+  } catch (err) {
+    console.warn('[reflect] 外层兜底：' + ((err && err.message) || err));
+  }
+}
+
 async function prewriteProactive(charId) {
   if (!charId || !S.apiKey) return;
   if (!proactiveAvailable()) return;
@@ -8101,6 +8146,10 @@ let namedInText = false;
     // 不 await —— 它要两次请求（独白 + 写三句），不能拖住这一轮的收尾。
     // 门槛在函数里：存货够、关系不够熟、群聊、没有原生插件，都不发请求。
     if (LIVE) prewriteProactive(myCharId).catch(() => { /* 预写失败不影响任何东西 */ });
+    // 周期性反思（0.5.4.1）：把攒了几天的几件事合成一条更稳的看法，写回 beliefs。
+    // 不 await —— 它是一次额外请求（约 200 token），不该让这一轮的收尾等它。
+    // 门槛全在函数里：单聊、v2 开着、素材够、距上次 12 小时以上，不满足一次都不发。
+    if (LIVE) maybeReflect(myCharId).catch(() => { /* 反思失败不影响任何东西 */ });
     // 她说完自动读出来（v1.21.56，开关默认关）。
     // ⚠️ 放在【整段都落库之后】：分段发送时逐段念会一顿一顿的，连起来念才像说话。
     if (S.ttsOn) speak(pieces.map(x => x.text).join(''));

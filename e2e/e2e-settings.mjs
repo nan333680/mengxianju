@@ -406,14 +406,28 @@ t('5 个角色全部导入', after.chars === 5 && !after.names.includes('空白�
 t('1709 条消息全部导入', after.msgs - before.msgs === 1709, '+' + (after.msgs - before.msgs));
 t('43 条记忆全部导入', after.mems - before.mems === 43, '+' + (after.mems - before.mems));
 
-const yy = await page.evaluate(async () => {
+// ⚠️ 别在断言里写死角色名：名字属于备份里的隐私，而且 fixture 换成别的备份就会挂。
+//    这里从 fixture 自己查出「温度 1.1 的那一个」，用它来验参数有没有原样搬过来。
+const FIXC = JSON.parse(fs.readFileSync(BACKUP, 'utf8')).characters || [];
+const REAL = FIXC.find(c => Math.abs(Number(c.temperature) - 1.1) < 0.001) || FIXC[0];
+const yy = await page.evaluate(async (nm) => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const cs = await new Promise(r => { const q = db.transaction('characters').objectStore('characters').getAll(); q.onsuccess = () => r(q.result); });
-  db.close(); return cs.find(c => c.name === '幽幽子') || null;
-});
-t('幽幽子的参数完整保留（温度 1.1）', yy && Math.abs(yy.temperature - 1.1) < 0.001, yy ? String(yy.temperature) : 'not found');
-t('幽幽子的人设没丢', !!yy && (yy.persona || '').length > 1000, yy ? String((yy.persona||'').length) + ' 字符' : '');
+  db.close(); return cs.find(c => c.name === nm) || null;
+}, REAL.name);
+t('温度 1.1 那个角色的参数完整保留', yy && Math.abs(yy.temperature - 1.1) < 0.001, yy ? String(yy.temperature) : 'not found');
+t('那个人设没丢', !!yy && (yy.persona || '').length > 1000, yy ? String((yy.persona||'').length) + ' 字符' : '');
+
+console.log('');
+console.log('=== 9. 温度滑杆下面那句说明 ===');
+// DeepSeek 官方文档写明：非思考模式 temperature / top_p 都不生效（值被忽略，不报错）。
+// 滑杆还在、但对 DeepSeek 无效，不说一句就是骗人 —— 所以设置页有一行 hint 必须留着。
+const HTML_IDX = fs.readFileSync(path.join(WWW, 'index.html'), 'utf8');
+t('设置页有温度说明', HTML_IDX.includes('DeepSeek 是固定采样'), 'index.html');
+t('说明里点明 top_p 也不生效', /温度、top_p 都不生效/.test(HTML_IDX), 'index.html');
+t('滑杆本身没被删掉', /id="e-temp"/.test(HTML_IDX), 'index.html');
+t('说明带英文翻译钩子', /data-i18n-en="[^"]*temperature and top_p are ignored/.test(HTML_IDX), 'index.html');
 
 console.log('');
 t('全程无 JS 错误', errs.length === 0, errs.slice(0,3).join(' | '));

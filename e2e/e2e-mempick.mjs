@@ -208,6 +208,41 @@ const res = await page.evaluate(async () => {
   const pn = pickMemories({ list: [mk({ kind: "event", text: "他那天在便利店门口把伞弄丢了", day: 40 })], nowDay: 70 });
   out.l6 = pn.used[0].blur === false;
 
+  // ---- M. 记忆轻链接（A-MEM 极简版：用库里已有的 who / key 当链接）----
+  // 五个同 who 的记忆，只给 3 个名额：前 3 条进来，后 2 条靠链接被带进来。
+  const linkPool = [
+    mk({ id: "lk1", kind: "event", text: "他答应周末陪我去看灯会", day: 20, who: "他" }),
+    mk({ id: "lk2", kind: "event", text: "他说过最怕人多的场合", day: 19, who: "他" }),
+    mk({ id: "lk3", kind: "event", text: "他那天在门口等了半小时", day: 18, who: "他" }),
+    mk({ id: "lk4", kind: "fact", text: "他小时候养过一条狗", day: 10, who: "他" }),
+    mk({ id: "lk5", kind: "fact", text: "他上班的地方在城东", day: 9, who: "他" })
+  ];
+  const lk = pickMemories({ list: linkPool.map(x => ({ ...x })), nowDay: 21, limit: 3 });
+  out.m1 = lk.used.length;                       // 3 主 + 最多 2 链接
+  out.m2 = lk.used.filter(x => x.link === true).length;   // 期望 2（上限）
+  // 链接指向的是【已经选中】的那条（同一个 who 有多条时，指向哪一条都算对）
+  const firstLink = lk.used.filter(x => x.link === true)[0] || {};
+  out.m3 = !!firstLink.linkTo && lk.used.some(u => u.id === firstLink.linkTo);
+  out.m4 = memoryBlockText(lk.used).indexOf("（和上面那条是一路的）") >= 0;
+  out.m5 = lk.used.filter(x => x.link === true).every(x => x.who === "他");
+  // 没有共同 who / key：一条都不连（不然"链接"就成了乱连）
+  const lkNo = pickMemories({
+    list: [
+      mk({ id: "n1", kind: "event", text: "他答应周末陪我去看灯会", day: 20, who: "他" }),
+      mk({ id: "n2", kind: "event", text: "她说要搬走", day: 19, who: "她" }),
+      mk({ id: "n3", kind: "fact", text: "那把伞一直放在门口", day: 18 }),
+      mk({ id: "n4", kind: "fact", text: "冰箱里还剩半盒牛奶", day: 17 })
+    ],
+    nowDay: 21, limit: 2
+  });
+  out.m6 = lkNo.used.filter(x => x.link === true).length;   // 期望 0
+  // 条数已经满了：宁可少连，也不挤掉主选的那几条
+  const lkFull = pickMemories({ list: linkPool.map(x => ({ ...x })), nowDay: 21, limit: 3 });
+  out.m7 = lkFull.used.length <= 3 + 2;
+  // 只有 1 条主选时不往外走（一条算不上"上面那条"）
+  const lkOne = pickMemories({ list: [mk({ id: "o1", kind: "event", text: "他答应周末陪我去看灯会", day: 20, who: "他" }), mk({ id: "o2", kind: "event", text: "他说过最怕人多的场合", day: 19, who: "他" })], nowDay: 21, limit: 1 });
+  out.m8 = lkOne.used.filter(x => x.link === true).length;   // 期望 0（主选只有 1 条）
+
   return out;
 });
 
@@ -278,6 +313,16 @@ eq("open: true 保留", res.i5, true);
 eq("老备份没有 heat → 0", res.i6, 0);
 eq("老备份没有 open → false", res.i7, false);
 eq("仍是记忆 OS v2 格式", res.i8, 2);
+
+console.log("\n【M】记忆轻链接（同 who / 同 key 才连，最多补 2 条）");
+eq("5 选 3，靠链接补满到 5 条", res.m1, 5);
+eq("链接最多补 2 条（不是把池子倒进来）", res.m2, 2);
+t("链接指向第一条带同一 who 的记忆", res.m3 === true);
+t("memoryBlockText 给它加了「（和上面那条是一路的）」前缀", res.m4 === true);
+t("连进来的那条确实是同一个人", res.m5 === true);
+eq("没有共同 who / key 时一条都不连", res.m6, 0);
+t("条目上限守得住（主选 + 链接不超过 limit+2）", res.m7 === true);
+eq("主选只有 1 条时不往外走", res.m8, 0);
 
 console.log("\n【J】被挤掉的仍带原因");
 t("条数满了会进 dropped", res.j1 > 0, String(res.j1));

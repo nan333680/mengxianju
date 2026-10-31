@@ -120,7 +120,12 @@ await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const put = (store, rec) => new Promise(r => { const tx = db.transaction(store,'readwrite'); tx.objectStore(store).put(rec); tx.oncomplete = r; });
-  await put('kv', { k: 'settings', v: { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', clockMode: false, historyTime: false } });
+  // ⚠️ liveV2: false —— 这套测的是【分档 / 自动串联 / 续写】这几件事，v2 关掉才算隔离。
+  //    原来没写这一项，靠 DEFAULTS 的 true 跑，结果是：一轮发三次候选请求，
+  //    下面「默认不自动接着写 → 请求 1 次」就变成 3 次，而「自动那一段发的是继续往下写」
+  //    读到的是最后一条候选的写法提示（candidate.js 的 CAND_HINTS 挂在 messages 末尾）。
+  //    v2 自己的契约由 e2e-v2.mjs 单独盯，两套各测各的。
+  await put('kv', { k: 'settings', v: { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', clockMode: false, historyTime: false, liveV2: false } });
   db.close();
 });
 await seedAll('epic');
@@ -162,6 +167,10 @@ t('并且禁「也就是说」这类自我注解', s1.includes('替自己上一�
 t('★ 禁止「先撇清再问」（0.5.4.1）', s1.includes('先申明自己不是在要什么'), '');
 t('★ 禁止问完再补一句说明（0.5.4.1）', s1.includes('问就问一句，不附说明书'), '');
 t('追问也说了形状：一句短的、别铺垫', s1.includes('要问就问一句'), '告诉 CHANNEL_HINT 在不在');
+// 另外两条 AI 味（0.5.4.1，借 no-ai-slop 那张清单）：重要性吹捧 / 同义词轮换。
+// 这两条不是"错误"，是文采过剩 —— 模型一进入"我要写得有分量"就加，加得越多越像作文。
+t('★ 禁止给眼前小事盖章说它重要（0.5.4.1）', s1.includes('盖一个"这很重要"的章'), '');
+t('★ 禁止同一个东西换着叫（0.5.4.1）', s1.includes('人不怕重复，怕重复的是 AI'), '');
 
 console.log('');
 console.log('=== 2. 普通档：没有长篇要求，max_tokens 保持 2048 ===');
@@ -176,6 +185,7 @@ t('没有「落点」要求', !s2.includes('这一场要有一个【落点】'),
 t('max_tokens 还是 2048', Number(r2 && r2.max_tokens) === 2048, String(r2 && r2.max_tokens));
 t('反客服腔仍然在（不分档位）', s2.includes('你是她，不是助手'), '');
 t('反因果解释也在（不分档位）', s2.includes('把动机讲明白'), '');
+t('重要性吹捧 / 同义词轮换也在（不分档位）', s2.includes('这很重要') && s2.includes('人不怕重复'), '');
 t('medium 的长度提示没被换成长篇', !s2.includes('800 字'), '');
 
 console.log('');

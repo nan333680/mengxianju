@@ -236,6 +236,17 @@ export function pickMemories(opts = {}) {
     return (b.ts || 0) - (a.ts || 0);
   });
 
+  // —— 注入行怎么算：原文 / 模糊版 ——
+  // 抽成小函数是为了「轻链接」那一段能复用同一套判据（两处不一致就会
+  // 出现「同一件事，主选的那条模糊了，链接带进来的那条没模糊」这种错位）。
+  const lineFor = (m) => {
+    const d = recency(m) || 0;
+    const blur = !forScene && m.pinned !== true && String(m.kind || 'fact') === 'event'
+      && (Number(m.heat) || 0) === 0 && d > 0 && nowDay > 0 && (nowDay - d) >= FOG_DAYS
+      && String(m.text).length >= 12;
+    return { blur, line: blur ? fogLine(String(m.text)) : memoryLine(m) };
+  };
+
   let tokens = 0;
   for (const m of candidates) {
     const text = String(m.text);
@@ -245,11 +256,7 @@ export function pickMemories(opts = {}) {
     // 12 字是"一句完整的话"的下限：比它更短的（"他把伞弄丢了"）模糊完就只剩噪音。
     // 不新加字段、不删库：原文还在 text 里（检查器、导出、备份都是原文），
     // 只有【喂给模型的那一行】换成了模糊版。
-    const _d = recency(m) || 0;
-    const blur = !forScene && m.pinned !== true && String(m.kind || 'fact') === 'event'
-      && (Number(m.heat) || 0) === 0 && _d > 0 && nowDay > 0 && (nowDay - _d) >= FOG_DAYS
-      && text.length >= 12;
-    const line = blur ? fogLine(text) : memoryLine(m);
+    const { blur, line } = lineFor(m);
     const cost = Math.max(1, est(line));
     // pinned 是用户手点的，宁可超一点预算也要留下（规格 §5.3 pinned 排第一）
     if (budget && tokens + cost > budget && m.pinned !== true) { dropped.push({ id: m.id, text, reason: '预算不足' }); continue; }
@@ -278,6 +285,72 @@ export function pickMemories(opts = {}) {
       blur,
       why: m.pinned === true ? '你钉住的' : (KIND_WHY[String(m.kind || 'fact')] || '较早的事实')
     });
+  }
+
+  // —— 记忆轻链接（A-MEM 的极简版，0.5.4.1）——
+  //
+  // A-MEM 的做法：写入时给每条记忆打关键词、建链接，检索时命中一条就沿链接
+  // 往外走一跳，于是「他答应过的那件事」能把同一件事的前因一起带出来，
+  // 而不是各挑各的、读起来像两条无关的检索结果。
+  //
+  // 我们不新建 embedding、也不加 tag 字段（规格 §9.5：别把记忆 OS 改造成向量库，
+  // 端侧向量只做重复检测与候选重排）。这里只拿库里【本来就有】的两个字段当链接：
+  //   · who —— 这条是关于谁的
+  //   · key —— 谁的事（同一件事的所有记忆共用一个 key）
+  // 判据卡得紧，宁可少连：已经选了 2 条才往外走一跳、最多补 2 条、
+  // 条数与预算都要还有余地。链接是锦上添花，挤掉主选记忆就是倒过来了。
+  if (!forScene && used.length >= 2) {
+    const inUsed = new Set(used.map(x => x.id));
+    const hooks = new Map();   // 'w:'+who / 'k:'+key -> 已经进来过的那一条
+    for (const u of used) {
+      if (u.who) hooks.set('w:' + u.who, u);
+      if (u.key) hooks.set('k:' + u.key, u);
+    }
+    let linked = 0;
+    for (const m of candidates) {
+      if (linked >= 2) break;
+      // ⚠️ 上限是 limit + 2，不是 limit：limit 是【主选】的名额，
+      //    链接要在它之上多带最多两条。写成 limit 的话主选一选满就直接 break，
+      //    整个链接段永远不生效 —— 这条是踩过的，e2e-mempick【M】段会盯着。
+      if (used.length >= limit + 2) break;
+      if (inUsed.has(m.id)) continue;
+      const who = String(m.who || '');
+      const key = String(m.key || '');
+      const via = (who && hooks.get('w:' + who)) || (key && hooks.get('k:' + key));
+      if (!via) continue;
+      const text = String(m.text);
+      const { blur, line } = lineFor(m);
+      const cost = Math.max(1, est(line));
+      if (budget && tokens + cost > budget && m.pinned !== true) continue;
+      tokens += cost;
+      inUsed.add(m.id);
+      used.push({
+        id: m.id,
+        text,
+        line,
+        kind: String(m.kind || 'fact'),
+        key,
+        scope: String(m.scope || 'character'),
+        subject: String(m.subject || 'char'),
+        who,
+        legacy: m.legacy === true,
+        needsSplit: m.needsSplit === true,
+        pinned: m.pinned === true,
+        sources: Array.isArray(m.sourceMsgIds) ? m.sourceMsgIds.slice() : [],
+        tokens: cost,
+        score: 0,
+        sem: 0,
+        heat: Number(m.heat) || 0,
+        open: m.open === true,
+        day: recency(m) || 0,
+        cb: false,
+        blur,
+        link: true,
+        linkTo: via.id,
+        why: via.who && who && via.who === who ? '和上面那条说的是同一个人' : '和上面那条是同一件事'
+      });
+      linked++;
+    }
   }
 
   // —— 「她突然想起来」——
@@ -312,7 +385,8 @@ export function memoryBlockText(used) {
   if (!arr.length) return '';
   // 「她突然想起来」的那条前面加一句：不是给读者看的，是给模型一个语气提示 ——
   // 这条不是这一轮的话题，它是自己冒上来的，写法上就不该像在回答他。
-  return arr.map(x => '· ' + (x.cb ? '（她突然想起来）' : '') + x.line).join('\n');
+  // 三种前缀互斥：链接来的一条不该再说「她突然想起来」—— 它是顺着上面那条想下去的。
+  return arr.map(x => '· ' + (x.cb ? '（她突然想起来）' : (x.link ? '（和上面那条是一路的）' : '')) + x.line).join('\n');
 }
 
 /** 给 UI 用的一句话摘要：用了 8 条 / 挤掉 3 条 */

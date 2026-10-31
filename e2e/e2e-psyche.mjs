@@ -338,8 +338,11 @@ const ug = await page.evaluate(async () => {
     relation: { warmth: 1, trust: 1, bond: 4, since: NOW - 30 * D }
   };
   const p = P.decayPsyche(old, NOW);
-  T('三天前的「没说出口的」过期了（24h）', (p.withheld || []).length === 0, JSON.stringify(p.withheld));
-  T('三天前的「还没问出口的」过期了（48h）', (p.openLoops || []).length === 0, JSON.stringify(p.openLoops));
+  // 0.5.4.1：到期从「删掉」改成「封存」—— 条目还在数组里，但标了 dead，不注入提示词。
+  // 为什么要改：删掉以后她再提起同一件事，状态里是空的，等于这件事从没发生过；
+  // 封存以后 pushCapped 还能认出来「这事她想过」，一拍就复活。
+  T('三天前的「没说出口的」封存了（24h）', (p.withheld || []).length === 1 && p.withheld[0].dead === true, JSON.stringify(p.withheld));
+  T('三天前的「还没问出口的」封存了（48h）', (p.openLoops || []).length === 1 && p.openLoops[0].dead === true, JSON.stringify(p.openLoops));
   T('三天前的仇还在（14 天）', (p.grudges || []).length === 1, JSON.stringify(p.grudges));
   T('三天前的「她自己的事」还在（96h）', (p.selfEvents || []).length === 1, JSON.stringify(p.selfEvents));
   T('放了三天的「上一轮打算」清掉（12h）', (p.moves || []).length === 0, JSON.stringify(p.moves));
@@ -347,7 +350,17 @@ const ug = await page.evaluate(async () => {
 
   // 老数据没有 at：认不出是什么时候的，删了就是无声丢数据 —— 必须留着
   const noAt = P.decayPsyche({ v: 1, withheld: [{ t: '没有时间戳的老条目' }], updatedAt: 0 }, NOW);
-  T('没有时间戳的老条目不会被删', (noAt.withheld || []).length === 1, JSON.stringify(noAt.withheld));
+  T('没有时间戳的老条目不会被删', (noAt.withheld || []).length === 1 && !noAt.withheld[0].dead, JSON.stringify(noAt.withheld));
+
+  // 封存的条目就是「过去了」：不许再出现在提示词里（否则封存等于没做）
+  const sealed = P.psychePrompt(p, { now: NOW });
+  T('封存的那几条不进提示词', sealed.indexOf('其实我一直在等') < 0 && sealed.indexOf('问他那通电话') < 0, sealed.slice(-120));
+
+  // 但同一件事再提起来，就该复活 —— 她隔了三天又想起这句话，它就不是过期条目
+  const revived = P.applyPsycheDelta(p, { openLoops: ['问他那通电话'] }, NOW);
+  const rv = (revived.openLoops || [])[0] || {};
+  T('再提到同一件事会复活（dead 清掉）', rv.dead !== true && rv.t === '问他那通电话', JSON.stringify(revived.openLoops));
+  T('复活后重新算年龄（at 换成本轮）', Number(rv.at) === NOW, String(rv.at));
 
   // 提示词里带年龄：同样一句「还没问出口的」，十分钟前和三天前口气不一样
   const s1 = P.psychePrompt({ v: 1, withheld: [{ t: '刚咽回去的一句', at: NOW - 60 * 1000 }], mood: { label: '烦', intensity: 2 } }, { now: NOW });

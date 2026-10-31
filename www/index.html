@@ -492,6 +492,7 @@
       <label class="field" data-i18n-nodes><span><span data-i18n-en="Temperature">温度</span> <b id="e-v-temp">1.0</b><span data-i18n-en=" (low = calm, high = lively)">（低=沉稳，高=活泼）</span></span>
         <input id="e-temp" type="range" min="0" max="2" step="0.05">
       </label>
+      <p class="hint-text" data-i18n-en="DeepSeek uses fixed sampling: its docs say temperature and top_p are ignored there. This slider only does anything on providers that honour them.">DeepSeek 是固定采样，官方文档写明温度、top_p 都不生效；这个滑杆只对认温度的服务商有用。</p>
       <label class="field" data-i18n-nodes><span><span data-i18n-en="Max reply length">最大回复长度</span> <b id="e-v-maxtok">2048</b></span>
         <input id="e-maxtok" type="range" min="256" max="8192" step="128">
       </label>

@@ -25,7 +25,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1500);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
-await seedChar(page, '紫', { greeting:'（开场）' });
+await seedChar(page, '阿紫', { greeting:'（开场）' });
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
 
 // 进世界书页
@@ -49,6 +49,7 @@ const res = await page.evaluate(async () => {
   const gs = await wb.groups();
   const g = gs[0];
   return g ? { name: g.name, n: g.entries.length,
+               // 断言要对着 _fixtures/touhou-worldbook.json 里的真实触发词（公开设定里的地名）。
                keysHasRedMagic: g.entries.some(e=>e.keys.includes('红魔馆')),
                allOn: g.entries.every(e=>e.on === true),
                titles: g.entries.map(e=>e.title) } : null;

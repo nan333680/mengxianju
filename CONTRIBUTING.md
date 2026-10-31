@@ -22,7 +22,7 @@
 
 ```
 e2e-cardio  e2e-import  e2e-importchars  e2e-settings  e2e-stpreset
-e2e-stworldbook  e2e-test2  e2e-wbentryio  e2e-wbimport  e2e-wbtouhou  e2e-ziworldbook
+e2e-stworldbook  e2e-test2  e2e-wbentryio  e2e-wbimport  e2e-wbmulti  e2e-ziworldbook
 ```
 
 其余 **110 套**不依赖它，克隆后可以直接跑。要在本地补齐这 11 套，就在仓库根建一个

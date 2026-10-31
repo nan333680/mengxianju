@@ -257,7 +257,7 @@ const backup = {
     { id: 'm2', charId: 'bk_group', role: 'assistant', content: '阿七说的第二句', speakerId: 'bk_aqi', ts: 2000 },
   ] },
   memories: [
-    { id: 'mm1', charId: 'bk_group', who: 'bk_xiaoman', text: '芙兰对他的好感太明显了',
+    { id: 'mm1', charId: 'bk_group', who: 'bk_xiaoman', text: '阿芙对他的好感太明显了',
       kind: 'fact', freq: 'normal', ts: 5000 },
   ],
 };
@@ -334,7 +334,7 @@ const memAfter = await page.evaluate(async () => {
   return ms.map(m => ({ text: m.text, who: m.who || '' }));
 });
 console.log('   ' + JSON.stringify(memAfter));
-const whoOne = memAfter.find(m => m.text.indexOf('芙兰对他的好感') >= 0);
+const whoOne = memAfter.find(m => m.text.indexOf('阿芙对他的好感') >= 0);
 t('记忆的 who 也翻成了本机 id（不然谁都不会被注入到）', !!whoOne && whoOne.who === 'local_xiaoman', whoOne);
 
 console.log('=== 8. speakerId 的重映射：诚实说清它现在【到不了】 ===');

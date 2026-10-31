@@ -19,10 +19,10 @@ const clock = '第 1 天 早上';
 const mem = (n) => ({ id: 'm' + n, text: '他喜欢红苹果 ' + n });
 
 console.log('=== 1. front 档：进「相关设定」，在本轮段最前 ===');
-const front = [{ title: '红魔馆', content: '红魔馆是蕾米莉亚的宅邸。', pos: 'front' }];
+const front = [{ title: '阿馆', content: '阿馆是阿米的宅邸。', pos: 'front' }];
 const n1 = buildTurnNote(char, s, { memories: [], useKaomoji: false, worldbook: front, clock });
 t('含「相关设定」段', n1.includes('# 相关设定'));
-t('含标题与内容', n1.includes('红魔馆') && n1.includes('蕾米莉亚的宅邸'));
+t('含标题与内容', n1.includes('阿馆') && n1.includes('阿米的宅邸'));
 t('没有「临场设定」段', !n1.includes('# 临场设定'));
 t('排在时间之前', n1.indexOf('# 相关设定') < n1.indexOf('# 现在的时间'), n1.indexOf('# 相关设定') + ' vs ' + n1.indexOf('# 现在的时间'));
 
@@ -39,7 +39,7 @@ t('排在记忆之后（比背景更靠后）', n2.indexOf('# 临场设定') > n
 console.log('=== 3. 两档同时出现：各就各位 ===');
 const n3 = buildTurnNote(char, s, { memories: [mem(1)], useKaomoji: false, worldbook: front.concat(tail), clock });
 t('背景在前、临场在后', n3.indexOf('# 相关设定') < n3.indexOf('# 临场设定'));
-t('两边内容都在', n3.includes('蕾米莉亚的宅邸') && n3.includes('这一轮她说话很轻'));
+t('两边内容都在', n3.includes('阿米的宅邸') && n3.includes('这一轮她说话很轻'));
 t('背景里没有临场那条', n3.slice(n3.indexOf('# 相关设定'), n3.indexOf('# 临场设定')).includes('说话很轻') === false);
 
 console.log('=== 4. 稳定前缀：不传常驻时逐字节不变（老用户缓存不能白废）===');

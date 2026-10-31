@@ -10,7 +10,7 @@
  * 已删除的内置模板名。只做「界面里不该再出现」的反向断言用，不是素材、不是默认值。
  * 要加要删只改这一处，别在套件里手抄名字。
  */
-export const LEGACY_TEMPLATES = ['键山雏', '冴月麟', '伊吹萃香', '西行寺幽幽子'];
+export const LEGACY_TEMPLATES = ['键山雏', '冴月麟', '伊吹阿香', '阿寺阿幽'];
 
 /** 在页面里塞 n 个测试角色，返回 [{id, name}]（按名字 A/B/C… 命名） */
 export async function seedChars(page, specs) {

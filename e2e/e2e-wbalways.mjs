@@ -47,7 +47,7 @@ const seeded = await page.evaluate(async () => {
   await kv.set('settings', s);
   await wb.putSolo({ id: "solo-1", charId: cid, entries: [
     { id: 'e-always', title: '世界观', keys: [], content: '这个世界的天空永远是黄昏色。', on: true, pos: 'always' },
-    { id: 'e-front', title: '红魔馆', keys: ['红魔馆'], content: '红魔馆是蕾米莉亚的宅邸。', on: true, pos: 'front' },
+    { id: 'e-front', title: '阿馆', keys: ['阿馆'], content: '阿馆是阿米的宅邸。', on: true, pos: 'front' },
   ] });
   return { cid };
 });
@@ -82,7 +82,7 @@ page.on("request", (req) => {
   try { req.continue(); } catch (e) {}
 });
 await page.click('#input');
-await page.type('#input', '红魔馆那边怎么样了', { delay: 4 });
+await page.type('#input', '阿馆那边怎么样了', { delay: 4 });
 await page.click('#btn-send');
 for (let i = 0; i < 60 && !held; i++) await sleep(250);
 t('请求发出去了', !!held);
@@ -99,9 +99,9 @@ t('第 1 条是 system（稳定前缀在最前）', msgs[0] && msgs[0].role === 
 t('稳定前缀含角色设定', first.content.includes('# 你的角色设定'));
 t('稳定前缀含「基础设定」段', first.content.includes('# 基础设定'));
 t('always 那条的内容在稳定前缀里', first.content.includes('天空永远是黄昏色'));
-t('front 那条【不在】稳定前缀里（它靠命中，进了前缀就等于每轮重算）', !first.content.includes('红魔馆是蕾米莉亚的宅邸'));
+t('front 那条【不在】稳定前缀里（它靠命中，进了前缀就等于每轮重算）', !first.content.includes('阿馆是阿米的宅邸'));
 t('本轮段含「相关设定」', all.includes('# 相关设定'));
-t('命中的 front 那条在本轮段里', all.includes('红魔馆是蕾米莉亚的宅邸'));
+t('命中的 front 那条在本轮段里', all.includes('阿馆是阿米的宅邸'));
 t('always 那条【不在】本轮段里（不然就注了两遍）',
   (all.split('天空永远是黄昏色').length - 1) === 1, '出现 ' + (all.split('天空永远是黄昏色').length - 1) + ' 次');
 

@@ -31,13 +31,13 @@ const msgs1 = [
   { role: 'assistant', content: '带图的。', images: ['data:image/png;base64,AAA'], imageNotes: ['这是猫'], story: { day: 4, phase: 'morning', hour: null, minute: 0 }, ts: 4 },
   { role: 'user', content: '归档过的。', story: { day: 5, phase: 'night', hour: null, minute: 0 }, ts: 5, archived: true },
 ];
-const md = buildChatMarkdown({ char: { name: '小恶魔' }, messages: msgs1, now: Date.UTC(2026, 9, 8, 5, 30) });
-ok('标题带角色名', md.indexOf('# 小恶魔 · 对话记录') === 0, md.slice(0, 40));
+const md = buildChatMarkdown({ char: { name: '阿魔' }, messages: msgs1, now: Date.UTC(2026, 9, 8, 5, 30) });
+ok('标题带角色名', md.indexOf('# 阿魔 · 对话记录') === 0, md.slice(0, 40));
 ok('统计里写了总条数 5', md.indexOf('消息：5 条') >= 0, md.split('\n')[3]);
 ok('统计里点出已归档 1 条', md.indexOf('已归档 1 条') >= 0);
 ok('剧情时间范围写出来了', md.indexOf('第 3 天 · 下午') >= 0 && md.indexOf('第 5 天 · 晚上') >= 0);
 ok('换剧情时间就开新小节', (md.match(/^## /gm) || []).length === 3, (md.match(/^## .*/gm) || []));
-ok('说话人按「她 / 我」标', md.indexOf('**小恶魔**') >= 0 && md.indexOf('**我**') >= 0);
+ok('说话人按「她 / 我」标', md.indexOf('**阿魔**') >= 0 && md.indexOf('**我**') >= 0);
 ok('正文原样保留（含括号动作）', md.indexOf('（抬头看你）你来了。') >= 0);
 ok('图片只留占位，不塞 dataURL', md.indexOf('［图片：这是猫］') >= 0 && md.indexOf('base64') < 0);
 ok('归档那条也导出了，并带标记', md.indexOf('（已归档）') >= 0 && md.indexOf('归档过的。') >= 0);
@@ -45,7 +45,7 @@ ok('空对话不会崩', buildChatMarkdown({ char: { name: 'A' }, messages: [] }
 ok('messages 传 undefined 也不崩', typeof buildChatMarkdown({ char: { name: 'A' } }) === 'string');
 ok('没有 story 的老消息不分节但正文在', buildChatMarkdown({ char: { name: 'A' }, messages: [{ role: 'user', content: '老消息' }] }).indexOf('老消息') >= 0);
 ok('文件名里没有路径字符', !/[\\/:*?"<>|]/.test(markdownFileName('a/b:c*d?e')), markdownFileName('a/b:c*d?e'));
-ok('文件名以 .md 结尾', markdownFileName('小恶魔').endsWith('.md'), markdownFileName('小恶魔'));
+ok('文件名以 .md 结尾', markdownFileName('阿魔').endsWith('.md'), markdownFileName('阿魔'));
 ok('第 400 天显示成第 2 年 35 天', dayText(400) === '第 2 年 35 天', dayText(400));
 
 // ── 2. 界面：视角四档 / 续写按钮 / 导出按钮 / 表达预设 ──

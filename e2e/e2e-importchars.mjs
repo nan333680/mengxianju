@@ -13,12 +13,12 @@ const fixture = path.join(FIX, 'import-chars.json');
 fs.writeFileSync(fixture, JSON.stringify({
   version: 1, exportedAt: Date.now(), settings: {},
   characters: [
-    { id:'fixtest_kaikei', name:'测试袿姬', greeting:'（测试开场）', persona:'你是测试用的造形神。'.repeat(60),
+    { id:'fixtest_kaikei', name:'测试阿姬', greeting:'（测试开场）', persona:'你是测试用的造形神。'.repeat(60),
       createdAt: Date.now(), presetKey:'blank', temperature:1, maxTokens:2048, reasoningEffort:'low',
       contextRounds:20, kaomojiFreq:0.15, kaomojiStyle:'jp-soft', emojiFreq:0.1, verbosity:'medium',
       splitMessages:false, typingDelay:1, hesitation:true, longMemory:true, descLevel:'high',
       showTyping:true, povLock:true, appearance:'', appearanceOn:true, avatar:null },
-    { id:'fixtest_koakuma', name:'测试小恶魔', greeting:'（测试开场）', persona:'你是测试用的小恶魔。'.repeat(60),
+    { id:'fixtest_koakuma', name:'测试阿魔', greeting:'（测试开场）', persona:'你是测试用的阿魔。'.repeat(60),
       createdAt: Date.now(), presetKey:'blank', temperature:1, maxTokens:2048, reasoningEffort:'low',
       contextRounds:20, kaomojiFreq:0.3, kaomojiStyle:'jp-cute', emojiFreq:0.15, verbosity:'medium',
       splitMessages:true, typingDelay:1, hesitation:false, longMemory:true, descLevel:'high',
@@ -102,10 +102,10 @@ const res = await page.evaluate(async () => {
   return cs.map(c => ({ id:c.id, name:c.name, plen:(c.persona||'').length, glen:(c.greeting||'').length }));
 });
 const names = res.map(c=>c.name);
-t('角色 A 已导入', names.includes('测试袿姬'), JSON.stringify(names));
-t('角色 B 已导入', names.includes('测试小恶魔'));
+t('角色 A 已导入', names.includes('测试阿姬'), JSON.stringify(names));
+t('角色 B 已导入', names.includes('测试阿魔'));
 t('原有角色未被覆盖', names.includes('原有角色'));
-const a = res.find(c=>c.name==='测试袿姬');
+const a = res.find(c=>c.name==='测试阿姬');
 t('persona 完整', a && a.plen > 500, a ? 'len='+a.plen : 'n/a');
 t('开场白在', a && a.glen > 0);
 t('无 JS 报错', errs.length === 0, errs.join(' | '));

@@ -26,8 +26,8 @@ fs.writeFileSync(fixture, JSON.stringify({
         scene: '祭典', splitMessages: true, longMemory: true },
       avatar: AVATAR } },
     character_book: { name: '她的世界书', entries: [
-      { keys: ['红魔馆'], content: '红魔馆是宅邸。', enabled: true,
-        extensions: { mengxianju: { title: '红魔馆', pos: 'front' } } },
+      { keys: ['阿馆'], content: '阿馆是宅邸。', enabled: true,
+        extensions: { mengxianju: { title: '阿馆', pos: 'front' } } },
       { keys: [], content: '世界永远黄昏。', enabled: true,
         extensions: { mengxianju: { title: '世界观', pos: 'always' } } },
     ] },

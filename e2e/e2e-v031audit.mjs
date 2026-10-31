@@ -108,7 +108,7 @@ await page.reload({ waitUntil: 'networkidle0' }); await sleep(900);
 //      它会盖掉下面设的全局 true，于是 send() 的 finally 里那句
 //      if (P && P.longMemory) runMemTasks(...) 根本不成立，记忆任务整条不跑。
 //      所以 extra 里必须显式给 longMemory:true。
-await seedChar(page, '紫', { greeting: '（开场）', id: 'va1', longMemory: true });
+await seedChar(page, '阿紫', { greeting: '（开场）', id: 'va1', longMemory: true });
 
 const CID = 'va1';
 await page.evaluate(async (cid) => {

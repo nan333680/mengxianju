@@ -38,7 +38,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1500);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
-await seedChars(page, [{name:'紫'},{name:'袿姬'}]);
+await seedChars(page, [{name:'阿紫'},{name:'阿姬'}]);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
 await page.evaluate(async () => {
   const { kv } = await import('./js/db.js');
@@ -50,7 +50,7 @@ await goWb();
 console.log('=== 1. 单独角色页有两个小按钮，且同一行 ===');
 await page.evaluate(() => document.getElementById('btn-wb-solo').click()); await sleep(800);
 await page.evaluate(() => {
-  const r = [...document.querySelectorAll('#pk-list .pick-row')].find(x => x.textContent.includes('紫'));
+  const r = [...document.querySelectorAll('#pk-list .pick-row')].find(x => x.textContent.includes('阿紫'));
   r.click();
 });
 await sleep(1000);
@@ -79,7 +79,7 @@ await sleep(2000);
 const after = await page.evaluate(async () => {
   const { wb, chars } = await import('./js/db.js');
   const cs = await chars.all();
-  const zi = cs.find(c => c.name === '紫');
+  const zi = cs.find(c => c.name === '阿紫');
   const s = await wb.solo(zi.id);
   return s ? s.entries.map(e => e.title) : [];
 });
@@ -96,7 +96,7 @@ await sleep(2000);
 const after2 = await page.evaluate(async () => {
   const { wb, chars } = await import('./js/db.js');
   const cs = await chars.all();
-  const zi = cs.find(c => c.name === '紫');
+  const zi = cs.find(c => c.name === '阿紫');
   return ((await wb.solo(zi.id)) || {entries:[]}).entries.length;
 });
 t('还是 2 条（没重复灌）', after2 === 2, 'n='+after2);

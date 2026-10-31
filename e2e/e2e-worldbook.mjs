@@ -44,7 +44,7 @@ const dbTest = await page.evaluate(async () => {
   const { wb, uid } = await import('./js/db.js');
   const gid = uid();
   await wb.putGroup({ id: gid, name: '东方幻想乡', members: ['c1','c2'], entries: [
-    { id: 'e1', title: '红魔馆', keys: ['红魔馆','帕秋莉'], content: '红魔馆是蕾米莉亚的宅邸。', on: true },
+    { id: 'e1', title: '阿馆', keys: ['阿馆','阿秋'], content: '阿馆是阿米的宅邸。', on: true },
     { id: 'e2', title: '符卡', keys: ['符卡'], content: '符卡是弹幕规则。', on: true },
   ], createdAt: Date.now() });
   await wb.putSolo({ id: 's1', charId: 'c1', entries: [

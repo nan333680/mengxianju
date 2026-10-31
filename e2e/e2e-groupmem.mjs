@@ -49,7 +49,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // 总结那条路要的是 JSON，聊天那条要 SSE
 let memBurst = 0;
 const MEM_JSON = JSON.stringify([
-  { text: '芙兰对他的好感太明显了', kind: 'fact', untilDay: null, freq: 'often' },
+  { text: '阿芙对他的好感太明显了', kind: 'fact', untilDay: null, freq: 'often' },
   { text: '上周六在她家喝茶', kind: 'event', untilDay: null, freq: 'once' },
 ]);
 let chatReq = null, chatN = 0;
@@ -125,7 +125,7 @@ await page.evaluate(async () => {
   const base = Date.now() - 3600000;
   await put('messages', { id: 'm1', charId: 'ggrp1', role: 'user', content: '你们在聊什么', ts: base });
   await put('messages', { id: 'm2', charId: 'ggrp1', role: 'assistant', speakerId: 'ga',
-    content: '芙兰对他的好感太明显了，谁都看得出来。', ts: base + 1000 });
+    content: '阿芙对他的好感太明显了，谁都看得出来。', ts: base + 1000 });
   await put('messages', { id: 'm3', charId: 'ggrp1', role: 'assistant', speakerId: 'gb',
     content: '外面的雨下得很大，我不想出门。', ts: base + 2000 });
   for (let i = 4; i <= 30; i++) {
@@ -144,7 +144,7 @@ console.log('=== 1. 总结出来的记忆，按发言人就近归属 ===');
 await send('@甲 你刚才说什么');
 let mems = await waitMem(2);
 t('记忆写进了库（两条）', mems.length >= 2, mems);
-const m1 = mems.find(m => m.text.indexOf('芙兰对他的好感太明显了') >= 0);
+const m1 = mems.find(m => m.text.indexOf('阿芙对他的好感太明显了') >= 0);
 const m2 = mems.find(m => m.text.indexOf('上周六在她家喝茶') >= 0);
 t('这句归档到甲名下（who = ga）', !!m1 && m1.who === 'ga', m1);
 t('跟谁都不像的那句落成全群共识（who 为空）', !!m2 && m2.who === '', m2);
@@ -155,7 +155,7 @@ chatReq = null;
 await send('@甲 再说说');
 let sys = sysOf();
 t('标题点明了这是【甲】记得的', sys.indexOf('你（甲）自己看在眼里的事') >= 0, sys.slice(0, 60));
-t('甲自己那条带上了', sys.indexOf('芙兰对他的好感太明显了') >= 0, '');
+t('甲自己那条带上了', sys.indexOf('阿芙对他的好感太明显了') >= 0, '');
 t('共识那条也带上了', sys.indexOf('上周六在她家喝茶') >= 0, '');
 t('共识有单独一段小标题', sys.indexOf('这个群里大家都知道的事') >= 0, '');
 
@@ -165,7 +165,7 @@ sys = sysOf();
 // ⚠️ 乙自己一条记忆都没有 —— 所以【不该】出现"她自己看在眼里的事"那一段，
 //    只剩全群共识。第一版这里断言"标题里要有乙"，是把设计写反了。
 t('乙没有自己的记忆时，不出现「她自己看在眼里的事」那一段', sys.indexOf('自己看在眼里的事') < 0, '');
-t('甲视角那条【不进】乙的上下文', sys.indexOf('芙兰对他的好感太明显了') < 0, '');
+t('甲视角那条【不进】乙的上下文', sys.indexOf('阿芙对他的好感太明显了') < 0, '');
 t('共识那条仍然在', sys.indexOf('上周六在她家喝茶') >= 0, '');
 
 console.log('=== 3. 老数据兼容：没有 who 的记忆 = 全群共识 ===');
@@ -217,14 +217,14 @@ const memPanel = await page.evaluate(() => ({
 console.log('   ' + JSON.stringify({ title: memPanel.title }));
 t('群记忆就地开小窗口（不跳全局设置）', memPanel.open === true && memPanel.title.includes('记忆'), memPanel.title);
 t('里面按"谁的视角"分了组', memPanel.text.includes('记得的') && memPanel.text.includes('大家都知道'), '');
-t('甲私下的那条看得见', memPanel.text.includes('芙兰对他的好感太明显了'), '');
+t('甲私下的那条看得见', memPanel.text.includes('阿芙对他的好感太明显了'), '');
 t('还说明了"别人的私事她看不到"', memPanel.text.includes('别人的私事'), '');
 await page.evaluate(() => document.getElementById('modal-cancel').click());
 await sleep(500);
 const memHtml = memPanel.text;
 t('群那一组里有「甲」记得的', memHtml.indexOf('甲') >= 0 && memHtml.indexOf('记得的') >= 0, memHtml.slice(0, 100));
 t('也有「大家都知道的事」', memHtml.indexOf('大家都知道的事') >= 0, '');
-t('甲私下的那条在界面里看得到', memHtml.indexOf('芙兰对他的好感太明显了') >= 0, '');
+t('甲私下的那条在界面里看得到', memHtml.indexOf('阿芙对他的好感太明显了') >= 0, '');
 t('没有页面报错', errs.length === 0, errs.slice(0, 3));
 
 console.log('');

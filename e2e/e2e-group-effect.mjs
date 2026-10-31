@@ -148,7 +148,8 @@ await page.evaluate(async () => {
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const put = (st, rec) => new Promise(r => { const tx = db.transaction(st, 'readwrite'); tx.objectStore(st).put(rec); tx.oncomplete = r; });
   const rec = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('settings'); q.onsuccess = () => r(q.result); });
-  await put('kv', { k: 'settings', v: Object.assign({}, (rec && rec.v) || {}, { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', longMemory: false }) });
+  // liveV2: false —— 同 e2e-groupspeak：这套数的是「该发几次请求」，v2 三候选会把 1 变 3。
+  await put('kv', { k: 'settings', v: Object.assign({}, (rec && rec.v) || {}, { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', longMemory: false, liveV2: false }) });
   await put('characters', { id: 'gg2', name: '测试群', isGroup: true, memberIds: ['ga','gb'],
     groupNote: '', speakMode: 'weight', turnIndex: 0, avatar: null, greeting: '（两个人都在。）',
     presetKey: 'blank', createdAt: Date.now(), narrative: true, showNarration: true, sceneLen: 'mid',

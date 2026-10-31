@@ -115,11 +115,11 @@ const val      = sel => page.$eval(sel, el => el.value);
 
 console.log('=== 2. 标准 Enter（桌面） ===');
 await page.click('#we-key-input');
-await page.type('#we-key-input', '红魔馆');
+await page.type('#we-key-input', '阿馆');
 await page.keyboard.press('Enter');
 await sleep(150);
 t('标准 Enter 加上了标签', (await keyCount()) === 1, 'count=' + await keyCount());
-t('标签内容正确', (await keyTexts())[0] === '红魔馆', JSON.stringify(await keyTexts()));
+t('标签内容正确', (await keyTexts())[0] === '阿馆', JSON.stringify(await keyTexts()));
 t('加完焦点还在触发词框（不会跑掉）', (await focused()) === 'we-key-input', await focused());
 
 console.log('=== 3. 安卓组合态回车（key=Unidentified, keyCode=229） ===');
@@ -164,11 +164,11 @@ t('内容框回车没多出触发词', (await keyCount()) === 3, 'count=' + awai
 
 console.log('=== 8. 重复词 / 空词 ===');
 await page.click('#we-key-input');
-await page.type('#we-key-input', '红魔馆');
+await page.type('#we-key-input', '阿馆');
 await page.keyboard.press('Enter');
 await sleep(200);
 t('重复词不重复加', (await keyCount()) === 3, 'count=' + await keyCount());
-t('重复词留在框里（让人看清打了什么）', (await val('#we-key-input')) === '红魔馆', JSON.stringify(await val('#we-key-input')));
+t('重复词留在框里（让人看清打了什么）', (await val('#we-key-input')) === '阿馆', JSON.stringify(await val('#we-key-input')));
 await page.evaluate(() => { document.getElementById('we-key-input').value = ''; });
 await page.keyboard.press('Enter');
 await sleep(150);

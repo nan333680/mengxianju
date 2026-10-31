@@ -54,7 +54,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1500);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
-await seedChars(page, [{name:'紫'},{name:'袿姬'}]);
+await seedChars(page, [{name:'阿紫'},{name:'阿姬'}]);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
 // 开总开关
 await openSettings(page, sleep);
@@ -82,7 +82,7 @@ t('列表可滑动（overflow auto/scroll）', /auto|scroll/.test(pick.scrollabl
 
 console.log('=== 点角色 → 进编辑界面 ===');
 await page.evaluate(() => {
-  const r = [...document.querySelectorAll('#pk-list .pick-row')].find(x => x.textContent.includes('紫'));
+  const r = [...document.querySelectorAll('#pk-list .pick-row')].find(x => x.textContent.includes('阿紫'));
   r.click();
 });
 await sleep(1000);
@@ -92,7 +92,7 @@ const soloPage = await page.evaluate(() => ({
 }));
 console.log('   ' + JSON.stringify(soloPage));
 t('进了单独角色编辑页', soloPage.active);
-t('标题带角色名', soloPage.title.includes('紫'), soloPage.title);
+t('标题带角色名', soloPage.title.includes('阿紫'), soloPage.title);
 
 console.log('=== 单独角色：加条目 ===');
 await jsClick('#btn-wb-newentry2'); await sleep(700);
@@ -117,15 +117,15 @@ console.log('=== 隔离性：只影响这一个角色 ===');
 const iso = await page.evaluate(async () => {
   const { wb, chars } = await import('./js/db.js');
   const cs = await chars.all();
-  const zi = cs.find(c => c.name === '紫');
-  const kk = cs.find(c => c.name === '袿姬');
+  const zi = cs.find(c => c.name === '阿紫');
+  const kk = cs.find(c => c.name === '阿姬');
   const a = await wb.solo(zi.id);
   const b = await wb.solo(kk.id);
   return { zi: a ? a.entries.length : 0, keiki: b ? b.entries.length : 0 };
 });
 console.log('   ' + JSON.stringify(iso));
-t('紫有 1 条', iso.zi === 1);
-t('袿姬 0 条（不受影响）', iso.keiki === 0);
+t('阿紫有 1 条', iso.zi === 1);
+t('阿姬 0 条（不受影响）', iso.keiki === 0);
 
 console.log('=== 组列自定义：改组名和成员 ===');
 await page.evaluate(() => document.querySelector('#btn-wbs-back').click());

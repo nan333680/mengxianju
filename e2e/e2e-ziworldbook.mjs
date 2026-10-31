@@ -25,7 +25,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1500);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
-await seedChars(page, [{name:'八云紫'}]);
+await seedChars(page, [{name:'阿紫'}]);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
 await page.evaluate(async () => {
   const { kv } = await import('./js/db.js');
@@ -40,7 +40,7 @@ await page.evaluate(() => {
 }); await sleep(900);
 await page.evaluate(() => document.getElementById('btn-wb-solo').click()); await sleep(800);
 await page.evaluate(() => {
-  const r = [...document.querySelectorAll('#pk-list .pick-row')].find(x => x.textContent.includes('八云紫'));
+  const r = [...document.querySelectorAll('#pk-list .pick-row')].find(x => x.textContent.includes('阿紫'));
   r.click();
 });
 await sleep(1000);
@@ -52,7 +52,7 @@ await sleep(2200);
 const res = await page.evaluate(async () => {
   const { wb, chars } = await import('./js/db.js');
   const cs = await chars.all();
-  const zi = cs.find(c => c.name === '八云紫');
+  const zi = cs.find(c => c.name === '阿紫');
   const s = await wb.solo(zi.id);
   return s ? s.entries.map(e => ({ t: e.title, k: e.keys.length, on: e.on })) : null;
 });

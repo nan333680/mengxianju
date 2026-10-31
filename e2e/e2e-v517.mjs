@@ -37,6 +37,8 @@ const t=(n,ok,ex='')=>{ if(ok){pass++;console.log('  OK   '+n);}else{fail++;cons
 
 await page.evaluateOnNewDocument(() => {
   window.__hits = { chat: [] };
+  // 不去重的全部内容请求（诊断串联段数用；__hits.chat 是按 messages 签名去重的）
+  window.__reqAll = [];
   const realFetch = window.fetch.bind(window);
   window.fetch = async function (url, opts) {
     const u = String(url);
@@ -49,6 +51,7 @@ await page.evaluateOnNewDocument(() => {
       }
       // 活人感 v2：一轮并发 3 条候选（messages 完全相同、只有 temperature 不同）——
       // 这里一轮只留一条，否则「这一轮发了几次请求」全按 3 倍算。
+      window.__reqAll.push(body);
       const _sig = JSON.stringify(body.messages || '');
       const _now = Date.now();
       if (_sig !== window.__lastSig || _now - (window.__lastAt || 0) > 3000) {
@@ -109,7 +112,10 @@ const baseChar = (id, name, extra) => Object.assign({
   presetKey: 'blank', createdAt: Date.now()
 }, extra || {});
 
-const SETTINGS = { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', clockMode: false, historyTime: false };
+// ⚠️ liveV2: false —— 这套数的是「一次请求 = 一段」的请求次数（自动续写 / 刹车）。
+//    v2 开着时一轮会发三条候选请求，次数全成 3 倍，断言全员失真。
+//    v2 自己的契约由 e2e-v2.mjs 盯，这里关掉才是隔离变量。
+const SETTINGS = { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', clockMode: false, historyTime: false, liveV2: false };
 
 const dbRows = (cid) => page.evaluate(async (id) => {
   const o = indexedDB.open('ai-companion');
@@ -313,12 +319,17 @@ await page.evaluate(() => document.getElementById('btn-continue') && document.ge
 await waitIdle();
 // 活人感 v2 之后一轮要多跑 6 次调用（独白/判断/三候选/评审），自动串联按 2500ms 间隔 ——
 // 写死 sleep 6000 只够写完两段。改成等它写完（最多 20 秒），再看停在第几段。
-let hits = 0;
-for (let i = 0; i < 40; i++) {
+// 「跑到 3 次就 break」是错的判据：只要有一次重写，请求数就冲到 3，
+// 而真正要验的是「自动串联到底停在第几段」。改成【等到不再有新请求】。
+let hits = 0, _prev = -1, _stableAt = 0;
+for (let i = 0; i < 60; i++) {
   await sleep(500);
-  hits = await page.evaluate(() => window.__hits.chat.length);
-  if (hits >= 3) break;
+  hits = await page.evaluate(() => window.__reqAll.length);
+  if (hits !== _prev) { _prev = hits; _stableAt = Date.now(); }
+  else if (hits >= 1 && Date.now() - _stableAt > 4000) break;
 }
+const _diag = await page.evaluate(() => window.__reqAll.map(b => (b.messages || []).length + ':' + String(((b.messages || []).slice(-1)[0] || {}).content || '').slice(0, 24)));
+console.log('   请求序列: ' + JSON.stringify(_diag));
 t('★ 对照组：不管它，它真的会自己接着往下写（至少 2 次请求）', hits >= 2, '请求数 ' + hits);
 t('对照组：连续写到了第 3 段就停（epicChain=3）', hits === 3, '请求数 ' + hits);
 
@@ -331,7 +342,7 @@ for (let i = 0; i < 400; i++) {
   await sleep(50);
 }
 await sleep(800);
-await page.evaluate(() => { window.__hits.chat.length = 0; window.__lastSig = ''; window.__lastAt = 0; });
+await page.evaluate(() => { window.__hits.chat.length = 0; window.__reqAll.length = 0; window.__lastSig = ''; window.__lastAt = 0; });
 await page.evaluate(() => document.getElementById('btn-continue').click());
 // 等第一段结束（btn-stop 从显示到隐藏）
 await sleep(300);

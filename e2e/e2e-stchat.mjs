@@ -12,21 +12,21 @@ const NL = String.fromCharCode(10);
 
 console.log('=== 1. 酒馆的 .jsonl（一行一条）===');
 const jsonl = [
-  JSON.stringify({ user_name: '我', character_name: '紫', create_date: '2026-01-01T00:00:00.000Z' }),
+  JSON.stringify({ user_name: '我', character_name: '阿紫', create_date: '2026-01-01T00:00:00.000Z' }),
   JSON.stringify({ name: '我', is_user: true, mes: '在吗', send_date: '2026-01-01T10:00:00.000Z' }),
-  JSON.stringify({ name: '紫', is_user: false, mes: '在的', send_date: '2026-01-01T10:00:30.000Z' }),
-  JSON.stringify({ name: '紫', is_user: false, mes: '怎么了', send_date: '2026-01-01T10:01:00.000Z' }),
+  JSON.stringify({ name: '阿紫', is_user: false, mes: '在的', send_date: '2026-01-01T10:00:30.000Z' }),
+  JSON.stringify({ name: '阿紫', is_user: false, mes: '怎么了', send_date: '2026-01-01T10:01:00.000Z' }),
 ].join(NL);
 let p = parseStChat(jsonl);
 t('认得出这是酒馆的记录', p.ok === true, p);
 t('三条消息都进来了', p.ok && p.msgs.length === 3, p.msgs && p.msgs.length);
-t('元信息（你和她的名字）也读到了', p.meta.userName === '我' && p.meta.charName === '紫', p.meta);
+t('元信息（你和她的名字）也读到了', p.meta.userName === '我' && p.meta.charName === '阿紫', p.meta);
 t('谁是用户认得出', p.msgs[0].isUser === true && p.msgs[1].isUser === false, p.msgs.map(m => m.isUser));
 t('时间跨度算出来了', p.from === Date.parse('2026-01-01T10:00:00.000Z') && p.to === Date.parse('2026-01-01T10:01:00.000Z'), [p.from, p.to]);
-t('说话人统计按条数排', p.senders[0].name === '紫' && p.senders[0].count === 2, p.senders);
+t('说话人统计按条数排', p.senders[0].name === '阿紫' && p.senders[0].count === 2, p.senders);
 
 console.log('=== 2. 坏行只跳那一行，不整份判死 ===');
-p = parseStChat([JSON.stringify({ name: '紫', is_user: false, mes: '好', send_date: 1 }),
+p = parseStChat([JSON.stringify({ name: '阿紫', is_user: false, mes: '好', send_date: 1 }),
   '{这不是 JSON',
   '',
   JSON.stringify({ name: '我', is_user: true, mes: '嗯', send_date: 2 })].join(NL));
@@ -35,22 +35,22 @@ t('坏行数记下来了', p.badLines === 1, p.badLines);
 t('空行不算坏行', p.ok === true);
 
 console.log('=== 3. 没有正文 / 没有时间 ===');
-p = parseStChat([JSON.stringify({ name: '紫', is_user: false, mes: '   ', send_date: 1 }),
-  JSON.stringify({ name: '紫', is_user: false, mes: '有话', send_date: 2 }),
-  JSON.stringify({ name: '紫', is_user: false, mes: '没时间' })].join(NL));
+p = parseStChat([JSON.stringify({ name: '阿紫', is_user: false, mes: '   ', send_date: 1 }),
+  JSON.stringify({ name: '阿紫', is_user: false, mes: '有话', send_date: 2 }),
+  JSON.stringify({ name: '阿紫', is_user: false, mes: '没时间' })].join(NL));
 t('空正文的跳过', p.msgs.length === 2, p.msgs.length);
 t('空正文有计数', p.noText === 1, p.noText);
 t('没时间的也留着（不该丢内容）', p.msgs[1].ts === null, p.msgs[1]);
 t('没时间的也计数', p.noTime === 1, p.noTime);
 
 console.log('=== 4. 整份 JSON 的导出也认 ===');
-p = parseStChatJson(JSON.stringify([{ name: '紫', is_user: false, mes: 'a', send_date: 1 },
+p = parseStChatJson(JSON.stringify([{ name: '阿紫', is_user: false, mes: 'a', send_date: 1 },
   { name: '我', is_user: true, mes: 'b', send_date: 2 }]));
 t('数组形态认', p.ok && p.msgs.length === 2, p.msgs && p.msgs.length);
-p = parseStChatJson(JSON.stringify({ user_name: '我', character_name: '紫',
-  messages: [{ name: '紫', is_user: false, mes: 'a', send_date: 1 }] }));
+p = parseStChatJson(JSON.stringify({ user_name: '我', character_name: '阿紫',
+  messages: [{ name: '阿紫', is_user: false, mes: 'a', send_date: 1 }] }));
 t('{messages:[...]} 形态认', p.ok && p.msgs.length === 1, p);
-const wrapped = parseStChat(JSON.stringify({ messages: [{ name: '紫', mes: 'a', send_date: 1 }] }));
+const wrapped = parseStChat(JSON.stringify({ messages: [{ name: '阿紫', mes: 'a', send_date: 1 }] }));
 t('parseStChat 自动分流到 JSON 那条', wrapped.ok === true, wrapped);
 p = parseStChat('不是 JSON 也不是 jsonl');
 t('两不像 → 说清楚读不了', p.ok === false && !!p.reason, p);
@@ -69,7 +69,7 @@ console.log('=== 6. 落库形状 ===');
 // （酒馆两种都存过），拿 1000 / 61000 这种当毫秒用会被它正确地当成秒，测出来就是假的失败。
 const T0 = 1767225600000;
 p = parseStChat([JSON.stringify({ name: '我', is_user: true, mes: '甲', send_date: T0 }),
-  JSON.stringify({ name: '紫', is_user: false, mes: '乙', send_date: T0 + 60000 }),
+  JSON.stringify({ name: '阿紫', is_user: false, mes: '乙', send_date: T0 + 60000 }),
   JSON.stringify({ name: '我', is_user: true, mes: '丙', send_date: T0 + 120000 })].join(NL));
 const ms = toMessages(p, 'C1', 5000, (() => { let i = 0; return () => 'x' + (++i); })());
 t('条数对上', ms.length === 3, ms.length);
@@ -83,7 +83,7 @@ t('原文一个字没被改（甲还是甲）', p.msgs[0].mes === '甲');
 console.log('=== 7. 一份大的也要扛得住 ===');
 const big = [];
 for (let i = 0; i < 3000; i++) {
-  big.push(JSON.stringify({ name: i % 2 ? '紫' : '我', is_user: i % 2 === 0, mes: '第' + i + '句，随便写点什么让它有点长度。', send_date: 1767225600000 + i * 60000 }));
+  big.push(JSON.stringify({ name: i % 2 ? '阿紫' : '我', is_user: i % 2 === 0, mes: '第' + i + '句，随便写点什么让它有点长度。', send_date: 1767225600000 + i * 60000 }));
 }
 const t0 = Date.now();
 const bp = parseStChat(big.join(NL));

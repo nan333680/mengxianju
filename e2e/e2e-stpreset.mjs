@@ -45,7 +45,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1300);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(900);
-await seedChar(page, '紫', { greeting:'（开场）' });
+await seedChar(page, '阿紫', { greeting:'（开场）' });
 await page.reload({ waitUntil:'networkidle0' }); await sleep(900);
 
 console.log('=== 1. 导入酒馆预设：报告里列全了 ===');

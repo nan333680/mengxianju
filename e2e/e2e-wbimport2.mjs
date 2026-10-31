@@ -20,7 +20,7 @@ fs.mkdirSync(FIX, { recursive: true });
 const wbFile = FIX + '/worldbook-full.json';
 fs.writeFileSync(wbFile, JSON.stringify({
   version: 1, kind: 'worldbook', exportedAt: Date.now(),
-  charNames: [{ id: 'reimu0v1', name: '灵梦' }],
+  charNames: [{ id: 'reimu0v1', name: '阿灵' }],
   groups: [{ id: 'gsg-home', name: '他 · 住处与家', members: ['reimu0v1'], createdAt: Date.now(),
     entries: [{ id:'g1', title:'他·这个家', keys:[], content:'住在八楼。', on:true, pos:'always' }] }],
   solo: [{ id: 'solo-reimu', charId: 'reimu0v1', entries: [
@@ -65,7 +65,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1200);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(500);
-await seedChars(page, [{ id:'reimu0v1', name:'灵梦' }]);
+await seedChars(page, [{ id:'reimu0v1', name:'阿灵' }]);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(700);
 console.log('=== 1. 新装默认：世界书总开关是开的 ===');
 await openWb();
@@ -95,7 +95,7 @@ await setSwitch(false);
 await page.evaluate(() => document.getElementById('btn-wb-global').click()); await sleep(800);
 const gv = await page.evaluate(() => ({ view: document.querySelector('#view-wbglobal').classList.contains('active'), text: (document.getElementById('wb-group-list')||{}).innerText || '' }));
 t('关着也能进「全局设置」', gv.view);
-t('组列表显示得出来', /住处与家/.test(gv.text) && /灵梦/.test(gv.text), gv.text);
+t('组列表显示得出来', /住处与家/.test(gv.text) && /阿灵/.test(gv.text), gv.text);
 await page.evaluate(() => document.getElementById('btn-wbg-back').click()); await sleep(600);
 await page.evaluate(() => document.getElementById('btn-wb-solo').click()); await sleep(700);
 await page.evaluate(() => { const r=document.querySelector('#pk-list .pick-row'); if(r) r.click(); }); await sleep(900);
@@ -124,7 +124,7 @@ await page.evaluate(async () => {
   const gs = await wb.groups(); for (const g of gs) await wb.delGroup(g.id);
   const ss = await wb.soloAll(); for (const s of ss) await wb.delSolo(s.id);
 });
-await seedChars(page, [{ id:'other-1', name:'魔理沙' }]);
+await seedChars(page, [{ id:'other-1', name:'阿理' }]);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(700);
 await openWb(); await setSwitch(false);
 await (await page.$('#wb-import-file')).uploadFile(wbFile); await sleep(3000);

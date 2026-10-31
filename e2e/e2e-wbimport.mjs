@@ -13,7 +13,7 @@ const wbFile = path.join(FIX, 'worldbook-test.json');
 fs.writeFileSync(wbFile, JSON.stringify({
   version: 1, kind: 'worldbook', exportedAt: Date.now(),
   groups: [{ id:'wbg_test1', name:'测试幻想乡', members:[], createdAt: Date.now(), entries:[
-    { id:'wbe1', title:'红魔馆', keys:['红魔馆','帕秋莉'], content:'红魔馆是蕾米莉亚的宅邸。', on:true },
+    { id:'wbe1', title:'阿馆', keys:['阿馆','阿秋'], content:'阿馆是阿米的宅邸。', on:true },
   ]}],
   solo: [],
 }), 'utf8');
@@ -44,7 +44,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1500);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
-await seedChars(page, [{name:'紫'}]);
+await seedChars(page, [{name:'阿紫'}]);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
 
 console.log('=== 1. 有导入导出入口 ===');
@@ -73,7 +73,7 @@ const after = await page.evaluate(async () => {
 console.log('   ' + JSON.stringify(after));
 t('角色组导进来了', after.length === 1 && after[0].name === '测试幻想乡', JSON.stringify(after));
 t('组里的条目也在', after[0] && after[0].n === 1);
-t('触发词完整', after[0] && after[0].key === '红魔馆');
+t('触发词完整', after[0] && after[0].key === '阿馆');
 
 console.log('=== 3. 导入是追加，不清空已有 ===');
 // 先手动建一个组，再导一次，应该变成 2 个

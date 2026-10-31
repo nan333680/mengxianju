@@ -32,7 +32,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1500);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(300);
-await seedChars(page, [{name:'紫'},{name:'袿姬'}]);
+await seedChars(page, [{name:'阿紫'},{name:'阿姬'}]);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(300);
 // 建 3 个组
 await page.evaluate(async () => {

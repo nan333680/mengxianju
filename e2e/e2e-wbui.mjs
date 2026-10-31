@@ -54,7 +54,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1500);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
-await seedChars(page, [{name:'紫'},{name:'袿姬'},{name:'小恶魔'}]);
+await seedChars(page, [{name:'阿紫'},{name:'阿姬'},{name:'阿魔'}]);
 await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 原 2000：探针实测 reload 后 app 就绪只要 ~1ms;
 
 console.log('=== 1. 抽屉能拉开 ===');
@@ -168,22 +168,22 @@ t('标题是组名', ePage.title === '东方幻想乡', ePage.title);
 console.log('=== 6. 新建条目（触发词标签式）===');
 await jsClick('#btn-wb-newentry'); await sleep(700);
 await page.evaluate(() => {
-  document.querySelector('#we-title').value = '红魔馆';
+  document.querySelector('#we-title').value = '阿馆';
   const inp = document.querySelector('#we-key-input');
-  inp.value = '红魔馆';
+  inp.value = '阿馆';
   inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 });
 await sleep(400);
 await page.evaluate(() => {
   const inp = document.querySelector('#we-key-input');
-  inp.value = '帕秋莉';
+  inp.value = '阿秋';
   inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 });
 await sleep(400);
 const tagN = await page.evaluate(() => document.querySelectorAll('#we-box .key-tag').length);
 t('回车生成 2 个触发词标签', tagN === 2, 'tags='+tagN);
 await page.evaluate(() => {
-  document.querySelector('#we-content').value = '红魔馆是蕾米莉亚的宅邸，帕秋莉住在里面的图书馆。';
+  document.querySelector('#we-content').value = '阿馆是阿米的宅邸，阿秋住在里面的图书馆。';
 });
 await jsClick('#modal-ok'); await sleep(1200);
 const ent = await page.evaluate(async () => {
@@ -193,11 +193,11 @@ const ent = await page.evaluate(async () => {
   return e ? { title: e.title, keys: e.keys, len: e.content.length, on: e.on } : null;
 });
 console.log('   ' + JSON.stringify(ent));
-t('条目已保存', ent && ent.title === '红魔馆', JSON.stringify(ent));
+t('条目已保存', ent && ent.title === '阿馆', JSON.stringify(ent));
 t('触发词存了 2 个', ent && ent.keys.length === 2, JSON.stringify(ent && ent.keys));
 t('内容完整', ent && ent.len > 10);
 const itemText = await page.evaluate(() => document.querySelector('#wbe-list').textContent);
-t('列表显示条目', itemText.includes('红魔馆') && itemText.includes('帕秋莉'), itemText.slice(0,50));
+t('列表显示条目', itemText.includes('阿馆') && itemText.includes('阿秋'), itemText.slice(0,50));
 
 console.log('\nJS 错误: ' + (errs.length ? errs.join(' | ') : '无'));
 t('无 JS 报错', errs.length === 0, errs.join(' | '));

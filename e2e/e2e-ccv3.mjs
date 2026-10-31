@@ -13,10 +13,10 @@ const t = (n, ok, ex) => { if (ok) { pass++; console.log('  OK   ' + n); } else 
 const enc = new TextEncoder();
 
 console.log('=== 1. @@ 装饰器：剥下来 + 能做的照做 ===');
-let d = parseDecorators('@@activate_only_after 4' + String.fromCharCode(10) + '@@additional_keys 雾之湖,红魔馆' + String.fromCharCode(10) + '正文第一行');
+let d = parseDecorators('@@activate_only_after 4' + String.fromCharCode(10) + '@@additional_keys 雾之湖,阿馆' + String.fromCharCode(10) + '正文第一行');
 t('装饰器行被剥掉，正文留下', d.text === '正文第一行', d.text);
 t('onlyAfter 读到了', d.act.onlyAfter === 4, d.act);
-t('additional_keys 拆成数组', JSON.stringify(d.act.addKeys) === JSON.stringify(['雾之湖', '红魔馆']), d.act);
+t('additional_keys 拆成数组', JSON.stringify(d.act.addKeys) === JSON.stringify(['雾之湖', '阿馆']), d.act);
 
 d = parseDecorators('@@dont_activate' + String.fromCharCode(10) + '正文');
 t('@@dont_activate → off', d.act.off === true, d.act);
@@ -46,7 +46,7 @@ d = parseDecorators('@@activate_only_after 2' + String.fromCharCode(10) + '@@@ac
 t('主装饰器认识时就不看回退的', d.act.onlyAfter === 2 && d.act.onlyEvery === undefined, d.act);
 
 console.log('=== 2. 宏 ===');
-t('{{char}} / {{user}}', expandMacros('{{char}} 看着 {{user}}', { char: '紫', user: '你' }) === '紫 看着 你');
+t('{{char}} / {{user}}', expandMacros('{{char}} 看着 {{user}}', { char: '阿紫', user: '你' }) === '阿紫 看着 你');
 t('{{//注释}} 整段删掉', expandMacros('甲{{// 这是注释}}乙', {}) === '甲乙');
 t('{{comment:...}} 删掉', expandMacros('甲{{comment: 说明}}乙', {}) === '甲乙');
 t('{{hidden_key:...}} 删掉', expandMacros('甲{{hidden_key: 雷}}乙', {}) === '甲乙');
@@ -69,7 +69,7 @@ t('{{user}} 没给就默认「你」', expandMacros('{{user}}', {}) === '你');
 console.log('=== 3. 世界书条目：V3 字段 ===');
 let es = entriesFromList([{
   keys: ['雾'], secondary_keys: ['夜'], content: '正文', enabled: true,
-}], { char: '紫', user: '你' });
+}], { char: '阿紫', user: '你' });
 // ⚠️ v0.4.2.1：二次筛选不再是"读不懂"—— 它现在真的按 selectiveLogic 筛（hitKeys）。
 t('V3 的 secondary_keys 认，而且不再标待确认', es.length === 1 && es[0].needsReview === undefined
   && es[0].selective === true && (es[0].secondary || []).join() === '夜' && es[0].logic === 0, es[0]);
@@ -102,8 +102,8 @@ t('不认识的装饰器也标出来', es[0].needsReview === true && es[0].revie
 es = entriesFromList([{ keys: ['甲'], content: '@@position at_depth 3' + String.fromCharCode(10) + 'x' }], {});
 t('@@position 的值我们做不到时也要说', es[0].needsReview === true && es[0].reviewWhy.includes('position'), es[0].reviewWhy);
 
-es = entriesFromList([{ keys: ['甲'], content: '{{char}} 在 {{user}} 面前' }], { char: '紫', user: '你' });
-t('条目正文里的宏也展开', es[0].content === '紫 在 你 面前', es[0].content);
+es = entriesFromList([{ keys: ['甲'], content: '{{char}} 在 {{user}} 面前' }], { char: '阿紫', user: '你' });
+t('条目正文里的宏也展开', es[0].content === '阿紫 在 你 面前', es[0].content);
 
 es = entriesFromList([{ keys: ['甲'], content: 'x', enabled: false }], {});
 t('V3 的 enabled:false → 关着', es[0].on === false, es[0]);
@@ -114,7 +114,7 @@ console.log('=== 4. 整张卡：V3 字段 ===');
 const v3card = {
   spec: 'chara_card_v3', spec_version: '3.0',
   data: {
-    name: '紫', nickname: '紫妈',
+    name: '阿紫', nickname: '阿紫妈',
     description: '{{char}} 是个 {{user}} 的朋友。',
     first_mes: '{{char}} 抬起头。',
     group_only_greetings: ['群聊里的开场白'],
@@ -130,9 +130,9 @@ const v3card = {
 };
 const card = parseCardJson(JSON.stringify(v3card));
 t('spec 认出来是 V3', card.spec === 'chara_card_v3', card.spec);
-t('nickname 带出来了', card.nickname === '紫妈', card.nickname);
-t('介绍里的 {{char}} 换成了昵称', card.description === '紫妈 是个 你 的朋友。', card.description);
-t('开场白里的宏也展开了', card.first_mes === '紫妈 抬起头。', card.first_mes);
+t('nickname 带出来了', card.nickname === '阿紫妈', card.nickname);
+t('介绍里的 {{char}} 换成了昵称', card.description === '阿紫妈 是个 你 的朋友。', card.description);
+t('开场白里的宏也展开了', card.first_mes === '阿紫妈 抬起头。', card.first_mes);
 t('group_only_greetings 带出来了', card.group_only_greetings.length === 1, card.group_only_greetings);
 t('creator_notes_multilingual 带出来了', !!card.creator_notes_multilingual.zh, card.creator_notes_multilingual);
 t('source 带出来了', card.source[0] === 'https://example.com/card/1', card.source);
@@ -142,13 +142,13 @@ t('世界书条目走的是同一套判据', card.entries.length === 2 && card.e
 t('V2 卡照样认（不能为了 V3 把老的弄坏）', parseCardJson(JSON.stringify({ spec: 'chara_card_v2', data: { name: '甲', description: 'x' } })).name === '甲');
 
 console.log('=== 5. 导出：带 V3 字段就发 V3 卡 ===');
-const out3 = buildCardV2({ name: '紫', nickname: '紫妈', persona: 'x', greeting: 'y', groupGreetings: ['群聊开场'] }, []);
+const out3 = buildCardV2({ name: '阿紫', nickname: '阿紫妈', persona: 'x', greeting: 'y', groupGreetings: ['群聊开场'] }, []);
 t('有昵称/群聊开场白 → 发 V3 卡', out3.spec === 'chara_card_v3' && out3.spec_version === '3.0', out3.spec);
 t('V3 卡里带上 nickname / group_only_greetings / assets',
-  out3.data.nickname === '紫妈' && out3.data.group_only_greetings.length === 1 && Array.isArray(out3.data.assets), out3.data);
+  out3.data.nickname === '阿紫妈' && out3.data.group_only_greetings.length === 1 && Array.isArray(out3.data.assets), out3.data);
 const out2 = buildCardV2({ name: '甲', persona: 'x', greeting: 'y' }, []);
 t('没有 V3 字段 → 还是发 V2（别的软件对 V2 最友好）', out2.spec === 'chara_card_v2' && out2.spec_version === '2.0', out2.spec);
-t('导回来还能认（往返一趟不丢）', parseCardJson(JSON.stringify(out3)).nickname === '紫妈');
+t('导回来还能认（往返一趟不丢）', parseCardJson(JSON.stringify(out3)).nickname === '阿紫妈');
 
 console.log('=== 6. CHARX（zip 容器）===');
 function makeZip(files) {
@@ -210,7 +210,7 @@ t('PNG 不会被当成 zip', isZip(new Uint8Array([0x89, 0x50, 0x4E, 0x47, 13, 1
 const files = await readZip(zip);
 t('zip 里两个文件都读出来了', files.length === 2, files.map(f => f.name));
 const cj = files.find(f => f.name === 'card.json');
-t('deflate 压的那个解出来了（内容对得上）', JSON.parse(new TextDecoder().decode(cj.bytes)).data.name === '紫');
+t('deflate 压的那个解出来了（内容对得上）', JSON.parse(new TextDecoder().decode(cj.bytes)).data.name === '阿紫');
 const iconFile = files.find(f => f.name.startsWith('assets/'));
 t('store 那个原样取出', iconFile.bytes.length === 8 && iconFile.bytes[0] === 0x89);
 t('embeded:// 找得到资源（注意规范里就是这个拼写，少一个 d）',

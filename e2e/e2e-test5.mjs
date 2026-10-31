@@ -110,23 +110,23 @@ console.log('');
 console.log('=== 2. 每个角色的参数互相独立（这是原来的核心价值）===');
 // 建两个参数不同的角色，直接塞库
 await seedChars(page, [
-  { name: '萃香测试', extra: { temperature: 1.25, typingDelay: 1.0, verbosity: 'veryShort', splitMessages: true, kaomojiStyle: 'jp-cute', kaomojiFreq: 0.5 } },
-  { name: '幽幽子测试', extra: { temperature: 1.05, typingDelay: 1.5, verbosity: 'long', splitMessages: false } }
+  { name: '阿香测试', extra: { temperature: 1.25, typingDelay: 1.0, verbosity: 'veryShort', splitMessages: true, kaomojiStyle: 'jp-cute', kaomojiFreq: 0.5 } },
+  { name: '阿幽测试', extra: { temperature: 1.05, typingDelay: 1.5, verbosity: 'long', splitMessages: false } }
 ]);
 await page.reload({ waitUntil: 'networkidle0' });
 await sleep(400)   // [提速] 原 1800：探针实测 reload 后 app 就绪只要 ~1ms;
 
-// 选萃香
+// 选阿香
 await tap(page, '#btn-chars');
 await new Promise(r=>setTimeout(r,700));
 await page.evaluate(() => {
   const c = [...document.querySelectorAll('#char-list .char-card')]
-    .find(x => x.textContent.includes('萃香测试'));
+    .find(x => x.textContent.includes('阿香测试'));
   if (c) c.click();
 });
 await new Promise(r=>setTimeout(r,1200));
 const cur = await page.$eval('#chat-name', el => el.textContent.trim());
-t('已切到萃香测试', cur === '萃香测试', cur);
+t('已切到阿香测试', cur === '阿香测试', cur);
 
 await sendMsg('你好呀');
 const c = await lastCap();
@@ -135,21 +135,21 @@ const t5a = await lastTemps(3);
 t('请求温度 = ' + P_SUIKA.temperature + '（三条候选以它为中值）', t5a.some(x => Math.abs(x-P_SUIKA.temperature) < 0.001), JSON.stringify(t5a));
 
 console.log('');
-console.log('=== 3. 切到幽幽子，参数应各自独立 ===');
+console.log('=== 3. 切到阿幽，参数应各自独立 ===');
 await tap(page, '#btn-chars');
 await new Promise(r=>setTimeout(r,700));
 await page.evaluate(() => {
   const el = [...document.querySelectorAll('#char-list .char-card')]
-    .find(x => x.textContent.includes('幽幽子测试'));
+    .find(x => x.textContent.includes('阿幽测试'));
   if (el) el.click();
 });
 await new Promise(r=>setTimeout(r,1200));
 const cur2 = await page.$eval('#chat-name', el => el.textContent.trim());
-t('已切到幽幽子测试', cur2 === '幽幽子测试', cur2);
+t('已切到阿幽测试', cur2 === '阿幽测试', cur2);
 await sendMsg('你好');
 const c2 = await lastCap();
 const t5b = await lastTemps(3);
-t('幽幽子请求温度 = ' + P_YUYU.temperature + '（三条候选以它为中值）', t5b.some(x => Math.abs(x-P_YUYU.temperature) < 0.001), JSON.stringify(t5b));
+t('阿幽请求温度 = ' + P_YUYU.temperature + '（三条候选以它为中值）', t5b.some(x => Math.abs(x-P_YUYU.temperature) < 0.001), JSON.stringify(t5b));
 t('两人温度确实不同', t5a.join() !== t5b.join(), 'A=' + JSON.stringify(t5a) + ' B=' + JSON.stringify(t5b));
 
 console.log('');
@@ -158,32 +158,32 @@ await tap(page, '#btn-chars');
 await new Promise(r=>setTimeout(r,700));
 await page.evaluate(() => {
   const el = [...document.querySelectorAll('#char-list .char-card')]
-    .find(x => x.textContent.includes('萃香测试'));
+    .find(x => x.textContent.includes('阿香测试'));
   if (el) { const b = el.querySelector('[data-edit]'); if (b) b.click(); }
 });
 await new Promise(r=>setTimeout(r,1200));
 const tempInEdit = await page.$eval('#e-temp', el => el.value);
-t('编辑页显示萃香自己的温度', Math.abs(Number(tempInEdit) - P_SUIKA.temperature) < 0.001, tempInEdit);
+t('编辑页显示阿香自己的温度', Math.abs(Number(tempInEdit) - P_SUIKA.temperature) < 0.001, tempInEdit);
 const verbInEdit = await page.$eval('#e-verbosity', el => el.value);
-t('编辑页显示萃香自己的回复长度', verbInEdit === 'veryShort', verbInEdit);
+t('编辑页显示阿香自己的回复长度', verbInEdit === 'veryShort', verbInEdit);
 await tap(page, '#btn-edit-back');
 await new Promise(r=>setTimeout(r,600));
 
 console.log('');
-console.log('=== 5. 切回萃香，请求参数仍是它自己的 ===');
+console.log('=== 5. 切回阿香，请求参数仍是它自己的 ===');
 await tap(page, '#btn-chars');
 await new Promise(r=>setTimeout(r,700));
 await page.evaluate(() => {
   const el = [...document.querySelectorAll('#char-list .char-card')]
-    .find(x => x.textContent.includes('萃香测试'));
+    .find(x => x.textContent.includes('阿香测试'));
   if (el) el.click();
 });
 await new Promise(r=>setTimeout(r,1200));
-t('已切回萃香测试', (await page.$eval('#chat-name', el=>el.textContent.trim())) === '萃香测试');
+t('已切回阿香测试', (await page.$eval('#chat-name', el=>el.textContent.trim())) === '阿香测试');
 await sendMsg('再聊一句');
 const c3 = await lastCap();
 const t5c = await lastTemps(3);
-t('萃香温度仍是 ' + P_SUIKA.temperature + '（三条候选以它为中值）', t5c.some(x => Math.abs(x-P_SUIKA.temperature) < 0.001), JSON.stringify(t5c));
+t('阿香温度仍是 ' + P_SUIKA.temperature + '（三条候选以它为中值）', t5c.some(x => Math.abs(x-P_SUIKA.temperature) < 0.001), JSON.stringify(t5c));
 
 t('无 JS 错误', errs.length === 0, errs.slice(0,2).join(' | '));
 

@@ -31,7 +31,7 @@ await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 
 console.log('=== 1. prompt 层：关着时不写视角段 ===');
 const offP = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona: '你是灵梦。' }, { verbosity:'medium', descLevel:'mid', splitMessages:false });
+  return buildStablePrompt({ persona: '你是阿灵。' }, { verbosity:'medium', descLevel:'mid', splitMessages:false });
 });
 t('关着时没有视角段', !offP.includes('# 视角'));
 t('关着时提示词不变（有表达方式段）', offP.includes('# 表达方式'));
@@ -40,7 +40,7 @@ console.log('');
 console.log('=== 2. 开着时写入视角段 ===');
 const onP = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona: '你是灵梦。' }, { verbosity:'medium', descLevel:'mid', splitMessages:false, povLock:true });
+  return buildStablePrompt({ persona: '你是阿灵。' }, { verbosity:'medium', descLevel:'mid', splitMessages:false, povLock:true });
 });
 t('有视角段', onP.includes('# 视角'));
 t('强调只写自己感知到的', /只能站在【你自己的视角】/.test(onP));
@@ -131,7 +131,7 @@ await sleep(300);
 await jsClick('#btn-edit-save'); await sleep(1000);
 const offAgain = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona: '你是灵梦。' }, { verbosity:'medium', descLevel:'mid', splitMessages:false, povLock:false });
+  return buildStablePrompt({ persona: '你是阿灵。' }, { verbosity:'medium', descLevel:'mid', splitMessages:false, povLock:false });
 });
 t('关掉后没有视角段', !offAgain.includes('# 视角'));
 

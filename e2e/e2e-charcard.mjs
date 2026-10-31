@@ -45,7 +45,7 @@ t('空输入的 crc32 === 0', CC.crc32(new Uint8Array(0)) === 0);
 
 // ---------- 2. base64 / UTF-8 往返 ----------
 console.log('编码往返');
-for (const s of ['hello', '你好，世界', '幽幽子🌸西行寺', 'a\nb\t"c"\\d', '']) {
+for (const s of ['hello', '你好，世界', '阿幽🌸阿寺', 'a\nb\t"c"\\d', '']) {
   t('往返 ' + JSON.stringify(s.slice(0, 12)), CC.decodeB64Utf8(CC.encodeB64Utf8(s)) === s);
 }
 // 裸 btoa 遇到中文会直接抛 InvalidCharacterError —— 这就是 encodeB64Utf8 存在的理由
@@ -124,7 +124,7 @@ const pngBytes = Uint8Array.from(atob(PNG_1PX), ch => ch.charCodeAt(0));
 t('识别 PNG 签名', CC.isPng(pngBytes) === true);
 t('拒绝非 PNG', CC.isPng(new TextEncoder().encode('{"name":"x"}')) === false);
 
-const card = { spec: 'chara_card_v2', data: { name: '帕秋莉', description: '魔女', first_mes: '别吵', character_book: { entries: [{ keys: ['魔法'], content: '她读魔导书' }] } } };
+const card = { spec: 'chara_card_v2', data: { name: '阿秋', description: '魔女', first_mes: '别吵', character_book: { entries: [{ keys: ['魔法'], content: '她读魔导书' }] } } };
 const out = CC.insertTextChunk(pngBytes, 'chara', CC.encodeB64Utf8(JSON.stringify(card)));
 
 t('插入后仍是 PNG', CC.isPng(out));
@@ -132,7 +132,7 @@ t('插入后变长', out.length > pngBytes.length, out.length + ' > ' + pngBytes
 t('IEND 还在末尾', String.fromCharCode(...out.subarray(out.length - 8, out.length - 4)) === 'IEND');
 
 const back = CC.extractCardFromPng(out);
-t('读回 name', back.name === '帕秋莉', back.name);
+t('读回 name', back.name === '阿秋', back.name);
 t('读回 description', back.description === '魔女');
 t('读回世界书', back.entries.length === 1 && back.entries[0].content === '她读魔导书');
 
@@ -174,9 +174,9 @@ t('非 ASCII 正文被拒绝', /只能存 ASCII/.test(threw), threw);
 
 // ---------- 5. 导出打包 ----------
 console.log('导出打包');
-const built = CC.buildCardV2({ name: 'uuz', persona: '西行寺', greeting: '你好' }, [{ keys: ['a'], content: 'b', on: true }]);
+const built = CC.buildCardV2({ name: 'uuz', persona: '阿寺', greeting: '你好' }, [{ keys: ['a'], content: 'b', on: true }]);
 t('spec 字段', built.spec === 'chara_card_v2' && built.spec_version === '2.0');
-t('name/description/first_mes 映射', built.data.name === 'uuz' && built.data.description === '西行寺' && built.data.first_mes === '你好');
+t('name/description/first_mes 映射', built.data.name === 'uuz' && built.data.description === '阿寺' && built.data.first_mes === '你好');
 t('世界书带上了', built.data.character_book.entries.length === 1);
 t('条目 enabled 跟随 on', built.data.character_book.entries[0].enabled === true);
 const noBook = CC.buildCardV2({ name: 'x', persona: '', greeting: '' }, []);
@@ -189,7 +189,7 @@ t('导出再导入是同一个角色', CC.parseCardJson(JSON.stringify(built)).n
 console.log('常驻条目往返');
 const withAlways = CC.buildCardV2({ name: 'z', persona: 'p', greeting: 'g' }, [
   { id: 'a1', title: '世界观', keys: [], content: '永远黄昏', on: true, pos: 'always' },
-  { id: 'a2', title: '红魔馆', keys: ['红魔馆'], content: '宅邸', on: true, pos: 'tail' },
+  { id: 'a2', title: '阿馆', keys: ['阿馆'], content: '宅邸', on: true, pos: 'tail' },
 ]);
 const bk = withAlways.data.character_book;
 t('没触发词的常驻条目也导出了', !!bk && bk.entries.length === 2, bk && bk.entries.length);

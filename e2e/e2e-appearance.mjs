@@ -72,7 +72,7 @@ await page.reload({ waitUntil:'networkidle0' }); await sleep(400)   // [提速] 
 console.log('=== 1. prompt 层：空着不注入 ===');
 const emptyP = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona:'你是灵梦。' }, { myProfile:'', appearance:'', appearanceOn:true, verbosity:'medium', descLevel:'mid', splitMessages:false });
+  return buildStablePrompt({ persona:'你是阿灵。' }, { myProfile:'', appearance:'', appearanceOn:true, verbosity:'medium', descLevel:'mid', splitMessages:false });
 });
 t('空着时没有外貌段', !emptyP.includes('# 你此刻的样子'));
 
@@ -80,7 +80,7 @@ console.log('');
 console.log('=== 2. 填了内容就注入，位置在整段最末尾 ===');
 const filledP = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona:'你是灵梦。' }, { myProfile:'我的设定', appearance:'穿着紫色连衣裙', appearanceOn:true, verbosity:'medium', descLevel:'mid', splitMessages:false });
+  return buildStablePrompt({ persona:'你是阿灵。' }, { myProfile:'我的设定', appearance:'穿着紫色连衣裙', appearanceOn:true, verbosity:'medium', descLevel:'mid', splitMessages:false });
 });
 t('有外貌段', filledP.includes('# 你此刻的样子'));
 t('含外貌内容', filledP.includes('穿着紫色连衣裙'));
@@ -107,7 +107,7 @@ console.log('');
 console.log('=== 3. 开关关掉 → 内容留着但不注入 ===');
 const offP = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona:'你是灵梦。' }, { myProfile:'', appearance:'穿着紫色连衣裙', appearanceOn:false, verbosity:'medium', descLevel:'mid', splitMessages:false });
+  return buildStablePrompt({ persona:'你是阿灵。' }, { myProfile:'', appearance:'穿着紫色连衣裙', appearanceOn:false, verbosity:'medium', descLevel:'mid', splitMessages:false });
 });
 t('关掉后不注入', !offP.includes('穿着紫色连衣裙'));
 

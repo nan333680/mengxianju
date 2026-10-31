@@ -110,7 +110,8 @@ await page.evaluate(async () => {
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
   const put = (st, rec) => new Promise(r => { const tx = db.transaction(st, 'readwrite'); tx.objectStore(st).put(rec); tx.oncomplete = r; });
   const rec = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('settings'); q.onsuccess = () => r(q.result); });
-  await put('kv', { k: 'settings', v: Object.assign({}, (rec && rec.v) || {}, { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', longMemory: false }) });
+  // liveV2: false —— 这套数请求次数，v2 的三条候选会让一轮变成 3 次（分层说明见 e2e-v2）。
+  await put('kv', { k: 'settings', v: Object.assign({}, (rec && rec.v) || {}, { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com', longMemory: false, liveV2: false }) });
   await put('characters', { id: 'ggrp1', name: '周末茶会', isGroup: true, memberIds: ['ga','gb','gc'],
     speakMode: 'round', turnIndex: 0, avatar: null, greeting: '（三个人都在。）', presetKey: 'blank', createdAt: Date.now() });
   db.close();

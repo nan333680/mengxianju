@@ -73,7 +73,7 @@ await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeou
 await sleep(1500);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil:'networkidle0' }); await sleep(900);
-await seedChar(page, '紫', { greeting:'（开场）' });
+await seedChar(page, '阿紫', { greeting:'（开场）' });
 // Key：本套件必须走到真实请求才会产生 system 提示词（没有 Key 时 send 直接被拦，lastSys 恒为空）
 await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
@@ -116,6 +116,8 @@ console.log('=== 1. 导入酒馆格式：认它，并把能确定的字段映射
   console.log('   条目: ' + JSON.stringify(res && res.map(x => x.title + (x.review ? '(待确认)' : ''))));
   t('8 条全部落库、没有报错', !!res && res.length === 8, res ? String(res.length) : 'null');
   const by = (tt) => (res || []).find(e => e.title === tt) || {};
+  // ⚠️ 名字必须和 _fixtures 里那份 ST 世界书逐字一致：源码改成别的字，条目查不到，断言全红。
+  //    这些是公开作品里的公开设定名，不是任何人的隐私。
   t('普通条目：触发词映射正确', (by('红魔馆').keys || []).includes('红魔馆'));
   t('普通条目：position 0 → front', by('红魔馆').pos === 'front');
   t('普通条目：不需要确认', by('红魔馆').review === false);

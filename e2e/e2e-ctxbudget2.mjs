@@ -50,6 +50,10 @@ const seeded = await page.evaluate(async () => {
   //    只要固定段的随机部分让 615 变成 610，第一次就只剩 2 条 —— 再降还是 2 条，
   //    droppedNow === before → 按设计不重发、原错误照报，测试随机变红。
   //    留够余量：8000 时 kept≈20，乘 0.6 后仍明显变少，降级一定降得动。
+  // ⚠️ liveV2: false —— 这套要看「第二次请求的历史比第一次短」，比的是请求里的 messages。
+  //    v2 开着时一轮三条候选，每条末尾还挂一句写法提示，数出来多一条、
+  //    最后一条也不是本轮用户消息。关掉 v2 才看得到上下文裁切本身。
+  s.liveV2 = false;
   s.contextBudget = 8000;          // 故意压小：一段长历史就顶满
   s.longMemory = false;
   s.autoArchive = false;

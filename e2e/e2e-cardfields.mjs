@@ -66,7 +66,7 @@ const cc = await import('../www/js/charcard.js');
 // 用一张真 PNG 当底图（1×1）
 const basePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 // buildCardV2 是纯函数：给一个带 V3 字段的角色，它应该返回 V3
-const v3char = { name: '紫', persona: '她是八云紫。', greeting: '（她抬眼）', nickname: '紫妈', groupGreetings: ['（群里）'], cardFields: { personality: '懒散而深不可测', mesExample: '<START>她：嗯。' } };
+const v3char = { name: '阿紫', persona: '她是阿紫。', greeting: '（她抬眼）', nickname: '阿紫妈', groupGreetings: ['（群里）'], cardFields: { personality: '懒散而深不可测', mesExample: '<START>她：嗯。' } };
 const card = cc.buildCardV2(v3char, [], { withAvatar: false });
 t('带昵称的角色导出的是 V3 卡', card.spec === 'chara_card_v3', card.spec);
 t('V3 卡里带回了 personality', card.data.personality === '懒散而深不可测', card.data.personality);
@@ -103,7 +103,7 @@ const back = cc.extractCardFromPng(Buffer.from(withChunks));
 //    第一版按 {spec, data} 取，直接炸了。
 const bd = (back && back.data) ? back.data : back;
 console.log('   读回来: spec=' + back.spec + ' nickname=' + JSON.stringify(bd.nickname));
-t('读回来优先用 ccv3（昵称还在）', back.spec === 'chara_card_v3' && bd.nickname === '紫妈', { spec: back.spec, nick: bd.nickname });
+t('读回来优先用 ccv3（昵称还在）', back.spec === 'chara_card_v3' && bd.nickname === '阿紫妈', { spec: back.spec, nick: bd.nickname });
 t('读回来的 personality 没丢', bd.personality === '懒散而深不可测', bd.personality);
 
 // ---------------------------------------------------------------- ① 走真实导入路径

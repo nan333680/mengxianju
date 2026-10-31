@@ -122,7 +122,7 @@ console.log('');
 console.log('=== 5. 保存后立刻生效（这一轮 prompt 里就带上）===');
 const inPrompt = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona: '你是灵梦。', myProfile: '【称呼】叫我阿澈就好。' }, {});
+  return buildStablePrompt({ persona: '你是阿灵。', myProfile: '【称呼】叫我阿澈就好。' }, {});
 });
 t('prompt 含「关于对方」段', inPrompt.includes('# 关于对方'), inPrompt.slice(0,120));
 t('prompt 含我的内容', inPrompt.includes('叫我阿澈就好'));
@@ -137,7 +137,7 @@ console.log('');
 console.log('=== 7. 清空也可以（不发这一段）===');
 const empty = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona: '你是灵梦。', myProfile: '' }, { myProfile: '全局那份' });
+  return buildStablePrompt({ persona: '你是阿灵。', myProfile: '' }, { myProfile: '全局那份' });
 });
 t('空的时候没有这一段（明确留空 = 不要，不是回落全局）', !empty.includes('# 关于对方'));
 
@@ -179,7 +179,7 @@ console.log('');
 console.log('=== 10. 两个上限是分开的：短话 + 足描写 ===');
 const both = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona: '你是灵梦。' },
+  return buildStablePrompt({ persona: '你是阿灵。' },
     { myProfile:'', verbosity:'short', descLevel:'high', splitMessages:false });
 });
 t('话限制在 40 字左右', /40 字左右/.test(both), '');
@@ -188,7 +188,7 @@ t('话限制在 40 字左右', /40 字左右/.test(both), '');
 t('描写走三通道，不再由档位决定', /一对 \*/.test(both) && !/具体的动作细节/.test(both));
 const off = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
-  return buildStablePrompt({ persona: '你是灵梦。' }, { myProfile:'', verbosity:'medium', descLevel:'off', splitMessages:false });
+  return buildStablePrompt({ persona: '你是阿灵。' }, { myProfile:'', verbosity:'medium', descLevel:'off', splitMessages:false });
 });
 t('off 时不写括号', /不要写括号/.test(off));
 t('off 时没有「括号里写动作」那句', !/写法：括号里写动作/.test(off));

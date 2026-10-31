@@ -6944,12 +6944,11 @@ let namedInText = false;
       pendingNotes = [];
       renderAttachPreview();
     }
-    // v0.4.2.3 修（审计 F21）：续写整段跳过落库（下面 `if (!cont)`），
-    //   挂在「＋」上的功能既不注入、也不清掉 —— 用户以为它们生效了。
-    //   图片那边早有一句 toast，功能这边补上同样的一句。
-    if (cont && pendingCmds.length) {
-      toast('续写不会带「＋」里挂的功能 —— 要带上它们请按发送', 3400);
-    }
+    // 0.5.4.2：续写也认「＋」里挂的功能。
+    //   原来是 v0.4.2.3（审计 F21）的处理：续写整段跳过落库，挂在「＋」上的功能
+    //   既不注入、也不清掉，于是弹一句「续写不会带它们」告诉用户。用户 2026-10-31
+    //   提的正是这条：他挂了「剧情方向」，再点 ⟳ 让她接着写，结果方向完全没影响。
+    //   现在功能照样注入（装配在下面 cont 分支里），这句 toast 就没有必要了。
     input.value = '';
     syncInput();
     // 发出去了，草稿就没有存在的必要（v0.5.3.2，清单 §3.5）
@@ -7018,7 +7017,25 @@ let namedInText = false;
         scrollBottom();
       }
     } else {
-      // 续写：输入框原样留着（用户可能正写了一半，不该被清掉）
+      // 续写（cont）/ 分支重来（noUser）：不落用户消息。
+      //
+      // 0.5.4.2：续写也要认「＋」里挂的功能。用户点 ⟳ 的意思是「照我刚才挂的方向
+      //   接着往下写」，但这些功能原来只在上面的 if 分支里装配（那里绑着落库），
+      //   续写时 _cmds 永远是空的 —— 🔍 / ✎ / 🧭 全被静默丢掉，用户看到的就是
+      //   「挂了方向也完全没影响」。
+      //   ⚠️ 装配完【不清空】pendingCmds：续写不落消息，挂着的功能应该继续挂着，
+      //      下一轮按发送时照样带上。也正因为不清空，失败回滚那段不用管它。
+      //   ⚠️ 不取手打的 /搜 /改：续写不发送输入框里的正文，那里面的命令不属于这一轮。
+      if (cont) {
+        _cmds = mergeCmds(pendingCmds, []);
+        const _sc0 = _cmds.find(c => c.k === 'search');
+        _cmd0 = _sc0 ? { query: _sc0.arg || '' } : null;
+        // 「本轮更改」的余温：续写是同一段戏的延续。这一轮没新提要求时，
+        //   上一轮那句继续带（只读，不刷新 carryOver 的过期计时 —— 这一轮没落消息）。
+        const _direct0 = _cmds.find(c => c.k === 'direct' && c.arg);
+        _prevCarry = _direct0 ? null : ((activeCarry() || {}).arg || null);
+      }
+      // 输入框原样留着（用户可能正写了一半，不该被清掉）
       input.value = text;
       syncInput();
     }
@@ -20036,7 +20053,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.4.1';
+const WEB_VERSION_FALLBACK = '0.5.4.2';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

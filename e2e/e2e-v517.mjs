@@ -286,7 +286,7 @@ const txt2 = await clickModal('ok');      // 真的确定？→ 确定清空
 await sleep(600);
 const txt3 = await clickModal('cancel');  // 剧情卡也清掉吗？→ 取消 = 留着
 await waitIdle(); await sleep(800);
-t('★ 弹窗明说会从第 1 拍重新开始', String(txt3).includes('第 1 拍重新开始'), String(txt3).slice(0, 160));
+t('★ 弹窗明说会从第 1 拍重新开始', String(txt3).includes('第 1 段重新开始'), String(txt3).slice(0, 160));
 
 const arc = await kvGet('arc:' + CC);
 t('★ 卡还在（方向没被清）', !!arc && arc.direction === '从互相试探到摊牌' && arc.beats.length === 2, JSON.stringify(arc && arc.direction));

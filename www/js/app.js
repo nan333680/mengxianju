@@ -6775,6 +6775,26 @@ async function exportChatMarkdown() {
  * 这条路径上挂着几十个已经踩过的坑（时间标记、记忆节奏、滚动摘要失效、
  * 中断后留半截、失败回滚…）。另写一条等于把这些坑全部重新踩一遍。
  */
+
+/**
+ * 「她这会儿在做什么」用的确定性伪随机（v0.5.4.3）。
+ *
+ * 同一个角色 + 同一个小时 → 同一条活动、同一个忙/闲。
+ * deriveLife 接受 rnd 参数（e2e 用它注入固定序列），这里只是给线上调用一个稳定的种子：
+ * 不稳定的生活比没有生活更假（上一轮值夜班、下一轮看书）。
+ */
+function lifeRndFor(charId, now) {
+  const hour = new Date(now).getHours();
+  const key = String(charId || '') + '#' + hour;
+  let s = 0;
+  for (let i = 0; i < key.length; i++) s = (s * 31 + key.charCodeAt(i)) | 0;
+  s = Math.abs(s) || 1;
+  return () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
 async function send(opts) {
   // 活人感 v2 总开关（DEFAULTS.liveV2）。两档：undefined/true = 开，false = 关。
   //
@@ -7367,7 +7387,12 @@ let namedInText = false;
     // 生活推导：她这会儿在做什么。纯本地算（deriveLife 是纯函数），不写死作息。
     // 这一轮现算、下一轮再算 —— 只是让"她有自己的生活"有个具体出处，不是长期档案。
     try {
-      psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: Date.now(), char: myChar }) });
+      // v0.5.4.3：改成【同一角色同一小时内稳定】的伪随机。
+      // 原来每轮 Math.random()，于是「她这会儿在做什么」每轮都可能换 ——
+      // 上一轮在值夜班、下一轮在看书，等于没有「她自己的生活」，只有每轮随机一句场景。
+      // 现在按 charId + 小时做种子：一个小时内始终是同一件事，跨小时才换。
+      const _now0 = Date.now();
+      psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: _now0, char: myChar, rnd: lifeRndFor(myChar.id, _now0) }) });
     } catch { /* 推导失败就沿用读到的旧生活状态，不影响下面的判断 */ }
 
     if (LIVE && S.apiKey) {
@@ -7422,7 +7447,10 @@ let namedInText = false;
       // 三个都可能是空串 —— 空的时候那三段提示词整段不出现。
       inner: LIVE ? innerText : '',
       relation: LIVE ? relationLine(psyBefore) : '',
-      lifeLine: LIVE ? lifeLine(psyBefore) : '',
+      // v0.5.4.3：不再挂 LIVE 开关 —— 「她这会儿本来在做什么」是"她不只是应答机"的唯一杠杆，
+      // 而实测用户把 v2 关了（liveV2=false），这段提示词就从来没进过上下文。
+      // 它只是纯本地一行字，不额外调用模型，v2 关着也照样给。
+      lifeLine: lifeLine(psyBefore),
       // 「解释型的问」防自污染（0.5.4.1 补）：上一轮她的原话里有没有「先撇清再问」那种写法。
       // 有就把命中的片段点名给她看（persona 那边注入一段），没有就是空数组、那一段整段不出现。
       // ⚠️ 不挂 LIVE 开关：这和 stable 里那几条反客服腔的规则是一组 ——
@@ -10739,7 +10767,7 @@ async function showInj(inj) {
     // 拍号是「固定词+数字」拼的，走 tt 的模式表；拍名放成独立节点 ——
     // 不然两者粘在一个文本节点里（'…第 1/2 拍（试探）'）谁都查不到翻译。
     secs.push('<h4 class="inj-h">' + esc(tt('剧情卡')) + '</h4><div class="inj-row">'
-      + esc((inj.arc.title ? inj.arc.title + ' · ' : '') + tt('第 ' + ai + '/' + an + ' 拍'))
+      + esc((inj.arc.title ? inj.arc.title + ' · ' : '') + tt('第 ' + ai + '/' + an + ' 段'))
       + (inj.arc.beat ? '<i class="inj-why">' + esc(inj.arc.beat) + '</i>' : '')
       + '</div>');
   }
@@ -14443,7 +14471,7 @@ async function writeScene(sc, opts = {}) {
       let got = false;
       let fixup = '';
       for (let attempt = 0; attempt < 2 && !got; attempt++) {
-        showReadLive('（正在写第 ' + (i + 1) + ' 拍…）');
+        showReadLive('（正在写第 ' + (i + 1) + ' 段…）');
         let r;
         try {
           r = await genProse({
@@ -14486,7 +14514,7 @@ async function writeScene(sc, opts = {}) {
         // 只有一拍时不跑 —— 整场写完之后那次就够了，不该为同一件事付两次钱。
         // 失败不挡下一拍：没有场记顶多接得松一点，卡在这儿就是整场写不完。
         if (sc.beats.length > 1 && i < sc.beats.length - 1 && !stopMsg) {
-          showReadLive('（在整理这一拍的场记…）');
+          showReadLive('（在整理这一段的场记…）');
           try {
             const lg = await genLog({ text: sc.blocks.map(b => b.text).join('\n'), cfg });
             if (lg && lg.ok && lg.log) sc.log = lg.log;
@@ -14628,9 +14656,9 @@ function renderBeatDraft() {
   if (!box || !_scBeats) return;
   box.innerHTML = _scBeats.map((b, i) =>
     '<div class="beat-row" data-i="' + i + '">'
-    + '<div class="bh">第 ' + (i + 1) + ' 拍</div>'
+    + '<div class="bh">第 ' + (i + 1) + ' 段</div>'
     + '<input class="bi" data-f="start" placeholder="从哪儿开始" value="' + esc(b.start || '') + '">'
-    + '<input class="bi" data-f="change" placeholder="这一拍改变了什么" value="' + esc(b.change || '') + '">'
+    + '<input class="bi" data-f="change" placeholder="例：她从敷衍变成了认真" value="' + esc(b.change || '') + '">'
     + '<input class="bi" data-f="stop" placeholder="停在哪儿" value="' + esc(b.stop || '') + '">'
     + '</div>').join('');
 }
@@ -14667,7 +14695,7 @@ async function startScene() {
   _scStarting = true;
   if (!S.apiKey) { toast('还没填 API Key'); return; }
   if (sc.length !== 'short') {
-    toast('在分拍…', 4000);
+    toast('在分段…', 4000);
     let r = null;
     try { r = await genBeatPlan({ scene: sc, cfg: sceneCfg() }); } catch (e) { r = null; }
     if (r && r.ok && r.beats.length) {
@@ -14683,7 +14711,7 @@ async function startScene() {
       openBeatModal(sc);
       return;
     }
-    toast('分拍没成，先按一拍写', 3000);
+    toast('分段没成，先按一段写', 3000);
     sc.beats = clampBeats([], 'short');
   }
   await beginScene(sc);
@@ -14771,9 +14799,9 @@ async function deleteBeatAt(s, i) {
   try { fresh = await scenes.get(s.id); } catch { fresh = null; }
   if (!fresh) { toast('这一场已经不在了'); return; }
   const beats = (fresh.beats || []).map(b => ({ ...b }));
-  if (beats.length <= 1) { toast('只剩一拍，删了就没得写了'); return; }
-  const ok = await confirmBox('删掉第 ' + (i + 1) + ' 拍',
-    '这一拍写出来的正文也会一起删掉。<br>删错了可以点下面的「撤销」。', '删掉');
+  if (beats.length <= 1) { toast('只剩一段，删了就没得写了'); return; }
+  const ok = await confirmBox('删掉第 ' + (i + 1) + ' 段',
+    '这一段写出来的正文也会一起删掉。<br>删错了可以点下面的「撤销」。', '删掉');
   if (!ok) return;
   _scUndo = { scene: JSON.parse(JSON.stringify(fresh)) };
   beats.splice(i, 1);
@@ -14789,7 +14817,7 @@ async function deleteBeatAt(s, i) {
   renderReadBody(clean);
   renderReadEnd(clean);
   readProgress();
-  showUndoBar('删掉了第 ' + (i + 1) + ' 拍');
+  showUndoBar('删掉了第 ' + (i + 1) + ' 段');
 }
 
 async function undoSceneBeat() {
@@ -14897,7 +14925,7 @@ function bindSceneUI() {
   $('beat-replan').onclick = async () => {
     const sc = (!_scStarting && _scNow) ? _scNow : scDraftScene();
     if (!sc) return;
-    toast('在重新分拍…', 4000);
+    toast('在重新分段…', 4000);
     let r = null;
     try { r = await genBeatPlan({ scene: sc, cfg: sceneCfg() }); } catch (e) { r = null; }
     if (!r || !r.ok || !r.beats.length) { toast('还是没分好'); return; }
@@ -14940,11 +14968,11 @@ function bindSceneUI() {
     const s = _scNow;
     if (!s) return;
     const items = [];
-    items.push({ label: '改这一场的拍', fn: () => { _scStarting = false; _scBeats = JSON.parse(JSON.stringify(s.beats || [])); openBeatModal(s); } });
+    items.push({ label: '改这一场的段', fn: () => { _scStarting = false; _scBeats = JSON.parse(JSON.stringify(s.beats || [])); openBeatModal(s); } });
     const beatsNow = s.beats || [];
     if (beatsNow.length > 1) {
       beatsNow.forEach((b, i) => {
-        items.push({ label: '删掉第 ' + (i + 1) + ' 拍', fn: () => { deleteBeatAt(s, i); } });
+        items.push({ label: '删掉第 ' + (i + 1) + ' 段', fn: () => { deleteBeatAt(s, i); } });
       });
     }
     if ((s.cast || []).some(c => c.role === 'temp')) items.push({ label: '去掉这场里的人物…', fn: () => removeCastFlow(s) });
@@ -15081,7 +15109,7 @@ function renderArcBeats() {
   const beats = _arcEdit.beats;
   const cur = Math.min(_arcEdit.currentBeat, Math.max(0, beats.length - 1));
   if (!beats.length) {
-    box.innerHTML = '<p class="arc-empty">' + esc(tt('还没拍。写个方向直接保存也行 —— 不发拍就只按方向走。')) + '</p>';
+    box.innerHTML = '<p class="arc-empty">' + esc(tt('还没分段。写个方向直接保存也行 —— 不分段就只按方向走。')) + '</p>';
   } else {
     // ⚠️ v0.5.0.1：这里每一个字都过 tt()。
     //    原来整段是硬编码中文 —— applyI18n 的兜底扫【扫不到 input】，
@@ -15097,9 +15125,9 @@ function renderArcBeats() {
       return `
       <div class="arc-beat${i === cur ? ' cur' : ''}${b.done ? ' done' : ''}" data-i="${i}">
         <div class="arc-beat-head">
-          <span class="arc-beat-no">${esc(tt('第 ' + (i + 1) + ' 拍'))}</span>
-          <input data-f="t" maxlength="60" placeholder="${esc(tt('这一拍叫什么（可空）'))}" value="${esc(b.t)}">
-          <button class="arc-beat-del" data-act="del" title="${esc(tt('删掉这一拍'))}">✕</button>
+          <span class="arc-beat-no">${esc(tt('第 ' + (i + 1) + ' 段'))}</span>
+          <input data-f="t" maxlength="60" placeholder="${esc(tt('这一段叫什么（可空）'))}" value="${esc(b.t)}">
+          <button class="arc-beat-del" data-act="del" title="${esc(tt('删掉这一段'))}">✕</button>
         </div>
         <div class="arc-beat-flags">
           <button class="arc-flag${b.done ? ' on' : ''}" data-act="done">${esc(b.done ? tt('✓ 演完了') : tt('还没演完'))}</button>
@@ -15107,11 +15135,11 @@ function renderArcBeats() {
           <span class="arc-turns${i === cur && !b.done && (b.turns || 0) < _arcEdit.minTurns ? ' thin' : ''}">${esc(tt('演了 ' + (b.turns || 0) + ' 轮 / 至少 ' + _arcEdit.minTurns + ' 轮'))}</span>
         </div>
         <details class="arc-beat-more"${(i === cur && (b.goal || b.obs || b.turn || b.result)) ? ' open' : ''}>
-          <summary>${esc(tt('目标 · 卡点 · 转折 · 结果'))}${filled ? esc(tt(' · 已写 ' + filled + ' 项')) : ''}</summary>
-          <div class="arc-beat-row"><label>${esc(tt('要到'))}</label><input data-f="goal" maxlength="200" placeholder="${esc(tt('这一拍要达到的地方'))}" value="${esc(b.goal)}"></div>
-          <div class="arc-beat-row"><label>${esc(tt('卡在'))}</label><input data-f="obs" maxlength="200" placeholder="${esc(tt('卡在哪、谁不肯让'))}" value="${esc(b.obs)}"></div>
-          <div class="arc-beat-row"><label>${esc(tt('终点'))}</label><input data-f="turn" maxlength="200" placeholder="${esc(tt('到这一拍结束才该发生的事'))}" value="${esc(b.turn)}"></div>
-          <div class="arc-beat-row"><label>${esc(tt('结果'))}</label><input data-f="result" maxlength="240" placeholder="${esc(tt('演完之后实际发生了什么（可空）'))}" value="${esc(b.result)}"></div>
+          <summary>${esc(tt('这段要发生什么 · 卡在哪 · 结束在哪 · 实际结果'))}${filled ? esc(tt(' · 已写 ' + filled + ' 项')) : ''}</summary>
+          <div class="arc-beat-row"><label>${esc(tt('要发生'))}</label><input data-f="goal" maxlength="200" placeholder="${esc(tt('例：她终于开口问他那天为什么没来'))}" value="${esc(b.goal)}"></div>
+          <div class="arc-beat-row"><label>${esc(tt('卡在哪'))}</label><input data-f="obs" maxlength="200" placeholder="${esc(tt('例：她想问，却被你先打断'))}" value="${esc(b.obs)}"></div>
+          <div class="arc-beat-row"><label>${esc(tt('结束在'))}</label><input data-f="turn" maxlength="200" placeholder="${esc(tt('例：停电原因查清，她决定告诉你'))}" value="${esc(b.turn)}"></div>
+          <div class="arc-beat-row"><label>${esc(tt('实际结果'))}</label><input data-f="result" maxlength="240" placeholder="${esc(tt('演完之后实际发生了什么（可空）'))}" value="${esc(b.result)}"></div>
         </details>
       </div>`;
     }).join('');
@@ -15133,8 +15161,8 @@ function renderArcNow() {
   // 整串过 tt()（「第 N 拍：名字」有专门的 pattern，英文下是全角冒号换成半角的
   // 'Beat N: 名字'）—— 分开拼会把中文全角「：」漏进英文界面。
   $('arc-now-b').textContent = fin
-    ? tt('这一段演完了')
-    : (n ? tt('第 ' + (cur + 1) + ' 拍' + (b && b.t ? '：' + b.t : '') + ' · 第 ' + tb.turns + ' 轮') : tt('还没拍'));
+    ? tt('整张演完了')
+    : (n ? tt('第 ' + (cur + 1) + ' 段' + (b && b.t ? '：' + b.t : '') + ' · 第 ' + tb.turns + ' 轮') : tt('还没分段'));
   $('arc-now').classList.toggle('fin', fin);
   const btn = $('arc-next');
   // v0.5.0.4：关掉的卡不能推 —— advanceArc 会因为 arcActive=false 直接返回空，
@@ -15143,17 +15171,17 @@ function renderArcNow() {
   btn.disabled = offNow || (!n && !fin);
   // v0.5.3.2（清单 §7.5）：说的是「下一步做什么」，不是「这一拍完了没有」——
   // 原来那句读起来像在问他确认，实际是往前推一拍。
-  btn.textContent = fin ? tt('开新一段')
-    : (atLastBeat(_arcEdit) ? tt('这一段演完了 →') : tt('演下一拍 →'));
+  btn.textContent = fin ? tt('开新卡')
+    : (atLastBeat(_arcEdit) ? tt('全都演完了 →') : tt('演下一段 →'));
   const hint = $('arc-now-h');
   if (hint) {
     hint.textContent = offNow
       ? tt('这张卡是关着的 —— 先点上面的「重新开启」，它才会进提示词。')
       : fin
-      ? tt('这张卡不会进提示词了。想接着演就加一拍；开新一段 = 清空方向和几拍，重新写一张。')
+      ? tt('这张卡不会进提示词了。想接着演就加一段；开新卡 = 清空方向和几段，重新写一张。')
       : (n && !b.done && tb.turns < tb.min
-        ? tt('这一拍才演 ' + tb.turns + ' 轮，至少 ' + tb.min + ' 轮才算演完 —— 别急着点。')
-        : tt('点右边那颗 = 这一拍收尾、立刻保存、走到下一拍。每拍下面写的「结果」会进下一轮的提示词。'));
+        ? tt('这一段才演 ' + tb.turns + ' 轮，至少 ' + tb.min + ' 轮才算演完 —— 别急着点。')
+        : tt('点右边那颗 = 这一段收尾、立刻保存、走到下一段。每段下面写的「结果」会进下一轮的提示词。'));
   }
 }
 
@@ -15370,7 +15398,7 @@ $('arc-on').onclick = async () => {
   // 现在不自己判：把 status 直接交给 normalizeArc，它判空卡会强制 off，
   // 判完还是 off 就说明这张卡真的开不了（不变量：status==='on' ⟺ arcActive()）。
   const a = normalizeArc(Object.assign(collectArc(), { status: 'on' }));
-  if (a.status !== 'on') { toast(tt('这张卡还是空的，先写个方向或填一拍')); return; }
+  if (a.status !== 'on') { toast(tt('这张卡还是空的，先写个方向或填一段')); return; }
   if (a.currentBeat >= a.beats.length) a.currentBeat = 0;
   if (!(await writeArc(_arcOwner, a))) return;
   _arcEdit = a;
@@ -15412,7 +15440,7 @@ async function advanceArc(charId, beat) {
   } else {
     a.currentBeat = beat + 1;
     if (a.beats[beat + 1]) a.beats[beat + 1].turns = 0;
-    msg = tt('演到第 ' + (beat + 2) + ' 拍（已保存）');
+    msg = tt('演到第 ' + (beat + 2) + ' 段（已保存）');
   }
   await kv.set(arcKey(charId), normalizeArc(a));
   if (charId === curCharId) await refreshArcBar();
@@ -15439,7 +15467,7 @@ async function arcNext() {
       // 原来这里不判返回值：空拍 / off / 已推进过的时候，界面照样出现撤销按钮，
       // 看起来像推进成功了，实际什么都不缺（也什么都不发生）。
       await refreshArcBar();
-      toast(tt('这一拍没有可推进的内容'));
+      toast(tt('这一段没有可推进的内容'));
       return;
     }
     _arcUndo = { id: _arcOwner, arc: prev, at: Date.now() };
@@ -15490,7 +15518,7 @@ $('arc-inline').onclick = async (e) => {
       // v0.5.0.4 追加：一步没动就别摆出「可以撤销」的样子（和弹窗那条同理）。
       hideArcInline();
       await refreshArcBar();
-      toast(tt('这一拍没有可推进的内容'));
+      toast(tt('这一段没有可推进的内容'));
       return;
     }
     _arcUndo = { id: charId, arc: prev, at: Date.now() };
@@ -15552,7 +15580,7 @@ async function undoArcById(id) {
   $('arc-undo').classList.add('hidden');
   if (id === _arcOwner) renderArcBeats();
   await refreshArcBar();
-  toast(tt('撤回上一拍'));
+  toast(tt('撤回上一段'));
 }
 
 /** 弹窗里那个「撤销」按钮走这里。 */
@@ -15561,8 +15589,8 @@ async function undoArcNext() { await undoArcById(_arcOwner); }
 /** 开新一段：清空这张卡（确认一次）。聊天记录不动。 */
 async function startNewArc() {
   if (arcStale()) return;
-  const ok = await confirmBox(tt('开新一段'),
-    '<p>' + esc(tt('清空方向、几拍、各人的目的，从空白开始。聊天记录不动。')) + '</p>', tt('清空'));
+  const ok = await confirmBox(tt('开新卡'),
+    '<p>' + esc(tt('清空方向、几段、各人的目的，从空白开始。聊天记录不动。')) + '</p>', tt('清空'));
   if (!ok) return;
   // v0.5.0.4 追加：先落盘再清界面。原来是"先清空界面、再 try 存、失败就算了"——
   // 存失败时屏幕上是空白，库里还留着旧卡，下一轮提示词照样按旧卡注入，
@@ -15590,7 +15618,7 @@ async function startNewArc() {
 $('arc-del-card').onclick = async () => {
   if (!_arcOwner) return;
   const ok = await confirmBox(tt('删掉这张卡'),
-    '<p>' + esc(tt('整张剧情卡都会删掉：方向、几拍、各人的目的。')) + '</p>'
+    '<p>' + esc(tt('整张剧情卡都会删掉：方向、几段、各人的目的。')) + '</p>'
     + '<p>' + esc(tt('聊天记录不动。')) + '</p>', tt('删掉'));
   if (!ok) return;
   // v0.5.0.4 追加：删不掉别报"已删掉"。卡还在库里、下一轮照样注入，
@@ -15629,8 +15657,8 @@ $('arc-beats').addEventListener('click', async (e) => {
   if (t.dataset.act === 'del') {
     // ⚠️ v0.5.0.1：原来是原生 confirm()。它在 WebView 里会盖住整个页面、
     //    按钮是系统的「确定/取消」，和其它弹窗长得完全不一样，而且中文写死翻不了。
-    const ok = await confirmBox(tt('删掉这一拍'),
-      '<p>' + esc(tt('删掉第 ' + (i + 1) + ' 拍？')) + '</p>', tt('确定'));
+    const ok = await confirmBox(tt('删掉这一段'),
+      '<p>' + esc(tt('删掉第 ' + (i + 1) + ' 段？')) + '</p>', tt('确定'));
     if (!ok) return;
     a.beats.splice(i, 1);
     if (a.currentBeat >= a.beats.length) a.currentBeat = Math.max(0, a.beats.length - 1);
@@ -15789,7 +15817,7 @@ function showArcInline(charId, beat, result) {
   clearTimeout(_arcInlineTimer);
   _arcInlineTimer = 0;
   _arcInline = { charId, beat };
-  box.innerHTML = '<span class="ai-txt">' + esc(result ? tt('这一拍像演完了：') + result : tt('这一拍像演完了'))
+  box.innerHTML = '<span class="ai-txt">' + esc(result ? tt('这一段像演完了：') + result : tt('这一段像演完了'))
     + '</span>'
     + '<button class="ai-btn" data-act="go">' + esc(tt('推进')) + '</button>'
     + '<button class="ai-btn ghost" data-act="no">' + esc(tt('再演一轮')) + '</button>';
@@ -15804,7 +15832,7 @@ function showArcUndoBar(charId) {
   const box = $('arc-inline');
   if (!box) return;
   _arcInline = { charId, beat: -1, undo: true };
-  box.innerHTML = '<span class="ai-txt">' + esc(tt('已经推到下一拍了')) + '</span>'
+  box.innerHTML = '<span class="ai-txt">' + esc(tt('已经推到下一段了')) + '</span>'
     + '<button class="ai-btn ghost" data-act="undo">' + esc(tt('撤销')) + '</button>';
   box.classList.remove('hidden');
   clearTimeout(_arcInlineTimer);
@@ -19046,6 +19074,15 @@ async function importData(file, mode) {
   }
   if (!mode) throw new Error('没有选择导入方式');
 
+  await applyImportWithConfirm(data, mode, file);
+}
+
+/**
+ * 导入前的二次确认 + 真正落库（v0.5.4.3）。
+ * 「选文件导入」和「从最近一份自动备份恢复」两条路共用 ——
+ * 恢复也是一次不可逆的整库替换，确认话术和计数不能有两套。
+ */
+async function applyImportWithConfirm(data, mode, file) {
   const survey = surveyBackup(data);
   const localCounts = await dbAdmin.counts();
 
@@ -19060,10 +19097,55 @@ async function importData(file, mode) {
       `<p><b>无法撤销。</b>确定要继续吗？</p>`,
       '删除并导入'
     );
-    if (!ok) { toast('已取消'); return; }
+    if (!ok) { toast('已取消'); return false; }
   }
-
   await applyImport(data, mode, file);
+  return true;
+}
+
+/**
+ * 从最近一份自动备份恢复（v0.5.4.3）。
+ *
+ * 为什么要有：备份一直只写不读 —— 出事时用户得自己进文件管理器找到那个 json，
+ * 再走「导入数据 → 选完全还原」。而 EXTERNAL / DATA 两个目录在 Android 11+
+ * 文件管理器根本进不去，等于那两份备份对用户不可用。所以把「最近那份」做成一个按钮。
+ *
+ * ⚠️ 恢复前先强制写一份当前备份当回滚点：恢复是「先清空再写入」，
+ *    中途断电/被杀会留下残缺数据。回滚点让「恢复错了」还有退路。
+ */
+async function restoreFromAutoBackup() {
+  const FS = capPlugin('Filesystem');
+  if (!FS) { toast('这个环境没有文件系统（桌面浏览器不支持自动备份）', 4000); return; }
+  let r = null;
+  try { r = await readLatestBackup({ FS, directories: BACKUP_DIRS }); }
+  catch (e) { r = { ok: false, reason: 'read-failed', error: String((e && e.message) || e) }; }
+  if (!r || !r.ok) {
+    toast('读不到自动备份：' + verifyReasonText((r && r.reason) || 'none'), 5000);
+    return;
+  }
+  // 回滚点（写不成也不挡：先让人把数据救回来更要紧）
+  let rollback = '';
+  try {
+    const w = await autoBackupIfDue({ kv, FS, collect: collectBackupPayload, intervalMs: 0 });
+    if (w && w.ran) rollback = w.name || '已写';
+  } catch { /* 没写成，下面确认框里会明说 */ }
+  const c = await dbAdmin.counts();
+  const mb = Math.round(((r.bytes || 0) / 1048576) * 10) / 10;
+  const ok = await confirmBox('从自动备份恢复',
+    `<p>用最近一份自动备份覆盖这台手机上的全部数据：</p>` +
+    `<p>· 备份：<b>${esc(r.name || '')}</b>（${mb} MB）</p>` +
+    `<p>· 现在的 ${c.characters} 个角色 / ${c.messages} 条记录 / ${c.memories} 条记忆会被<b>替换</b>。</p>` +
+    `<p>${rollback ? '恢复前已经把当前数据另存了一份（' + esc(rollback) + '），实在不行还能再导回来。' : '⚠️ 没能先另存当前数据，恢复后旧数据无法找回。'}</p>`,
+    '恢复');
+  if (!ok) return;
+  const mode = { parts: ['settings', 'chars', 'msgs', 'mems', 'wb', 'kv'], wipe: true };
+  try {
+    await applyImport(r.data, mode, null);
+    toast('已恢复：' + (r.name || ''), 4000);
+    setTimeout(() => location.reload(), 900);
+  } catch (e) {
+    toast('恢复失败：' + ((e && e.message) || e), 6000);
+  }
 }
 
 // ================= 事件绑定 =================
@@ -19795,6 +19877,7 @@ function bindEvents() {
   // 数据
   $('btn-export').onclick = exportData;
   $('btn-import').onclick = () => $('file-import').click();
+  $('btn-restore-auto').onclick = restoreFromAutoBackup;
   $('file-import').onchange = async (e) => {
     const f = e.target.files[0];
     e.target.value = '';   // 不重置的话，再选同一个文件不会触发 onchange，界面像卡住
@@ -19866,9 +19949,9 @@ function bindEvents() {
     let wipeArc = false;
     if (hasArc) {
       wipeArc = await confirmBox('剧情卡也清掉吗？',
-        `<p>「${nm}」还留着一张剧情卡（${arcNow.beats.length} 拍${arcNow.title ? '：' + esc(arcNow.title) : ''}）。</p>`
-        + '<p>它<b>不属于聊天记录</b>，默认留着 —— 方向、几拍、每拍写的东西都还在。</p>'
-        + '<p>但它会<b>从第 1 拍重新开始</b>：演到第几拍了、每拍演了几轮、上一拍实际发生过什么，'
+        `<p>「${nm}」还留着一张剧情卡（${arcNow.beats.length} 段${arcNow.title ? '：' + esc(arcNow.title) : ''}）。</p>`
+        + '<p>它<b>不属于聊天记录</b>，默认留着 —— 方向、几段、每段写的东西都还在。</p>'
+        + '<p>但它会<b>从第 1 段重新开始</b>：演到第几段了、每段演了几轮、上一段实际发生过什么，'
         + '这些是上一场对话的进度，跟聊天一起清掉；聊天都没了，留着它只会让她从半截接管。</p>'
         + '<p>要连它一起删就点「清掉」；只清聊天就点「取消」。</p>',
         '清掉');
@@ -20053,7 +20136,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.4.2';
+const WEB_VERSION_FALLBACK = '0.5.4.3';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

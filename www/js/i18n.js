@@ -582,7 +582,7 @@ const BY_ZH = {
   '上一批图片还在处理，稍等一下': 'Still processing the last batch, one moment',
   // v0.5.0 剧情卡。弹窗里的静态标注走 data-i18n-en，这里登记的是 app.js 拼出来的那几条
   // （空态提示是纯 JS 串，扫不到）。
-  '还没拍。写个方向直接保存也行 —— 不发拍就只按方向走。': 'No beats yet. A direction alone is fine — it will follow that without beats.',
+  '还没段。写个方向直接保存也行 —— 不发段就只按方向走。': 'No beats yet. A direction alone is fine — it will follow that without beats.',
   '剧情卡已保存': 'Plot card saved',
   '剧情卡已清空': 'Plot card cleared',
   '这一段的剧情卡已关掉（内容还在）': 'Plot card turned off (its content is kept)',
@@ -606,47 +606,47 @@ const BY_ZH = {
   '这段剧情往哪走': 'Where this story is going',
   '写出方向，她自己往下演；不用写台词，也不用写完整大纲。':
     'Write the direction and she plays it out; no lines, no full outline needed.',
-  '只注入当前这一拍': 'Only the current beat is injected',
-  '—— 后面几拍不进提示词，也不会被要求一次演完。':
+  '只注入当前这一段': 'Only the current beat is injected',
+  '—— 后面几段不进提示词，也不会被要求一次演完。':
     '— the later beats never enter the prompt and are not asked to be acted out at once.',
   '这段叫什么': 'What is this called',
   '（可空）': '(optional)',
   '想往哪走': 'Where should it go',
   '不能发生什么': 'What must not happen',
   '（一行一条）': '(one per line)',
-  '几拍': 'Beats',
-  '＋ 加一拍': '+ Add a beat',
-  '这一拍叫什么（可空）': 'Name this beat (optional)',
+  '几段': 'Beats',
+  '＋ 加一段': '+ Add a beat',
+  '这一段叫什么（可空）': 'Name this beat (optional)',
   '设为当前': 'Set as current',
   '当前': 'Current',
-  '删掉这一拍': 'Delete this beat',
+  '删掉这一段': 'Delete this beat',
   '要到': 'Reach',
   '卡在': 'Blocked by',
   '终点': 'Ends with',
-  '这一拍要达到的地方': 'What this beat should reach',
+  '这一段要达到的地方': 'What this beat should reach',
   '卡在哪、谁不肯让': "Where it stalls, who won't give",
-  '到这一拍结束才该发生的事': 'What only happens once this beat ends',
+  '到这一段结束才该发生的事': 'What only happens once this beat ends',
   '这段最后要走到哪儿。一句话就够，不用写台词，也不用写大纲。':
     'Where this stretch should end up. One line is enough - no dialogue, no outline.',
   '你最不想在这段里看到什么，一行写一条': 'What you do not want to see happen here, one per line',
   '只有你自己看，随便起': 'Just for you - name it anything',
   // v0.5.0.2：推进 / 状态 / 群聊各人的目的 / 删卡
   '现在演到': 'Now at',
-  '还没拍': 'No beats yet',
-  '演下一拍 →': 'Next beat →',
+  '还没段': 'No beats yet',
+  '演下一段 →': 'Next beat →',
   // ⚠️ v0.5.3.2（清单 §7.5）：剧情卡默认只露三个字段
   '目标 · 卡点 · 转折 · 结果': 'Goal · obstacle · turn · result',
   '更多设置': 'More settings',
   '回聊天里看这句': 'Find it in the chat',
   '这段叫什么、各人的目的、自动判定、删掉这张卡': 'Name, agendas, auto-detect, delete this card',
   '这一段演完了 →': 'This arc is done →',
-  '点右边那颗 = 这一拍收尾、立刻保存、走到下一拍。每拍下面写的「结果」会进下一轮的提示词。':
+  '点右边那颗 = 这一段收尾、立刻保存、走到下一段。每段下面写的「结果」会进下一轮的提示词。':
     'Tap the one on the right to close this beat, save it right away and move on. What you write under Result feeds into the next turn.',
   '还没演完': 'Not done yet',
   '✓ 演完了': '✓ Done',
   '结果': 'Result',
   '演完之后实际发生了什么（可空）': 'What actually happened (optional)',
-  '这一拍已经收尾。这段走到头了 —— 想接着演就往下面加一拍':
+  '这一段已经收尾。这段走到头了 —— 想接着演就往下面加一段':
     'That beat is closed. You are at the end of this arc — add another beat below to keep going.',
   '各人的目的': "Everyone's agenda",
   '群聊才用': 'Group chats only',
@@ -654,10 +654,10 @@ const BY_ZH = {
     'What each person wants in this scene. With names alone the model makes everyone push the same thing.',
   '（无名）': '(unnamed)',
   '这一场里他想要什么（可空）': 'What they want in this scene (optional)',
-  '自动判定这一拍演完没有': 'Auto-detect when a beat is done',
+  '自动判定这一段演完没有': 'Auto-detect when a beat is done',
   '（beta，每轮多一次小请求）': ' (beta, one extra small request per turn)',
   '删掉这张卡': 'Delete this card',
-  '整张剧情卡都会删掉：方向、几拍、各人的目的。': 'The whole plot card is deleted: direction, beats, agendas.',
+  '整张剧情卡都会删掉：方向、几段、各人的目的。': 'The whole plot card is deleted: direction, beats, agendas.',
   '聊天记录不动。': 'Chat history is untouched.',
   // ⚠️ v0.5.2：小说层（开一场戏 / 书架 / 阅读页）。
   //    静态标注靠 index.html 的 data-i18n-en*，这里补的是 app.js 里拼出来的那些。
@@ -701,12 +701,27 @@ const BY_ZH = {
   '没想出来，再点一次试试': 'Could not come up with one — tap again',
   '生成失败：': 'Generation failed: ',
   '从哪儿开始': 'Where it starts',
-  '这一拍改变了什么': 'What this beat changes',
+  '这一段改变了什么': 'What this beat changes',
+  "剧情往哪走": "Where this story is going",
+  "从最近一份自动备份恢复": "Restore from the latest auto backup",
+  "整张演完了": "The whole card is done",
+  "开新卡": "Start a new card",
+  "全都演完了 →": "All parts done →",
+  "还没分段。写个方向直接保存也行 —— 不分段就只按方向走。": "No parts yet. A direction alone is fine — it will follow that without parts.",
+  "这段要发生什么 · 卡在哪 · 结束在哪 · 实际结果": "Goal · Stuck at · Ends at · Result",
+  "要发生": "Goal",
+  "卡在哪": "Stuck at",
+  "结束在": "Ends at",
+  "实际结果": "Result",
+  "例：她终于开口问他那天为什么没来": "e.g. she finally asks why he never showed up",
+  "例：她想问，却被你先打断": "e.g. she wants to ask, but you cut in first",
+  "例：停电原因查清，她决定告诉你": "e.g. the blackout is explained and she decides to tell you",
+  "例：她从敷衍变成了认真": "e.g. she stops brushing it off and gets serious",
   '停在哪儿': 'Where it stops',
   '先选一个角色': 'Pick a character first',
-  '在分拍…': 'Splitting into beats…',
-  '分拍没成，先按一拍写': 'Could not split it — writing it as one beat',
-  '在重新分拍…': 'Splitting again…',
+  '在分段…': 'Splitting into beats…',
+  '分段没成，先按一段写': 'Could not split it — writing it as one beat',
+  '在重新分段…': 'Splitting again…',
   '还是没分好': 'Still could not split it',
   // ⚠️ v0.5.3.2（清单 §3.2）：空状态 L1 / 配 Key sheet / 示例卡预览。
   //    静态标注靠 index.html 的 data-i18n-en*，这里补的是 app.js 拼出来的那些
@@ -732,7 +747,7 @@ const BY_ZH = {
   '连台词一起删': 'Delete their lines too',
   '还在写，写完再走': 'Still writing — let it finish',
   '接着往下写，别重复已经写过的': 'Keep going, do not repeat what is already written',
-  '改这一场的拍': "Edit this scene's beats",
+  '改这一场的段': "Edit this scene's beats",
   '去掉这场里的人物…': 'Remove a character from this scene…',
   '断开与聊天的关联': 'Detach from the chat',
   '删除这一场（进回收站）': 'Delete this scene (to trash)',
@@ -750,8 +765,8 @@ const BY_ZH = {
   '回收站是空的。': 'Trash is empty.',
   '还没有戏。点右上角 ＋ 开一场。': 'No scenes yet. Tap + at the top right to start one.',
   '撤销了': 'Undone',
-  '只剩一拍，删了就没得写了': 'Only one beat left — deleting it leaves nothing to write.',
-  '这一拍写出来的正文也会一起删掉。<br>删错了可以点下面的「撤销」。':
+  '只剩一段，删了就没得写了': 'Only one beat left — deleting it leaves nothing to write.',
+  '这一段写出来的正文也会一起删掉。<br>删错了可以点下面的「撤销」。':
     'The prose written for this beat goes with it.<br>Deleted by mistake? Tap Undo right below.',
   // v0.5.0.3：剧情卡状态机（推进落盘 / 终态 / 撤销 / 节奏 / 内联条）
   '这一段演完了': 'This arc is done',
@@ -779,26 +794,26 @@ const BY_ZH = {
   '看洗掉了什么': 'See what was cleaned',
   '洗掉了什么': 'What was cleaned',
   '已复制去味记录': 'Cleaning log copied',
-  '清空方向、几拍、各人的目的，从空白开始。聊天记录不动。':
+  '清空方向、几段、各人的目的，从空白开始。聊天记录不动。':
     'Clears the direction, the beats and every agenda, starting from a blank card. Chat history is untouched.',
   '清空了 —— 写个新方向吧': 'Cleared — write a new direction',
-  '撤回到上一拍': 'Back to the previous beat',
+  '撤回到上一段': 'Back to the previous beat',
   '保存失败：': 'Save failed: ',
   '关掉失败：': 'Could not turn it off: ',
-  '这一拍没有可推进的内容': 'Nothing to advance here — this beat has no content',
-  '这一拍像演完了：': 'This beat looks done: ',
-  '这一拍像演完了': 'This beat looks done',
+  '这一段没有可推进的内容': 'Nothing to advance here — this beat has no content',
+  '这一段像演完了：': 'This beat looks done: ',
+  '这一段像演完了': 'This beat looks done',
   '推进': 'Advance',
   '再演一轮': 'One more round',
   '这一段演完了 —— 这张卡不再进提示词': 'This arc is done — the card no longer reaches the prompt',
-  '这张卡不会进提示词了。想接着演就加一拍；开新一段 = 清空方向和几拍，重新写一张。':
+  '这张卡不会进提示词了。想接着演就加一段；开新一段 = 清空方向和几段，重新写一张。':
     'This card no longer reaches the prompt. Add a beat to keep going; start a new arc clears the direction and beats so you can write a fresh one.',
   '剧情卡已删掉': 'Plot card deleted',
   '删掉': 'Delete',
-  '这一拍看样子演完了 —— 打开剧情卡确认要不要往前推':
+  '这一段看样子演完了 —— 打开剧情卡确认要不要往前推':
     'This beat looks finished — open the plot card to decide whether to move on',
   // ⚠️ v0.5.0.4：off 语义改成「真暂停」之后新增的那几句。
-  //    off 卡保存/加拍不再偷偷变 on，重开只有「重新开启」一条明路 —— 所以这条路的
+  //    off 卡保存/加段不再偷偷变 on，重开只有「重新开启」一条明路 —— 所以这条路的
   //    每一步都得说人话，不能靠界面自己猜。
   '这张卡已经关掉了，不会进提示词。想接着用就点右边那颗。':
     'This card is turned off, so it never reaches the prompt. To keep using it, tap the button on the right.',
@@ -810,12 +825,12 @@ const BY_ZH = {
   '「不能发生什么」写多了': 'Too many items under What must not happen',
   '丢掉': 'Drop',
   '这张卡是空的，先写个方向': 'This card is empty — write a direction first',
-  '这张卡还是空的，先写个方向或填一拍': 'Still empty — write a direction or fill in a beat first',
+  '这张卡还是空的，先写个方向或填一段': 'Still empty — write a direction or fill in a beat first',
   '删不掉：': 'Could not delete it: ',
   '撤销失败：': 'Undo failed: ',
-  '已经推到下一拍了': 'Moved on to the next beat',
+  '已经推到下一段了': 'Moved on to the next beat',
   '撤销': 'Undo',
-  '撤回上一拍': 'Went back one beat',
+  '撤回上一段': 'Went back one beat',
   // ⚠️ 记忆 OS（收件箱 / 事实卡 / 槽位 / 拆分 / 本轮注入检查器）。
   //    这一批大多直接拼在 innerHTML 里、没走 tt，靠 applyI18n 的兜底扫文本节点翻 ——
   //    所以【必须】登记在这里，否则英文界面下整页中文（i18n-report 也扫不到这类串）。
@@ -1004,37 +1019,37 @@ const BY_PATTERN = [
   [/^(\d+) 行$/, (m) => m[1] + (m[1] === '1' ? ' line' : ' lines')],
   [/^\/ (\d+) 条$/, (m) => '/ ' + m[1] + ' items'],
   [/^· 模型默认 (.+)$/, (m) => '· Default model ' + m[1]],
-  // v0.5.0.1 剧情卡：拍号与删除确认都是「固定词 + 数字」拼出来的
-  [/^第 (\d+) 拍$/, (m) => 'Beat ' + m[1]],
-  [/^删掉第 (\d+) 拍？$/, (m) => 'Delete beat ' + m[1] + '?'],
-  [/^演到第 (\d+) 拍$/, (m) => 'Now at beat ' + m[1]],
+  // v0.5.0.1 剧情卡：段号与删除确认都是「固定词 + 数字」拼出来的
+  [/^第 (\d+) 段$/, (m) => 'Beat ' + m[1]],
+  [/^删掉第 (\d+) 段？$/, (m) => 'Delete beat ' + m[1] + '?'],
+  [/^演到第 (\d+) 段$/, (m) => 'Now at beat ' + m[1]],
   // v0.5.3.2：那一行摘要后面跟着「 · 已写 N 项」
   [/^ · 已写 (\d+) 项$/, (m) => ' · ' + m[1] + ' filled'],
   // v0.5.0.4：下面这几条都是「固定词 + 数字」拼出来的完整句子，精确表里放不下
   [/^演了 (\d+) 轮 \/ 至少 (\d+) 轮$/, (m) => 'played ' + m[1] + (m[1] === '1' ? ' round' : ' rounds') + ' / at least ' + m[2]],
-  [/^这一拍才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,
+  [/^这一段才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,
     (m) => 'Only ' + m[1] + (m[1] === '1' ? ' round' : ' rounds') + ' into this beat; at least ' + m[2] + ' before it counts as done — no rush.'],
-  [/^第 (\d+) 拍：(.*) · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ': ' + m[2] + ' · round ' + m[3]],
+  [/^第 (\d+) 段：(.*) · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ': ' + m[2] + ' · round ' + m[3]],
   [/^最多只留 (\d+) 条，下面这些会丢掉：$/, (m) => 'Only ' + m[1] + ' can be kept; these will be dropped:'],
-  [/^第 (\d+) 拍：(.+)$/, (m) => 'Beat ' + m[1] + ': ' + m[2]],
+  [/^第 (\d+) 段：(.+)$/, (m) => 'Beat ' + m[1] + ': ' + m[2]],
   // v0.5.0.3：轮数与推进
-  [/^第 (\d+) 拍：(.*) · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ': ' + m[2] + ' · round ' + m[3]],
-  [/^第 (\d+) 拍 · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ' · round ' + m[2]],
-  // v0.5.2 小说层：夜号、拍号、字数、进度这些都是「固定词 + 数字」拼出来的
+  [/^第 (\d+) 段：(.*) · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ': ' + m[2] + ' · round ' + m[3]],
+  [/^第 (\d+) 段 · 第 (\d+) 轮$/, (m) => 'Beat ' + m[1] + ' · round ' + m[2]],
+  // v0.5.2 小说层：夜号、段号、字数、进度这些都是「固定词 + 数字」拼出来的
   [/^第 (\d+) 夜$/, (m) => 'Night ' + m[1]],
   [/^第 (\d+) 夜 · (.+)$/, (m) => 'Night ' + m[1] + ' · ' + m[2]],
-  [/^（正在写第 (\d+) 拍…）$/, (m) => '(writing beat ' + m[1] + '…)'],
+  [/^（正在写第 (\d+) 段…）$/, (m) => '(writing beat ' + m[1] + '…)'],
   [/^最多 (\d+) 个临时人物$/, (m) => 'At most ' + m[1] + ' temporary people'],
   [/^回收站（(\d+)）$/, (m) => 'Trash (' + m[1] + ')'],
   [/^去掉「(.+)」$/, (m) => 'Removed “' + m[1] + '”'],
   [/^已去掉 (.+)$/, (m) => 'Removed ' + m[1]],
-  [/^(\d+) 拍$/, (m) => m[1] + (m[1] === '1' ? ' beat' : ' beats')],
-  // 小说层删一拍（注意：剧情卡那条带问号，这里不带，两条互不影响）
-  [/^删掉第 (\d+) 拍$/, (m) => 'Delete beat ' + m[1]],
-  [/^删掉了第 (\d+) 拍$/, (m) => 'Deleted beat ' + m[1]],
+  [/^(\d+) 段$/, (m) => m[1] + (m[1] === '1' ? ' beat' : ' beats')],
+  // 小说层删一段（注意：剧情卡那条带问号，这里不带，两条互不影响）
+  [/^删掉第 (\d+) 段$/, (m) => 'Delete beat ' + m[1]],
+  [/^删掉了第 (\d+) 段$/, (m) => 'Deleted beat ' + m[1]],
   [/^演了 (\d+) 轮 \/ 至少 (\d+) 轮$/, (m) => 'round ' + m[1] + ' / at least ' + m[2]],
-  [/^演到第 (\d+) 拍（已保存）$/, (m) => 'Now at beat ' + m[1] + ' (saved)'],
-  [/^这一拍才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,
+  [/^演到第 (\d+) 段（已保存）$/, (m) => 'Now at beat ' + m[1] + ' (saved)'],
+  [/^这一段才演 (\d+) 轮，至少 (\d+) 轮才算演完 —— 别急着点。$/,
     (m) => 'Only ' + m[1] + ' rounds so far; ' + m[2] + ' is the minimum before this beat counts as done — hold on.'],
   // v0.5.2 记忆 OS：记忆页 / 检查器里的数字拼串（「记于第 N 天」「有 N 条旧记忆…」「没进来的（N 条）」）。
   // ⚠️ `(\d+) 条` 是通用条目数，放在这里比放精确表里可靠 —— 分组标题、收件箱角标都是拼出来的。
@@ -1054,9 +1069,9 @@ const BY_PATTERN = [
   [/^长期记忆（(\d+) 条，条数已满）$/, (m) => 'Long-term memory (' + m[1] + ', at the cap)'],
   [/^长期记忆（(\d+) 条，约 (\d+) token，条数已满）$/,
     (m) => 'Long-term memory (' + m[1] + ', about ' + m[2] + ' tokens, at the cap)'],
-  // 检查器（这一轮用了什么）里的小节计数与拍号：「剧情方向（2）」「第 1/2 拍」
+  // 检查器（这一轮用了什么）里的小节计数与段号：「剧情方向（2）」「第 1/2 段」
   [/^（(\d+)）$/, (m) => ' (' + m[1] + ')'],
-  [/^第 (\d+)\/(\d+) 拍$/, (m) => 'Beat ' + m[1] + '/' + m[2]],
+  [/^第 (\d+)\/(\d+) 段$/, (m) => 'Beat ' + m[1] + '/' + m[2]],
 ];
 
 /** 只查词典、不看当前语言（v0.5.0.1 抽出来的）。

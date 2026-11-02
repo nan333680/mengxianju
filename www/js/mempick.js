@@ -16,7 +16,11 @@ import { memoryDay, memoryLine, MEMORY_STATUS } from './memory.js';
 // 记忆在上下文预算里占的份额。从 contextBudget 切，不新增滑杆（规格 §5.3）。
 // 20% 是对着"历史 50% / 稳定提示词 25% / 世界书 5%"分完之后的余量取的：
 // 记忆再重要也不该挤掉最近几轮对话，那是模型判断语气的主要依据。
-export const MEMORY_BUDGET_SHARE = 0.2;
+// v0.5.4.3：0.2 → 0.3。
+// 依据：41 天 45.6 万字只压出 130 条摘要（约 1:100），"她觉得她失忆"不是模型的问题，
+// 是喂进去的东西太少。腾出来的空间靠提示词那边砍禁令来补（见 CHANGELOG）。
+// ⚠️ 不要再往上加：0.35 以上会开始挤掉人设和最近几轮，那时她会"记得很久以前、忘了刚才"。
+export const MEMORY_BUDGET_SHARE = 0.3;
 
 // 默认估算：中文按 0.65 token/字，英文按 0.28。
 // app.js 里有更准的 estimateMsgTokens，接线时注入进来覆盖它。

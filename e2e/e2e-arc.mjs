@@ -355,7 +355,7 @@ for (let i = 0; i < 2; i++) await delBeat(0);
 const emptyCnt = await page.$eval('#arc-beats-cnt', el => el.textContent.trim());
 t('删空后计数是 0 / 12', emptyCnt === '0 / 12', emptyCnt);
 const emptyTip = await page.$eval('#arc-beats .arc-empty', el => el.textContent.trim()).catch(() => '');
-t('空的时候有提示语', emptyTip.includes('还没拍'), emptyTip);
+t('空的时候有提示语', emptyTip.includes('还没分段'), emptyTip);
 await page.evaluate(() => document.getElementById('arc-save').click());
 await sleep(400);
 const emptyCard = await kvGet('arc:' + C1);
@@ -498,19 +498,19 @@ await page.evaluate(() => {
   g2.value = '两个人把话说开'; g2.dispatchEvent(new Event('input', { bubbles: true }));
 });
 const nowZh = await page.$eval('#arc-now-b', el => el.textContent.trim());
-t('「现在演到」显示当前拍', nowZh.startsWith('第 1 拍'), nowZh);
+t('「现在演到」显示当前拍', nowZh.startsWith('第 1 段'), nowZh);
 const nextTxt = await page.$eval('#arc-next', el => el.textContent.trim());
-t('还有下一拍时按钮是「演下一拍 →」', nextTxt === '演下一拍 →', nextTxt);
+t('还有下一拍时按钮是「演下一拍 →」', nextTxt === '演下一段 →', nextTxt);
 
 // ① 推进即落盘：点完【不点保存】，库里就该已经是新的
 await page.evaluate(() => document.getElementById('arc-next').click());
 await sleep(350);
 const nowZh2 = await page.$eval('#arc-now-b', el => el.textContent.trim());
-t('★ 点推进后走到第 2 拍', nowZh2.startsWith('第 2 拍'), nowZh2);
+t('★ 点推进后走到第 2 拍', nowZh2.startsWith('第 2 段'), nowZh2);
 const done1 = await page.evaluate(() => document.querySelectorAll('#arc-beats .arc-beat')[0].classList.contains('done'));
 t('★ 第 1 拍被标成演完了', done1 === true, done1);
 const nextTxt2 = await page.$eval('#arc-next', el => el.textContent.trim());
-t('最后一拍的按钮变成「这一段演完了 →」', nextTxt2 === '这一段演完了 →', nextTxt2);
+t('最后一拍的按钮变成「这一段演完了 →」', nextTxt2 === '全都演完了 →', nextTxt2);
 const c3 = await kvGet('arc:' + C1);
 t('★ 推进立刻落盘（一次都没点保存）',
   !!c3 && c3.currentBeat === 1 && c3.beats.length === 2
@@ -581,9 +581,9 @@ t('★ 演完最后一拍，整段进 done',
   !!c7 && c7.status === 'done' && c7.beats[1].done === true,
   JSON.stringify(c7 && { st: c7.status, cb: c7.currentBeat, d: c7.beats.map(x => x.done) }));
 const finTxt = await page.$eval('#arc-now-b', el => el.textContent.trim());
-t('弹窗里显示「这一段演完了」', finTxt === '这一段演完了', finTxt);
+t('弹窗里显示「这一段演完了」', finTxt === '整张演完了', finTxt);
 const finBtn = await page.$eval('#arc-next', el => el.textContent.trim());
-t('出口变成「开新一段」', finBtn === '开新一段', finBtn);
+t('出口变成「开新一段」', finBtn === '开新卡', finBtn);
 await page.evaluate(() => document.getElementById('arc-cancel').click());
 await sleep(250);
 bar = await arcBar();
@@ -598,7 +598,7 @@ await sleep(350);
 await page.evaluate(() => document.getElementById('arc-next').click());
 await sleep(400);
 const nvTitle = await page.$eval('#modal-title', el => el.textContent.trim());
-t('终态点那颗按钮走的是「开新一段」确认', nvTitle === '开新一段', nvTitle);
+t('终态点那颗按钮走的是「开新一段」确认', nvTitle === '开新卡', nvTitle);
 await page.evaluate(() => document.getElementById('modal-ok').click());
 await sleep(500);
 const c8 = await kvGet('arc:' + C1);

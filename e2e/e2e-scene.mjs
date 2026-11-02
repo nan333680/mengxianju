@@ -514,7 +514,7 @@ await click('#rv-more');
 await sleep(400);
 const menu2 = await page.evaluate(() => Array.from(document.querySelectorAll('#rv-menu button')).map(b => b.textContent));
 t('菜单里按拍列出「删掉第 N 拍」', menu2.filter(x => x.indexOf('删掉第') >= 0).length === 2, JSON.stringify(menu2));
-await page.evaluate(() => { const b = Array.from(document.querySelectorAll('#rv-menu button')).find(x => x.textContent.indexOf('删掉第 2 拍') >= 0); if (b) b.click(); });
+await page.evaluate(() => { const b = Array.from(document.querySelectorAll('#rv-menu button')).find(x => x.textContent.indexOf('删掉第 2 段') >= 0); if (b) b.click(); });
 await sleep(500);
 await click('#modal-ok').catch(() => {});
 await sleep(700);

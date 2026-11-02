@@ -30,7 +30,7 @@
     <button class="clock-bar scene-bar" id="chat-scene" title="这一段对话发生在哪" data-i18n-en-title="Where this conversation happens">场景</button>
     <!-- 「剧情」条（v0.5.0）：有卡时显示「剧情 · 2/3」，没卡就灰着。
          和场景挤同一条 bar —— 顶部已经三行了，不再单开一行。 -->
-    <button class="clock-bar arc-bar" id="chat-arc" title="这段剧情往哪走"
+    <button class="clock-bar arc-bar" id="chat-arc" title="剧情往哪走"
             data-i18n-en="Plot" data-i18n-en-title="Where this story is going">剧情</button>
   </div>
 
@@ -1153,6 +1153,7 @@
       <button class="ghost-btn" id="btn-export" data-i18n-en="Export everything (characters + chats)">导出全部数据（角色+记录）</button>
       <button class="ghost-btn" id="btn-import" data-i18n-en="Import">导入数据</button>
       <input id="file-import" type="file" accept="application/json" hidden>
+      <button class="ghost-btn" id="btn-restore-auto" data-i18n-en="Restore from the latest auto backup">从最近一份自动备份恢复</button>
       <button class="ghost-btn" id="btn-clear-chat" data-i18n-en="Clear this chat">清空当前角色的聊天记录</button>
       <button class="danger-btn" id="btn-wipe" data-i18n-en="Clear everything">清空全部数据</button>
       <div class="field" data-i18n-nodes><span data-i18n-en="Auto backup frequency">自动备份频率</span>
@@ -1522,9 +1523,9 @@
      结构和 #drive-modal 一致（列表 + 底部按钮），层级靠 DOM 顺序。 -->
 <div id="arc-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box arc-box">
-    <h4 data-i18n-en="Where this story is going">这段剧情往哪走</h4>
+    <h4 data-i18n-en="Where this story is going">剧情往哪走</h4>
     <p class="arc-sub">写出方向，她自己往下演；不用写台词，也不用写完整大纲。<br>
-       <b>只注入当前这一拍</b> —— 后面几拍不进提示词，也不会被要求一次演完。</p>
+       <b>只注入当前这一段</b> —— 后面几段不进提示词，也不会被要求一次演完。</p>
 
     <!-- v0.5.0.4：关掉的卡在这里明说，并且只给一条重开的路。
          上一版是「改一个字保存就悄悄重新打开」，界面上一个字都没提。 -->
@@ -1536,31 +1537,31 @@
     <label class="arc-field">
       <span>想往哪走</span>
       <textarea id="arc-direction" rows="3" maxlength="1200" data-i18n-en-ph="Where this stretch should end up. One line is enough - no dialogue, no outline."
-        placeholder="这段最后要走到哪儿。一句话就够，不用写台词，也不用写大纲。"></textarea>
+        placeholder="这段最后要走到哪儿。一句话就够。例：让关系从客气变成开始不客气"></textarea>
     </label>
 
     <label class="arc-field">
       <span>不能发生什么<em>（一行一条）</em><b class="arc-cnt" id="arc-cnt-c"></b></span>
       <textarea id="arc-constraints" rows="2" maxlength="480" data-i18n-en-ph="What you do not want to see happen here, one per line"
-        placeholder="你最不想在这段里看到什么，一行写一条"></textarea>
+        placeholder="你最不想在这段里看到什么，一行写一条。例：不要突然变成甜宠"></textarea>
     </label>
 
     <div class="arc-now" id="arc-now">
       <div class="arc-now-t">
         <span class="arc-now-l">现在演到</span>
-        <b class="arc-now-b" id="arc-now-b">第 1 拍</b>
+        <b class="arc-now-b" id="arc-now-b">第 1 段</b>
         <button class="arc-undo hidden" id="arc-undo" data-i18n-en="Undo">撤销</button>
-        <button class="arc-next" id="arc-next">演下一拍 →</button>
+        <button class="arc-next" id="arc-next">演下一段 →</button>
       </div>
-      <p class="arc-now-h">点右边那颗 = 这一拍收尾、立刻保存、走到下一拍。每拍下面写的「结果」会进下一轮的提示词。</p>
+      <p class="arc-now-h">点右边那颗 = 这一段收尾、立刻保存、走到下一段。每段下面写的「结果」会进下一轮的提示词。</p>
     </div>
 
     <div class="arc-beats-head">
-      <span>几拍</span>
+      <span>几段</span>
       <span class="arc-beats-cnt" id="arc-beats-cnt">0 / 12</span>
     </div>
     <div id="arc-beats" class="arc-beats"></div>
-    <button class="ghost-btn arc-add" id="arc-add-beat">＋ 加一拍</button>
+    <button class="ghost-btn arc-add" id="arc-add-beat">＋ 加一段</button>
 
     <!-- v0.5.3.2（清单 §7.5）：默认只露三个字段（往哪走 / 不能发生什么 / 几拍），
          其余低频的东西收进这一层 —— 一张空卡先看见四个必填框是最劝退的。 -->
@@ -1583,7 +1584,7 @@
 
       <label class="arc-auto">
         <input type="checkbox" id="arc-auto">
-        <span>自动判定这一拍演完没有<em>（beta，每轮多一次小请求）</em></span>
+        <span>自动判定这一段演完没有<em>（beta，每轮多一次小请求）</em></span>
       </label>
 
       <div class="arc-del-row">
@@ -1664,7 +1665,7 @@
 <div id="scn-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box scene-box">
     <h4 data-i18n-en="Start a scene">开一场戏</h4>
-    <p class="scene-sub" data-i18n-en="A scene is one sitting: a fixed place and time, one or two beats, and a place to stop. It never edits your chat.">一场戏 = 一次坐下来写完的一段：地点时间固定、一到两拍、有一个停点。它不会动你的聊天记录。</p>
+    <p class="scene-sub" data-i18n-en="A scene is one sitting: a fixed place and time, one or two beats, and a place to stop. It never edits your chat.">一场戏 = 一次坐下来写完的一段：地点时间固定、一到两段、有一个停点。它不会动你的聊天记录。</p>
 
     <label class="field" data-i18n-nodes><span data-i18n-en="Who it is about">写谁</span>
       <select id="sc-char"></select>
@@ -1719,11 +1720,11 @@
 <!-- 中场分镜确认（v0.5.2）：先出 1~2 拍，他改完再按拍写正文 -->
 <div id="beat-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box scene-box">
-    <h4 data-i18n-en="Beats for this scene">这一场分几拍</h4>
-    <p class="scene-sub" data-i18n-en="Edit anything you do not like. Each beat is start / change / stop.">哪句不合适就改。每拍就是「从哪儿开始 / 改变了什么 / 停在哪儿」。</p>
+    <h4 data-i18n-en="Beats for this scene">这一场分几段</h4>
+    <p class="scene-sub" data-i18n-en="Edit anything you do not like. Each beat is start / change / stop.">哪句不合适就改。每段就是「从哪儿开始 / 改变了什么 / 停在哪儿」。</p>
     <div id="beat-list"></div>
     <div class="modal-btns">
-      <button class="ghost-btn" id="beat-replan" data-i18n-en="Split again">重新分拍</button>
+      <button class="ghost-btn" id="beat-replan" data-i18n-en="Split again">重新分段</button>
       <button class="ghost-btn" id="beat-cancel" data-i18n-en="Cancel">取消</button>
       <button class="send-btn" id="beat-ok" data-i18n-en="Write it">按这个写</button>
     </div>

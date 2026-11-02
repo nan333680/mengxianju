@@ -2000,7 +2000,7 @@ async function maybeProactiveOpen(charId) {
     if (bond < PRO_BOND) return;                        // 还没熟到能主动找他
     if (Math.random() >= PRO_P) return;                 // 掷签：不是每次都开口
     const P2 = effSettings(c, S);
-    const life = deriveLife(psy, { now: Date.now(), char: c });
+    const life = deriveLife(psy, { now: Date.now(), char: c, rnd: lifeRndFor(c.id, Date.now()) });
     const hours = Math.max(1, Math.round(gap / 3600000));
     const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 };
     let stable = '';
@@ -2181,7 +2181,7 @@ async function prewriteProactive(charId) {
     if (!psy) psy = emptyPsyche();
     if ((Number(psy.relation && psy.relation.bond) || 0) < PRO_BOND) return;   // 还没熟到会主动找你
     const P2 = effSettings(c, S);
-    const life = deriveLife(psy, { now: Date.now(), char: c });
+    const life = deriveLife(psy, { now: Date.now(), char: c, rnd: lifeRndFor(c.id, Date.now()) });
     let stable = '';
     try { stable = buildStablePrompt(c, P2, await worldbookConst(charId)); } catch { stable = ''; }
     if (!stable) return;
@@ -15135,11 +15135,11 @@ function renderArcBeats() {
           <span class="arc-turns${i === cur && !b.done && (b.turns || 0) < _arcEdit.minTurns ? ' thin' : ''}">${esc(tt('演了 ' + (b.turns || 0) + ' 轮 / 至少 ' + _arcEdit.minTurns + ' 轮'))}</span>
         </div>
         <details class="arc-beat-more"${(i === cur && (b.goal || b.obs || b.turn || b.result)) ? ' open' : ''}>
-          <summary>${esc(tt('这段要发生什么 · 卡在哪 · 结束在哪 · 实际结果'))}${filled ? esc(tt(' · 已写 ' + filled + ' 项')) : ''}</summary>
+          <summary>${esc(tt('要发生什么 · 卡在哪 · 结束在哪 · 结果'))}${filled ? esc(tt(' · 已写 ' + filled + ' 项')) : ''}</summary>
           <div class="arc-beat-row"><label>${esc(tt('要发生'))}</label><input data-f="goal" maxlength="200" placeholder="${esc(tt('例：她终于开口问他那天为什么没来'))}" value="${esc(b.goal)}"></div>
           <div class="arc-beat-row"><label>${esc(tt('卡在哪'))}</label><input data-f="obs" maxlength="200" placeholder="${esc(tt('例：她想问，却被你先打断'))}" value="${esc(b.obs)}"></div>
           <div class="arc-beat-row"><label>${esc(tt('结束在'))}</label><input data-f="turn" maxlength="200" placeholder="${esc(tt('例：停电原因查清，她决定告诉你'))}" value="${esc(b.turn)}"></div>
-          <div class="arc-beat-row"><label>${esc(tt('实际结果'))}</label><input data-f="result" maxlength="240" placeholder="${esc(tt('演完之后实际发生了什么（可空）'))}" value="${esc(b.result)}"></div>
+          <div class="arc-beat-row"><label>${esc(tt('结果'))}</label><input data-f="result" maxlength="240" placeholder="${esc(tt('演完之后实际发生了什么（可空）'))}" value="${esc(b.result)}"></div>
         </details>
       </div>`;
     }).join('');

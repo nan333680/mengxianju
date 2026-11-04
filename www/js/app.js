@@ -8647,6 +8647,12 @@ let _memBusySince = 0;  // 上面那把锁是什么时候拿到的（给破坏�
 let _archiving = false; // 自动归档防重入（和 _memBusy 不同：这个是"这一趟还没结束就别再开一趟"）
 let _memPending = false;   // 忙的时候被挡下来的调用，跑完补一次（不再静默丢弃）
 let _lastMemError = null;  // 最近一次记忆任务的失败原因，给排查用（以前全被 catch 吞了）
+// v0.5.4.4：记忆方向复核的统计（给"复核到底跑没跑"留证据）。
+// 和 _lastDedupeStat 一样只放内存 —— 它只是给用户/排查看一眼的一次性证据。
+let _lastMemReviewStat = null;
+// 复核连续失败几次了。到上限就停掉，否则每批记忆都要白花一次请求。
+let _memReviewFails = 0;
+const MEM_REVIEW_MAX_FAILS = 3;
 // ⚠️ 整理被防重入挡下来时，攒一个"跑完补一次"的标记（2026-09-28 修）。
 //
 // 起因（用户实测）：连点几下「重新思考」后，她的记忆退回到很久以前。
@@ -8872,7 +8878,110 @@ function memRecFromItem(it, o) {
   };
   const gate = shouldAutoCommit(rec);
   if (!gate.ok) rec.status = MEMORY_STATUS.DRAFT;
+  // ⚠️ v0.5.4.4：方向复核判过的条目，不管上面那道给的是什么，一律停在收件箱。
+  //    必须放在 shouldAutoCommit 之后 —— 放前面会被它那句 ACTIVE 覆盖掉。
+  //    收件箱的语义没变（不注入、等用户点一下），只是多了一个"为什么进来"的理由。
+  if (it.memReviewWhy) {
+    rec.status = MEMORY_STATUS.DRAFT;
+    rec.memReviewWhy = String(it.memReviewWhy);
+  }
   return rec;
+}
+
+/**
+ * 从复核模型的输出里抠出 bad 编号（v0.5.4.4）。
+ * 抠不出来返回 null —— 调用方要把它当【这次没做成】，不能当"没有一条有问题"。
+ * @param {string} s 模型输出
+ * @returns {number[]|null}
+ */
+function parseReviewBad(s) {
+  const m = String(s || '').match(/"bad"\s*:\s*\[([^\]]*)\]/);
+  if (!m) return null;
+  /** @type {number[]} */
+  const out = [];
+  for (const g of m[1].matchAll(/\d+/g)) out.push(Number(g[0]));
+  return out;
+}
+
+/**
+ * 记忆方向复核（v0.5.4.4）：写入前再问一次「谁对谁做了什么」。
+ *
+ * ⚠️ 为什么必须另起一次请求，不能并进生成那一次：
+ *    生成时模型的立场是「我在写关于我自己的记忆」，这个立场本身就是主客倒置的来源。
+ *    2026-11-03 那条实测（有出处、有动作、人格卡里还明写着，方向照样反了）
+ *    说明再加禁令压不住 —— 要换一个【不带这个立场】的上下文来判。
+ *
+ * ⚠️ 它查的是【方向】，不是【出处】：
+ *    「我念错咒语把你召出来」的出处就是她的「你念错了词。叫出来的是我。」——
+ *    来源完全对得上，反的是「谁对谁做了这件事」。这两件事正交，别拿出处当证据。
+ *
+ * ⚠️ 判出问题的条目【不删、不改写】：标 memReviewWhy 后进收件箱，让用户自己看一眼。
+ *    复核也会错，静默改掉一条本来对的记忆比漏掉一条错的更难发现。
+ *
+ * @param {any[]} items trimByFreq 之后的条目（就地打标记）
+ * @param {string} transcript 这批对话的转录（调用方已经拼好的，别重拼）
+ * @param {any} char 目标角色（群聊要跳过：群聊记忆本来就不写「我」）
+ * @param {string} who 角色名
+ * @returns {Promise<any[]>} 同一个数组
+ */
+async function reviewMemoryDirection(items, transcript, char, who) {
+  const list = (items || []).filter(it => it && String(it.text || '').trim());
+  if (!list.length) return items;
+  // 群聊的人称口径不同（记忆里用名字记，不出现「我」），这套问句不适用。
+  if (isGroup(char)) return items;
+  // 连续失败到上限就先停：复核是"锦上添花"，不该变成每批都白扔一次请求。
+  if (_memReviewFails >= MEM_REVIEW_MAX_FAILS) return items;
+  const userName = String((S && S.userName) || '').trim();
+  const heText = (userName && userName !== who) ? '「' + userName + '」' : '他';
+  const lines = list.map((it, i) => (i + 1) + '. ' + String(it.text).replace(/\s+/g, ' ').trim()).join('\n');
+  let out = '';
+  try {
+    out = await onceChat({
+      apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model: S.model,
+      maxTokens: 512,
+      messages: [
+        { role: 'system', content:
+            '你只做一件事：核对一段记忆有没有把「谁对谁做了什么」记反。只输出 JSON，不要别的话。' },
+        { role: 'user', content:
+            '下面是一段对话。行首是说话人：「' + who + '」就是' + who + '本人，'
+          + heText + '是对话里的另一方。\n\n'
+          + String(transcript || '') + '\n\n'
+          + '下面是模型从这段对话里提炼出的记忆，每行前面的数字是编号。\n'
+          + '（记忆里的「我」= ' + who + '，记忆里的「你」= ' + heText + '）\n\n'
+          + lines + '\n\n'
+          + '逐条核对：\n'
+          + '· 这条记忆里「我」做的事，在这段对话里是不是' + who + '做的？\n'
+          + '· 这条记忆里「你」做的事，是不是' + heText + '做的？\n'
+          + '只要有一处把两个人的行为记反了，就算有问题。\n'
+          + '多记了一件事、少记了一件事、换了个说法，都【不算】问题。\n'
+          + '只输出 JSON：{"bad":[有问题的编号]}。全都对就输出 {"bad":[]}。' }
+      ]
+    });
+  } catch (err) {
+    _memReviewFails++;
+    _lastMemReviewStat = { at: Date.now(), total: list.length, bad: 0, failed: true,
+      msg: (err && err.message) || String(err), fails: _memReviewFails };
+    // ⚠️ 不记 _lastMemError：记忆本身没失败。记进去会弹「上一轮记忆任务失败了」，
+    //    用户会以为记忆坏了，而实际只是复核没做成、记忆照常写入。
+    try { console.warn('[记忆方向复核] 这次没做成，本批按正常写入：', err); } catch { /* 控制台不在也不影响 */ }
+    return items;
+  }
+  const bad = parseReviewBad(out);
+  if (bad === null) {
+    _memReviewFails++;
+    _lastMemReviewStat = { at: Date.now(), total: list.length, bad: 0, failed: true,
+      msg: '复核的输出里找不到 {"bad":[...]}', fails: _memReviewFails };
+    try { console.warn('[记忆方向复核] 输出里没有 JSON：', out); } catch { /* 同上 */ }
+    return items;
+  }
+  _memReviewFails = 0;
+  const idx = [...new Set(bad)].filter(i => i >= 1 && i <= list.length);
+  for (const i of idx) list[i - 1].memReviewWhy = '方向待核';
+  _lastMemReviewStat = { at: Date.now(), total: list.length, bad: idx.length, failed: false };
+  if (idx.length) {
+    try { console.info('[记忆方向复核] 判 ' + idx.length + '/' + list.length + ' 条方向可疑，已放进收件箱'); } catch { /* 同上 */ }
+  }
+  return items;
 }
 
 async function summarizeIfNeeded(charId = null) {
@@ -9074,6 +9183,9 @@ async function summarizeIfNeeded(charId = null) {
       ]
     });
     const items = trimByFreq(parseMemJson(out), 5);
+    // v0.5.4.4：写入前再问一次「谁对谁做了什么」（见 reviewMemoryDirection 的注释）。
+    // 判出问题的条目会被打上 memReviewWhy，下面 memRecFromItem 据此落成 draft。
+    await reviewMemoryDirection(items, txt, charT, who);
     const sourceIds = chunk.map(m => m.id).filter(Boolean);
     for (const it of items) {
       // ⚠️ 用 cid0（本函数的形参 charId，没传就回落到当前角色）。
@@ -9117,7 +9229,13 @@ async function summarizeIfNeeded(charId = null) {
         const merged = { ...dup, day: dup.day || day,
           key: dup.key || it.key,
           sourceMsgIds: [...new Set([...(dup.sourceMsgIds || []), ...srcIds])] };
-        if (dup.status === MEMORY_STATUS.DRAFT) {
+        // ⚠️ v0.5.4.4：方向复核判过的，不能被「重复」这条捷径放回正式记忆。
+        //    两边任一带着 reviewWhy 就继续停在收件箱 —— 否则复核等于白做：
+        //    下一批同样的内容一命中，刚才判「方向可疑」的那条又活过来了。
+        if (merged.memReviewWhy || it.memReviewWhy) {
+          merged.status = MEMORY_STATUS.DRAFT;
+          merged.memReviewWhy = merged.memReviewWhy || it.memReviewWhy || '方向待核';
+        } else if (dup.status === MEMORY_STATUS.DRAFT) {
           const g2 = shouldAutoCommit({ ...merged, sourceKind: srcOne ? 'message' : 'summary' });
           if (g2.ok) merged.status = MEMORY_STATUS.ACTIVE;
         }
@@ -10119,6 +10237,8 @@ async function summarizeChunk(charId, chunk) {
   // 只提炼 5 条等于把大部分内容丢掉。改成 12。
   // 上限仍受 room（剩余名额）约束，不会冲穿 memLimit。
   const items = trimByFreq(parseMemJson(out), Math.min(12, room));
+  // v0.5.4.4：同实时总结路，写入前做一次方向复核（这条是最常走的写回路径）。
+  await reviewMemoryDirection(items, txt, char, who);
   const sourceIds = chunk.map(m => m.id).filter(Boolean);
   for (const it of items) {
     // ⚠️ 同上（v1.21.25 修）——这是【最常走】的一条写回路径。
@@ -10137,7 +10257,11 @@ async function summarizeChunk(charId, chunk) {
       const merged = { ...dup, day: dup.day || day,
         key: dup.key || it.key,
         sourceMsgIds: [...new Set([...(dup.sourceMsgIds || []), ...srcIds])] };
-      if (dup.status === MEMORY_STATUS.DRAFT) {
+      // ⚠️ v0.5.4.4：同实时总结路 —— 复核判过的条目不许被重复路径转正。
+      if (merged.memReviewWhy || it.memReviewWhy) {
+        merged.status = MEMORY_STATUS.DRAFT;
+        merged.memReviewWhy = merged.memReviewWhy || it.memReviewWhy || '方向待核';
+      } else if (dup.status === MEMORY_STATUS.DRAFT) {
         const g2 = shouldAutoCommit({ ...merged, sourceKind: srcOne ? 'message' : 'summary' });
         if (g2.ok) merged.status = MEMORY_STATUS.ACTIVE;
       }
@@ -16975,6 +17099,9 @@ function memItemHtml(m, opts = {}) {
   const tags = [];
   if (isDraft) {
     tags.push('<em class="mem-tag draft">待确认</em>');
+    // v0.5.4.4：方向复核判出来的，把原因直接写在标签上。
+    // 否则用户分不清「模型拿不准」和「模型把谁对谁做记反了」—— 这两种该做的事不一样。
+    if (m.memReviewWhy) tags.push('<em class="mem-tag draft">' + esc(m.memReviewWhy) + '</em>');
   } else if (isDel) {
     tags.push('<em class="mem-tag sup">已删除</em>');
   } else if (dead) {
@@ -17400,8 +17527,10 @@ function bindMemItems(box, charId, after) {
     // mark 只改状态、不跑冲突计划。草稿躺着的这段时间里如果已经写进了同槽位的
     // 新说法，收下之后同槽两条 active，检查器同时显示、提示词同时注入。
     // 而 mem.add 现在只在生效的写入上跑计划（P0-1），正好该它上场。
-    if (dm) await mem.add({ ...dm, status: MEMORY_STATUS.ACTIVE });
-    else await mem.mark(aid, { status: MEMORY_STATUS.ACTIVE });
+    // v0.5.4.4：收下 = 用户看过了、认这一条，复核标记要一起清掉。
+    // 不清的话，下次同样的内容再被写一遍，重复守卫会拿这条旧标记把它又打回收件箱。
+    if (dm) await mem.add({ ...dm, status: MEMORY_STATUS.ACTIVE, memReviewWhy: '' });
+    else await mem.mark(aid, { status: MEMORY_STATUS.ACTIVE, memReviewWhy: '' });
     await after();
     toast('收下了，下一轮起她会记得', 2000);
   });
@@ -17740,7 +17869,18 @@ async function renderMem() {
       if (!byCid.has(m.charId)) byCid.set(m.charId, []);
       byCid.get(m.charId).push(m);
     }
-    box.innerHTML = '<div class="sys-line">模型拿不准的先落在这儿，不进提示词。收下才会进她的脑子。</div>'
+    // v0.5.4.4：把「上次方向复核」的结果说出来。
+    // 不给这个数，用户没法判断复核到底在跑、还是每次都超时走了退路（那样等于没做）。
+    const rs = _lastMemReviewStat;
+    const reviewLine = rs
+      ? '<div class="sys-line">上次方向复核：看 ' + rs.total + ' 条，'
+        + (rs.failed
+            ? '没做成（' + esc(String(rs.msg || '').slice(0, 60)) + '），这批按正常写入'
+            : '判 ' + rs.bad + ' 条方向可疑')
+        + '</div>'
+      : '';
+    box.innerHTML = reviewLine
+      + '<div class="sys-line">模型拿不准的先落在这儿，不进提示词。收下才会进她的脑子。</div>'
       + [...byCid].map(([cid, items]) => '<div class="mem-group open" data-cid="' + esc(cid) + '">'
           + '<button class="fold-head sub" data-head="1"><span>' + esc(nameOf(cid)) + '</span>'
           + '<em class="fold-num">' + items.length + ' 条</em><i class="fold-arrow">▾</i></button>'
@@ -20136,7 +20276,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.4.3';
+const WEB_VERSION_FALLBACK = '0.5.4.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

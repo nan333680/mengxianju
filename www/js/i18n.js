@@ -712,7 +712,6 @@ const BY_ZH = {
   "要发生": "Goal",
   "卡在哪": "Stuck at",
   "结束在": "Ends at",
-  "结果": "Result",
   "例：她终于开口问他那天为什么没来": "e.g. she finally asks why he never showed up",
   "例：她想问，却被你先打断": "e.g. she wants to ask, but you cut in first",
   "例：停电原因查清，她决定告诉你": "e.g. the blackout is explained and she decides to tell you",

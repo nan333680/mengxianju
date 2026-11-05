@@ -467,9 +467,75 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
  *     末尾再用 (?!\*) 挡住第三颗星。
  */
 const INNER_RE = /(^|[^*])\*([^*\n]{1,300})\*(?!\*)/g;
+const INNER_OPEN = '<em class="inner-thought">';
+
+/**
+ * 第 1 步（v0.5.4.5）：块级强调。
+ * 模型会把一对星号写成【独占一行】，那是 markdown 的块级写法，不是行内强调 ——
+ * 行内规则要求两个星号在同一行，所以它一直没被接住：
+ * 两个孤星号原样露在屏幕上，中间那段也没有变暗淡。
+ */
+function pairBlockStars(html) {
+  const lines = html.split('\n');
+  /** @type {string[]} */
+  const out = [];
+  /** @type {string[]|null} */
+  let buf = null;
+  for (const ln of lines) {
+    if (/^[ \t]*\*[ \t]*$/.test(ln)) {
+      if (buf === null) buf = [];
+      else { out.push(INNER_OPEN + buf.join('\n') + '</em>'); buf = null; }
+      continue;
+    }
+    if (buf !== null) buf.push(ln); else out.push(ln);
+  }
+  // 只有一个、没配上：它本来就是该被清掉的残留，内容原样放回
+  if (buf !== null) out.push(...buf);
+  return out.join('\n');
+}
+
+/**
+ * 第 3 步（v0.5.4.5）：行首孤星（模型漏写右边那个星号）。
+ * 只在这一行后面【再没有别的星号】时才成立 —— 还有的话那是正常成对，第 2 步已经收走了。
+ * 渲染到【行尾】不是消息尾：就算真的判错，也只吞一行，不会把后面半条消息吞进斜体。
+ */
+function headStarAt(lines, i) {
+  const line = lines[i];
+  const m = line.match(/^[ \t]*\*(?!\*)/);
+  if (!m) return null;
+  // 本行后面还有星号：那是正常成对，第 2 步已经收走了
+  if (line.slice(m[0].length).indexOf('*') >= 0) return null;
+  // ⚠️ 后面几行还有星号：那多半是【跨行的一对】的开头（*我\n其实不想说*），
+  //    在这里删掉它会把整段拆坏 —— 跨行成对由 ttsClean 那条宽松规则负责。
+  if (lines.slice(i + 1).join('\n').indexOf('*') >= 0) return null;
+  return m;
+}
+
+function renderHeadStar(line, i, lines) {
+  const m = headStarAt(lines, i);
+  if (!m) return line;
+  return line.slice(0, m[0].length - 1) + INNER_OPEN + line.slice(m[0].length) + '</em>';
+}
+
+/**
+ * 正文渲染（v0.5.4.5 起四步，顺序不能乱）。
+ *
+ * 0.5.3.4 那版的取舍是「宁可露出一个星号，也不要把后面半条消息吞进斜体」。
+ * 用户已经明确要求改成另一头：**要么渲染成心里话，要么干脆不显示，不能露出裸星号**。
+ * 吞错了只吞一行，这个代价可以接受；露一个星号在屏幕上，每次看到都出戏。
+ *
+ * ⚠️ 顺序：块级 → 行内成对 → 行首孤星 → 清行首行尾残留。
+ *    反过来的话，形态 A 的行首 * 会先被第 3 步吃掉，块级那两行就配不上了。
+ * ⚠️ 第 4 步只清【行首/行尾】的星号。中间的别动 —— 那是颜文字（星号夹斜杠那个）
+ *    和 **加粗** 里的记号，删掉就把人家正常的表情符号弄坏了。
+ */
 function renderBody(s) {
-  return esc(s).replace(INNER_RE,
-    (m, pre, body) => pre + '<em class="inner-thought">' + body + '</em>');
+  let html = esc(s);
+  html = pairBlockStars(html);
+  html = html.replace(INNER_RE, (m, pre, body) => pre + INNER_OPEN + body + '</em>');
+  html = html.split('\n').map((ln, i, arr) => renderHeadStar(ln, i, arr)).join('\n');
+  html = html.split('\n').map(ln => ln.replace(/^[ \t]*\*+/, '').replace(/\*+[ \t]*$/, '')).join('\n');
+  return html;
 }
 
 function toast(msg, ms = 2200) {
@@ -2883,15 +2949,28 @@ function ttsAvailable() {
  *    比不念还出戏。同理去掉 markdown 记号与多余的空白。
  */
 function ttsClean(text) {
-  return String(text || '')
+  let t = String(text || '')
     .replace(/[（(][^）)]{0,300}[）)]/g, '')
     // 心里话【整段不念】（0.5.3.4）：那是她没说出口的，念出来等于替她说了。
     // 顺序要紧：先括号、再星号段、最后才扫散落的记号 —— 反过来星号会被先吃掉。
     // ⚠️ 先用【能跨行、不设字数上限】的宽松版剥一遍（0.5.3.4 复查）：
     //    INNER_RE 的 [^*\n]{1,300} 不跨行，跨行或超长的心里话剥不掉，
     //    剩下的 * 被下一行删掉 —— 那段心里话就变成正文被念出来了。
+    // v0.5.4.5：块级孤立星号 / 漏写右星号 这两种形状也要整段剥掉。
+    //    显示层修好之后它们会变成「看得见是心里话」—— 这里不跟着补，
+    //    就成了「看不见却听得见」，比原来更怪。
+    //    这两刀必须在【删散落记号】之前：记号先删了，内容就留下来被念出去了。
+    // ⚠️ 跨行成对必须排在这两刀之前：`*我\n其实不想说*` 的开头会被「行首孤星」整行吃掉，
+    //    剩下的半截配不上对，最后就变成「变成正文被念出来」（e2e-channel 第 14 段踩到）。
     .replace(/\*[^*]+\*/g, '')
-    .replace(INNER_RE, '$1')
+    .replace(/(^|\n)[ \t]*\*[ \t]*\n([\s\S]*?)\n[ \t]*\*[ \t]*(?=\n|$)/g, '$1')
+    .replace(INNER_RE, '$1');
+  // 漏写右星号那一行：整行都是心里话，一个字都不念。
+  t = t.split('\n').map((ln, i, arr) => {
+    const m = headStarAt(arr, i);
+    return m ? ln.slice(0, m[0].length - 1) : ln;
+  }).join('\n');
+  return t
     .replace(/[*_~`#>|]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -20276,7 +20355,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.4.4';
+const WEB_VERSION_FALLBACK = '0.5.4.5';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

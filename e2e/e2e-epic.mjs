@@ -233,7 +233,14 @@ const ah = await page.evaluate(async () => {
     hi: M.askHits('你把话说清楚。'),
     clean: M.askHits('水凉了。你把外袍披上，别泡太久。'),
     star: M.askHits('*这一句是心里话，不是问句* 走罢。'),
-    cap: M.askHits('我不是要问你走不走，我是想问一句。你把话说清楚，给我说明白。').length
+    cap: M.askHits('我不是要问你走不走，我是想问一句。你把话说清楚，给我说明白。').length,
+    // v0.5.4.5：真实出现过的三种（0.5.4.1 的词表一条都拦不住，交集为空）
+    r1: M.askHits('你要是不困得那么快，我倒想问你一句。算了。'),
+    r2: M.askHits('我得先问你一句——你知道她心里是那个意思吗。'),
+    r3: M.askHits('那我问你一句——你几时想过这话的，今天，还是老早。'),
+    // 同两个角色的正常台词：不是过渡外壳，不许误伤
+    n1: M.askHits('我不问那半句了。'),
+    n2: M.askHits('我问你怕不怕，你答一句不怕就过去。')
   };
 });
 t('命中「先撇清再问」', ah.hit.length >= 1, JSON.stringify(ah.hit));
@@ -241,10 +248,32 @@ t('命中「你把话说清楚」', ah.hi.length >= 1, JSON.stringify(ah.hi));
 t('★ 干净的一句不误伤', ah.clean.length === 0, JSON.stringify(ah.clean));
 t('星号里的心里话不算「问」', ah.star.length === 0, JSON.stringify(ah.star));
 t('一次最多点名两条', ah.cap <= 2, String(ah.cap));
+// v0.5.4.5：词表补全。这三句是备份里真实出现过的形状，原来一条都拦不住。
+t('★ 命中「我倒想问你一句」', ah.r1.length >= 1, JSON.stringify(ah.r1));
+t('★ 命中「我得先问你一句」', ah.r2.length >= 1, JSON.stringify(ah.r2));
+t('★ 命中「那我问你一句」', ah.r3.length >= 1, JSON.stringify(ah.r3));
+// 反向：这两个角色的正常问句不能被当成过渡外壳（误报会让提示词天天点名）
+t('「我不问那半句了」不误伤', ah.n1.length === 0, JSON.stringify(ah.n1));
+t('「我问你怕不怕」不误伤', ah.n2.length === 0, JSON.stringify(ah.n2));
 // 注入的那一段只在命中时出现 —— 断言标题真的写进了 persona 的 turnNote 拼装里。
 const psrc = fs.readFileSync(R + '/www/js/persona.js', 'utf8');
 t('turnNote 有「上一轮你就是这样问的」段', psrc.indexOf('# 上一轮你就是这样问的') >= 0, '');
 t('并且说明了只在命中时才出现', psrc.indexOf('askAvoid = []') >= 0 && psrc.indexOf('askAvoid.length') >= 0, '');
+
+console.log('');
+console.log('=== 3c. 角色自主性那段（0.5.4.5）===');
+// 用户实测：设定很恶劣的角色"不用绝对指令就基本过于顺从"。
+// 病根不是缺许可，是人格在提示词里只是【背景】—— 开头定基调，所以放在第一个 part。
+const sp = await page.evaluate(async () => {
+  const M = await import('/js/persona.js');
+  try {
+    const out = String(M.buildStablePrompt({ name: '甲', persona: '你是甲。', isGroup: false }, {}, []) || '');
+    return { head: out.slice(0, 60), hasChar: out.includes('# 你的角色设定') };
+  } catch (e) { return { err: String(e && e.message || e) }; }
+});
+t('★ 稳定前缀开头就是那段（第一个 part）', String(sp.head || '').startsWith('# 先是这个人，再是写法'), JSON.stringify(sp));
+t('角色设定还在（只是排到它后面）', sp.hasChar === true, JSON.stringify(sp.hasChar));
+t('写的是「这个人」不是「她」', !String(sp.head || '').includes('她'), JSON.stringify(sp.head));
 
 console.log('');
 console.log('=== 4. 没有未捕获错误 ===');

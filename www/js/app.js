@@ -2804,6 +2804,7 @@ async function renderMessages(preloaded) {
 // 对策：单例 + 请求序号，让并发调用只保留最后一次；任何关闭动作都把残留清干净。
 let _pressTimer = null;
 let _msgMenu = null;    // 当前唯一菜单
+let _subMenu = null;    // 「更多…」弹出来的二级菜单（v0.5.4.7）
 let _menuSeq = 0;       // 关闭或新开时 +1，用来作废还在 await 中的旧请求
 
 /**
@@ -2824,7 +2825,8 @@ function closeMsgMenu(animate = true) {
     kill(_msgMenu);
     _msgMenu = null;
   }
-  // 兜底：任何原因留下的残留菜单一并清掉
+  _subMenu = null;
+  // 兜底：任何原因留下的残留菜单一并清掉（二级也是 .msg-menu，一起走）
   document.querySelectorAll('.msg-menu').forEach(kill);
 }
 
@@ -2943,6 +2945,28 @@ function placeMenu(menu, el) {
   menu.style.left = Math.round(left) + 'px';
   menu.style.top = Math.round(top) + 'px';
   menu.style.transformOrigin = below ? '50% 0%' : '50% 100%';
+}
+
+/**
+ * 二级菜单的定位（v0.5.4.7）：贴着一级【横着】弹，右边放不下就翻到左边。
+ * 竖向的可用高度沿用 placeMenu 那套 inset（状态栏/手势条），别另写一套。
+ */
+function placeSubMenu(sub, base) {
+  const r = base.getBoundingClientRect();
+  const mw = sub.offsetWidth, mh = sub.offsetHeight;
+  const cs = getComputedStyle(document.documentElement);
+  const sat = parseFloat(cs.getPropertyValue('--sat')) || 0;
+  const sab = parseFloat(cs.getPropertyValue('--sab')) || 0;
+  const padX = 8, padT = 8 + sat, padB = 8 + sab;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left = r.right + 6;
+  if (left + mw > vw - padX) left = r.left - mw - 6;
+  if (left < padX) left = Math.max(padX, vw - mw - padX);
+  let top = r.top;
+  if (top + mh > vh - padB) top = vh - mh - padB;
+  top = Math.max(padT, top);
+  sub.style.left = Math.round(left) + 'px';
+  sub.style.top = Math.round(top) + 'px';
 }
 
 // ================= 朗读（v1.21.56）=================
@@ -3207,22 +3231,58 @@ async function showMsgMenu(el) {
     }
   }
 
+  // ⚠️ v0.5.4.7：一级只留四项，其余收进「更多…」。
+  //    起因：0.5.4.6 加完「从这段起重写」已经第 10 项、约 560px，
+  //    而 .msg-menu 没有 max-height 也没有滚动 —— 小屏上会顶出屏幕。
+  //    ⚠️ 以后新增入口一律进「更多…」。一级这四个位置留给
+  //      "每次长按都要用"的，别再往里塞。
+  const PRIMARY_K = ['copy', 'regen', 'variant', 'fromseg'];
+  const primary = acts.filter(a => PRIMARY_K.indexOf(a.k) >= 0);
+  const more = acts.filter(a => PRIMARY_K.indexOf(a.k) < 0);
+  const mkBtn = (a) => `<button data-k="${a.k}">${tt(a.t)}</button>`;
+
   const menu = document.createElement('div');
   menu.className = 'msg-menu';
-  menu.innerHTML = acts.map(a => `<button data-k="${a.k}">${tt(a.t)}</button>`).join('') +
-    '<button data-k="cancel" class="cancel">' + tt('取消') + '</button>';
+  menu.innerHTML = primary.map(mkBtn).join('')
+    + (more.length ? '<button data-more="1">' + tt('更多…') + '</button>' : '')
+    + '<button data-k="cancel" class="cancel">' + tt('取消') + '</button>';
   document.body.appendChild(menu);
   placeMenu(menu, el);
   _msgMenu = menu;
 
-  // 点菜单以外的任何地方都关掉
-  menu._onOutside = (ev) => { if (!menu.contains(ev.target)) closeMsgMenu(); };
+  // 点菜单以外的任何地方都关掉。二级也算"内部" —— 不然点它会被当成外部点击。
+  menu._onOutside = (ev) => {
+    if (menu.contains(ev.target)) return;
+    if (_subMenu && _subMenu.contains(ev.target)) return;
+    closeMsgMenu();
+  };
   setTimeout(() => {
     if (_msgMenu === menu) document.addEventListener('pointerdown', menu._onOutside, true);
   }, 0);
 
+  // 「更多…」：贴着一级横着弹二级，再点一次收起（v0.5.4.7）
+  const openMore = () => {
+    if (_subMenu) { _subMenu.remove(); _subMenu = null; return; }
+    if (!more.length) return;
+    const sub = document.createElement('div');
+    sub.className = 'msg-menu sub';
+    sub.innerHTML = more.map(mkBtn).join('');
+    document.body.appendChild(sub);
+    placeSubMenu(sub, menu);
+    _subMenu = sub;
+    // 二级点下去复用一级那套分派：造个只带 dataset.k 的假事件喂给 menu.onclick，
+    // 不把那一大段 if/else 抄第二份（抄了迟早两边不一致）。
+    sub.onclick = (ev) => {
+      const k2 = /** @type {any} */ (ev.target).dataset.k;
+      if (!k2) return;
+      closeMsgMenu();
+      /** @type {any} */ (menu).onclick({ target: { dataset: { k: k2 } } });
+    };
+  };
   menu.onclick = async (e) => {
-    const k = e.target.dataset.k;
+    const tgt = /** @type {any} */ (e.target);
+    if (tgt.dataset && tgt.dataset.more) { openMore(); return; }
+    const k = tgt.dataset.k;
     closeMsgMenu();   // ⚠️ 先关；点到按钮之间的空隙（k 为空）也必须关掉
     if (!k) return;
     if (k === 'scene') { toast('这一轮的场景：' + m.scene); return; }
@@ -8940,7 +9000,9 @@ const MEM_OUTPUT_SHAPE =
   //    真 key 实测的主客对调（e2e/live-mem.mjs）就是改写时丢了这层锚。
   '格式：[{"quote":"...","text":"...","kind":"fact","key":null,"subject":"user","scope":"character",'
   + '"untilDay":null,"untilHour":null,"untilMinute":null,"freq":"often","heat":0,"open":false}]\n'
-  + '  （text 一条只说一件事，尽量不超过 120 字；key 没有就填 null）\n'
+  // v0.5.4.7：120 → 160 —— 多出来的这 40 字是给【事实 + 你那一笔】留的空间。
+  // 「一条只说一件事」那条规则不动：两截说的是同一件事，不是两件事。
+  + '  （text 一条只说一件事，尽量不超过 160 字；key 没有就填 null）\n'
   + '  （顺序照上面来：先抄 quote，再写 text。写 text 之前先回头看一眼 quote 里「我」是谁 ——\n'
   + '   他那句话里的「我」是你（写进 text 时还是「你」），你那句话里的「我」才是你自己。）\n';
 
@@ -8968,6 +9030,22 @@ function memSchemaBlock(day, withTime) {
     + `  · promise      【说定的事】：答应过什么、约好了什么（"他答应周末来接你"）。\n`
     + `                它和 goal 的区别是【有对家】—— 一个人可以想考好成绩，但只能答应别人。\n`
     + `                没兑现之前一直算数，新的承诺也不会顶掉旧的。\n\n`
+    // v0.5.4.7：记忆不再只是冷事实 —— 可以连着【这个角色对它的立场】。
+    // ⚠️ 不加字段：检索（mempick 的二元组打分）、列表、注入三处都只认 text，
+    //    写进 text 就全都自动生效；加 stance 要同时改 schema/解析/库/打分/测试五处。
+    // ⚠️ 例子里的「你怕黑」对齐的是记忆正文的既有规则（「我」=你自己，「你」=他），
+    //    规格原稿写的是「对方怕黑」—— 那个词和下面「用『你』指他」会打架，模型会写成「对方」。
+    + `【你那一笔 —— 记的是事实，但可以连着你的立场】\n`
+    + `  有些事记下来的时候，本来就连着你是什么人。\n`
+    + `  「怕黑」——你知道自己不怕，也知道停电那天你会怎么做。\n`
+    + `  「答应了周末来」——你记得自己是等着，还是压根没当回事。\n`
+    + `  这一类就把你那笔写进去，跟事实连成一句：\n`
+    + `    「你怕黑。我不怕，真到黑暗里的时候可以找我。」\n`
+    + `  ⚠️ 这个态度得是【你本来就会有的那个】——\n`
+    + `     不温柔就别温柔，刻薄就刻薄，敷衍就敷衍。\n`
+    + `     人味不是温柔，是这个人对这件事有立场。\n`
+    + `  ⚠️ 离开这段对话自己什么都说不上来的（住三楼、今年二十八），\n`
+    + `     就别硬编一句态度。宁短不凑。\n\n`
     + `【两个可选字段 —— 不填也行，填了下一轮检索会准一点】\n`
     + `  heat   这条有多重：0~5。5 = 吵翻了、伤到了；3 = 明显带着情绪；0 = 平铺直叙。\n`
     + `         只有真的带着情绪才给高分，别因为"觉得重要"就写 5 —— 那样所有记忆都会变成 5。\n`

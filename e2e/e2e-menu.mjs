@@ -42,6 +42,20 @@ let pass=0, fail=0;
 const t=(n,ok,ex='')=>{ if(ok){pass++;console.log('  OK   '+n);}else{fail++;console.log('  FAIL '+n+(ex?'  -> '+ex:''));} };
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 const menuCount = () => page.$$eval('.msg-menu', els => els.length);
+// ⚠️ v0.5.4.7：一级只留四项（复制/重新生成/换一个版本/从这段起重写），
+// 其余都收进「更多…」。所以点 del / edit 这类要先展开二级。
+const clickAct = async (k) => {
+  const has = await page.$$eval('.msg-menu [data-k="' + k + '"]', els => els.length);
+  if (!has) {
+    await page.click('.msg-menu [data-more]');
+    await sleep(220);
+  }
+  await page.click('.msg-menu [data-k="' + k + '"]');
+};
+const openMore = async () => {
+  const has = await page.$$eval('.msg-menu [data-more]', els => els.length);
+  if (has) { await page.click('.msg-menu [data-more]'); await sleep(220); }
+};
 const clearMenus = () => page.evaluate(() => document.querySelectorAll('.msg-menu').forEach(m=>m.remove()));
 
 await page.goto('http://127.0.0.1:'+port+'/', { waitUntil:'networkidle0', timeout:40000 });
@@ -157,7 +171,7 @@ await longPressAndroid(1);
 const had = await menuCount();
 if (had === 0) t('菜单出现', false, '菜单没出现');
 // ⚠️ 轮询等待（v1.21.37）：del 分支现在 await tidyNow()，固定 900ms 不够。
-await page.click('.msg-menu [data-k="del"]');
+await clickAct('del');
 for (let _w = 0; _w < 40; _w++) {
   await sleep(250);
   const _n = await page.$$eval('.msg', els => els.length);
@@ -174,7 +188,7 @@ await clearMenus();
 await longPressAndroid(3);
 const had2 = await menuCount();
 if (had2 === 0) t('末条菜单出现', false, '菜单没出现');
-await page.click('.msg-menu [data-k="regen"]');
+await clickAct('regen');
 // ⚠️ 等消息数【稳定】（v1.21.37）：重新生成会走真实 API 并改写消息，
 // 固定 1200ms 会在流式过程中就往下走 → 后面的索引全错位。
 let _prevN = -1, _stable = 0;
@@ -231,20 +245,23 @@ await page.waitForFunction(() => !!document.querySelector('#messages .msg[data-i
 const idx = await page.evaluate(() => [...document.querySelectorAll('.msg')].findIndex(el => el.dataset.id === 'edit-test-1'));
 t('找到了自己发的那条', idx >= 0, 'index=' + idx);
 await longPressAndroid(idx);
+await openMore();
 const hasEdit = await page.$$eval('.msg-menu [data-k="edit"]', els => els.length);
 t('菜单里有「编辑重发」', hasEdit === 1, '找到 ' + hasEdit + ' 个');
+// 二级已经在上一步展开了，别再点一次「更多…」（那是开关，会把它收起来）
 const editLabel = await page.$eval('.msg-menu [data-k="edit"]', el => el.textContent.trim()).catch(() => '');
 t('菜单项文案是「编辑重发」', editLabel === '编辑重发', editLabel);
 await clearMenus();
 const aiIdx = await page.evaluate(() => [...document.querySelectorAll('.msg')].findIndex(el => el.classList.contains('ai')));
 if (aiIdx >= 0) {
   await longPressAndroid(aiIdx);
+  await openMore();
   const aiEdit = await page.$$eval('.msg-menu [data-k="edit"]', els => els.length);
   t('AI 的消息没有「编辑重发」', aiEdit === 0, '找到 ' + aiEdit + ' 个');
 }
 await clearMenus();
 await longPressAndroid(idx);
-await page.click('.msg-menu [data-k="edit"]');
+await clickAct('edit');
 // ⚠️ 轮询等待（v1.21.37）：edit 分支现在 await tidyNow()，固定 700ms 不够。
 for (let _w = 0; _w < 40; _w++) {
   await sleep(250);

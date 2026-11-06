@@ -640,6 +640,8 @@ input + .hint-text{ margin-top:8px; }
 }
 .msg-menu button:active{ background:var(--bg3); }
 .msg-menu button.cancel{ color:var(--fg3); text-align:center; }
+/* 「更多…」弹出的二级（v0.5.4.7）：贴着一级横着放，层级要压过一级 */
+.msg-menu.sub{ z-index:1001; }
 
 /* 设置页里成对的数字输入 */
 .field.row input[type=number]{

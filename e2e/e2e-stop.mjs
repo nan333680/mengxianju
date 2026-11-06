@@ -122,13 +122,17 @@ const longPressed = await page.evaluate((id) => {
 }, u0 && u0.id);
 t('长按的那条在屏幕上', longPressed === true);
 await sleep(950);
+// ⚠️ v0.5.4.7 起菜单分两级：「编辑重发」在「更多…」里，不在弹出来的第一屏。
+//    这里先点开「更多…」（原地替换，同一个 .msg-menu），再判断键名。
 const menuInfo = await page.evaluate(() => {
   const m = document.querySelector('.msg-menu');
-  if (!m) return { open:false, hasEdit:false };
-  return { open:true, hasEdit: (m.textContent || '').includes('编辑重发') };
+  if (!m) return { open:false, hasEdit:false, more:false };
+  const more = m.querySelector('[data-more]');
+  if (more) more.click();
+  return { open:true, more:!!more, hasEdit: !!m.querySelector('[data-k="edit"]'), text:(m.textContent||'').slice(0,60) };
 });
 t('长按有菜单弹出', menuInfo.open === true);
-t('菜单里有「编辑重发」', menuInfo.hasEdit === true);
+t('菜单里有「编辑重发」', menuInfo.hasEdit === true, JSON.stringify(menuInfo));
 await page.evaluate(() => { document.querySelectorAll('.msg-menu').forEach(e => e.remove()); });
 
 console.log('=== 再发一条：它不许消失，也不许变成兄弟 ===');

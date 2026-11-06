@@ -461,6 +461,9 @@ console.log('  [probe] DB: ' + await page.evaluate(async () => {
   return JSON.stringify({ n: all.length, sel: all.filter(x => String(x.id).startsWith('sel')).length, leaf: lf && lf.v });
 }));
 await sleep(500);
+// ⚠️ v0.5.4.7：「以这段写小说」在「更多…」里（原地替换，同一个 .msg-menu，选择器不用换）
+await page.evaluate(() => { const m = document.querySelector('.msg-menu [data-more]'); if (m) m.click(); });
+await sleep(280);
 const menuTxt = await page.evaluate(() => Array.from(document.querySelectorAll('.msg-menu button')).map(b => b.textContent.trim()).join('|'));
 t('消息菜单里有「以这段写小说」', menuTxt.indexOf('以这段写小说') >= 0, menuTxt);
 await page.evaluate(() => { const b = [...document.querySelectorAll('.msg-menu button')].find(x => (x.textContent || '').indexOf('以这段写小说') >= 0); if (b) b.click(); });

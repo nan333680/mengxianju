@@ -116,7 +116,18 @@ const menuItems = async (id) => {
     if (el) el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   }, id);
   await sleep(600);
-  const items = await page.$$eval('.msg-menu button', els => els.map(e => e.textContent.trim())).catch(() => []);
+  // ⚠️ v0.5.4.7 起菜单分两级：「当时的场景」在「更多…」里，一级只有 copy/regen/variant/fromseg/branch。
+  //    只读一级会让「没有快照的消息不显示这一项」那条断言【假通过】（永远读不到、于是永远"没有"）。
+  //    所以这里把一级和展开后的一起收上来。
+  const items = await page.evaluate(() => {
+    const m = document.querySelector('.msg-menu');
+    if (!m) return [];
+    const first = [...m.querySelectorAll('button')].map(e => e.textContent.trim());
+    const more = m.querySelector('[data-more]');
+    if (!more) return first;
+    more.click();
+    return first.concat([...m.querySelectorAll('button')].map(e => e.textContent.trim()));
+  });
   await page.evaluate(() => document.querySelectorAll('.msg-menu').forEach(m => m.remove()));
   return items;
 };

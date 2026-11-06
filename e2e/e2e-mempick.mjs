@@ -135,7 +135,7 @@ const res = await page.evaluate(async () => {
   const cbHit = pf.used.filter(x => x.cb === true);
   out.f1 = cbHit.length;
   out.f2 = cbHit.length ? cbHit[0].text.indexOf("河边") >= 0 : false;
-  out.f3 = memoryBlockText(pf.used).indexOf("· （她突然想起来）") >= 0;
+  out.f3 = memoryBlockText(pf.used).indexOf("· （你突然想起来）") >= 0;   // v0.5.4.7：文案中性化成「你」
 
   // 今天刚说的不算「想起来」
   const pf2 = pickMemories({ list: [mk({ kind: "event", text: "她刚哭过一场", day: 30, heat: 5 })].concat(listF.slice(0, 6)), nowDay: 30, userText: "你在干嘛呢" });

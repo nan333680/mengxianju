@@ -141,6 +141,9 @@ const box = await page.evaluate((i)=>{const r=document.querySelectorAll('.msg')[
 await page.touchscreen.touchStart(box.x,box.y); await sleep(620);
 await page.evaluate((i)=>{const el=document.querySelectorAll('.msg')[i];if(el)el.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));},idxA);
 await sleep(400); await page.touchscreen.touchEnd(); await sleep(400);
+// ⚠️ v0.5.4.7 起「从这里重聊」在「更多…」二级里
+await page.evaluate(()=>{ const b=document.querySelector('.msg-menu [data-more]'); if(b) b.click(); });
+await sleep(200);
 const hasRw = await page.$$eval('.msg-menu [data-k="rewind"]', els=>els.length);
 t('菜单里有「从这里重聊」', hasRw===1, '找到 '+hasRw+' 个');
 const lastIdx = await page.evaluate(()=>[...document.querySelectorAll('.msg')].findIndex(el=>el.dataset.id==='rw-c'));
@@ -149,6 +152,10 @@ if (lastIdx>=0) {
   await page.touchscreen.touchStart(b2.x,b2.y); await sleep(620);
   await page.evaluate((i)=>{const el=document.querySelectorAll('.msg')[i];if(el)el.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));},lastIdx);
   await sleep(400); await page.touchscreen.touchEnd(); await sleep(400);
+  // ⚠️ 必须先展开「更多…」再断言【没有】：rewind 在二级里，
+  //    不展开的话这里永远读到 0 —— 这条断言会假通过。
+  await page.evaluate(()=>{ const b=document.querySelector('.msg-menu [data-more]'); if(b) b.click(); });
+  await sleep(200);
   t('最后一条 AI 消息没有「从这里重聊」（它该用重新生成）', (await page.$$eval('.msg-menu [data-k="rewind"]', els=>els.length))===0);
 }
 

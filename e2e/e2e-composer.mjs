@@ -183,6 +183,13 @@ const menuOpen = async (id) => {
   await sleep(320);
 };
 const menuClick = async (k) => {
+  // ⚠️ v0.5.4.7：一级只剩五项，edit / del / mknovel 这些都在「更多…」里。
+  // 原地替换 —— 点开后还是同一个 .msg-menu，所以只是多一步。
+  const found = await page.evaluate(kk => !!document.querySelector('.msg-menu button[data-k="' + kk + '"]'), k);
+  if (!found) {
+    await page.evaluate(() => { const m = document.querySelector('.msg-menu [data-more]'); if (m) m.click(); });
+    await sleep(250);
+  }
   await page.evaluate(kk => {
     const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.dataset.k === kk);
     if (b) b.click();

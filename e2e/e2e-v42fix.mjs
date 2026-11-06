@@ -165,6 +165,9 @@ if (idx >= 0) {
     el.dispatchEvent(mk('pointerdown')); el.dispatchEvent(mk('contextmenu'));
   }, idx);
   await sleep(700);
+  // ⚠️ v0.5.4.7 起「删除这条」在「更多…」二级里
+  await page.evaluate(()=>{ const b=document.querySelector('.msg-menu [data-more]'); if(b) b.click(); });
+  await sleep(200);
   const hasDel = await page.$('.msg-menu [data-k="del"]');
   t('菜单里有「删除这条」', !!hasDel);
   if (hasDel) {

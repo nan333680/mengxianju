@@ -121,6 +121,9 @@ for (let attempt = 0; attempt < 3; attempt++) {
   await page.evaluate((i)=>{const el=document.querySelectorAll('.msg')[i];if(el)el.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));},idx);
   await sleep(400); await page.touchscreen.touchEnd(); await sleep(400);
   // 菜单是异步建的，等它真的出现再点
+  // ⚠️ v0.5.4.7 起「编辑重发」在「更多…」二级里：先等一级出来，再点开更多。
+  for(let i=0;i<20;i++){ if(await page.$('.msg-menu')) break; await sleep(200); }
+  await page.evaluate(()=>{ const b=document.querySelector('.msg-menu [data-more]'); if(b) b.click(); });
   for(let i=0;i<20;i++){ if(await page.$('.msg-menu [data-k="edit"]')) break; await sleep(200); }
   await page.click('.msg-menu [data-k="edit"]');
   for(let i=0;i<25;i++){

@@ -93,7 +93,7 @@ const res = await page.evaluate(async () => {
     boundary: ["别拿这种玩笑试探她"]
   }, now);
   const s = P.psychePrompt(pp);
-  out.d1 = s.indexOf("你瞒着他的") >= 0;
+  out.d1 = s.indexOf("你瞒着对方的") >= 0;   // v0.5.4.7：文案中性化成「对方」
   out.d2 = s.indexOf("除非他先问起他问起家里") >= 0 || s.indexOf("否则别主动说") >= 0;
   out.d3 = s.indexOf("你自己这两天") >= 0 && s.indexOf("剪了头发") >= 0;
   out.d4 = s.indexOf("你的底线") >= 0 && s.indexOf("不需要假装没事") >= 0;

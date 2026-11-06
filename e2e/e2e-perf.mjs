@@ -122,9 +122,13 @@ await longPress(0);
 n = await page.$$eval('.msg-menu', els => els.length);
 t('再长按第0条 → 仍只有1个菜单', n === 1, '数量='+n);
 
-await longPress(3);
+// ⚠️ 不要写死下标 3：seed 用空开场白，列表里只有 3 条消息，.msg[3] 不存在 →
+//    longPress 会先清掉旧菜单再判断元素（第 91 行），于是这一次读到 0 个，断言假失败。
+// 现取一次：第 65 行那次读数与这里不是同一个时刻（那时列表里还没清成这一轮的样子）。
+const liveCount = await page.$$eval('.msg', els => els.length);
+await longPress(Math.min(3, liveCount - 1));
 n = await page.$$eval('.msg-menu', els => els.length);
-t('连续第4次长按 → 还是只有1个', n === 1, '数量='+n);
+t('连续第4次长按 → 还是只有1个', n === 1, '数量='+n+' / 消息数='+msgCount);
 
 console.log('');
 console.log('=== 2. 点外部关闭 ===');
@@ -149,11 +153,15 @@ const before = await page.$$eval('.msg', els => els.length);
 // 内容要在长按前取：longPress 会滚动列表
 const textsBefore = await page.$$eval('.msg .bub', els => els.map(e=>e.textContent.trim()));
 await longPress(1);
+// ⚠️ v0.5.4.7 起「删除」在「更多…」二级里（一级只留四项 + branch）。
+await page.evaluate(() => { const b = document.querySelector('.msg-menu [data-more]'); if (b) b.click(); });
+await new Promise(r=>setTimeout(r,200));
 await tap(page, '.msg-menu [data-k="del"]');
+// ⚠️ 只点一次：点完 menu 已关。旧版这里重复 tap 了一次，
+//    在「删除在一级」的时代靠时序侥幸通过，现在必然找不到元素而崩。
 // ⚠️ 改成【轮询等待】而不是固定 700ms（v1.21.37）：
 // del 分支现在会 await tidyNow()（一次 API 调用，无 mock 时也可能较慢），
 // 固定等待会读到还没删完的中间状态。
-await tap(page, '.msg-menu [data-k="del"]');
 for (let _w = 0; _w < 40; _w++) {
   await new Promise(r=>setTimeout(r,250));
   const _n = await page.$$eval('.msg', els => els.length);

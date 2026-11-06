@@ -352,7 +352,10 @@ console.log('=== 7. 备选开场白：长按开场白能一条条换 ===');
   const hasItem = await page.evaluate(() => {
     const box = document.querySelector('.msg-menu');
     if (!box) return null;
-    const b = [...box.querySelectorAll('button')].find(x => (x.textContent || '').includes('换一个开场白'));
+    const find = () => [...box.querySelectorAll('button')].find(x => (x.textContent || '').includes('换一个开场白'));
+    let b = find();
+    // ⚠️ v0.5.4.7：「换一个开场白」在「更多…」里；原地替换，点开后同一元素里就有
+    if (!b) { const more = box.querySelector('[data-more]'); if (more) { more.click(); b = find(); } }
     if (!b) return null;
     b.click();
     return b.textContent.trim();
@@ -372,7 +375,9 @@ console.log('=== 7. 备选开场白：长按开场白能一条条换 ===');
   await sleep(700);
   await page.evaluate(() => {
     const box = document.querySelector('.msg-menu');
-    const b = box && [...box.querySelectorAll('button')].find(x => (x.textContent || '').includes('换一个开场白'));
+    const find = () => box && [...box.querySelectorAll('button')].find(x => (x.textContent || '').includes('换一个开场白'));
+    let b = find();
+    if (!b) { const more = box && box.querySelector('[data-more]'); if (more) { more.click(); b = find(); } }
     if (b) b.click();
   });
   await sleep(1200);

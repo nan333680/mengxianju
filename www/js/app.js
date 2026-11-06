@@ -538,6 +538,36 @@ function renderBody(s) {
   return html;
 }
 
+/**
+ * 把一条回复按空行切成几块（v0.5.4.6「从这段起重写」）。
+ * 实测 973 条她的消息里 690 条用空行分段，切段很稳。
+ * ⚠️ 只给【分段模式】用。日常渲染不走这条路 ——
+ *    正文是 white-space:pre-wrap 的整块文本，段落不是独立 DOM 元素；
+ *    而 pairBlockStars 会把块级星号跨段包进一个 <em>，
+ *    在日常生活中按段包 <span> 会拆出非法嵌套（</span></em>）。
+ */
+function splitParas(text) {
+  return String(text || '').split(/\n{2,}/).map(x => x.trim()).filter(Boolean);
+}
+
+/**
+ * 模型输出和保留段的接缝去重（v0.5.4.6）。
+ *
+ * 提示词里已经写了「不要重复、不要改写、不要总结」，但模型习惯写完整回复，
+ * 所以这里再兜一层：输出开头如果是保留段结尾的重复，切掉。
+ * ⚠️ 最短 12 字才认 —— 太短（比如「他」）会把正常句子的开头误切掉。
+ */
+function stripRepeatedHead(keep, out) {
+  const k = String(keep || '').trimEnd();
+  const o = String(out || '');
+  if (!k || !o) return o;
+  const max = Math.min(k.length, o.length, 400);
+  for (let n = max; n >= 12; n--) {
+    if (k.slice(k.length - n) === o.slice(0, n)) return o.slice(n).replace(/^\s+/, '');
+  }
+  return o;
+}
+
 function toast(msg, ms = 2200) {
   const t = $('toast');
   t.textContent = msg; t.classList.remove('hidden');
@@ -3155,6 +3185,11 @@ async function showMsgMenu(el) {
     // 换一个版本（v0.4.0）：不删旧的，再要一版并排存着。
     // 和「重新生成」的区别就是【旧的那版还在】—— 想对比、想切回去都行。
     if (!isMe && isLast && !locked) acts.push({ k: 'variant', t: '换一个版本' });
+    // 「从这段起重写」（v0.5.4.6）：只重写后半段，前面几段原样锁死。
+    // 只有 1 段的消息【不给】这个入口 —— 没有"部分"可保留，那种情况该用「换一个版本」。
+    if (!isMe && isLast && !locked && splitParas(m.content).length >= 2) {
+      acts.push({ k: 'fromseg', t: '从这段起重写' });
+    }
     // 回溯：丢掉这条之后的所有对话，从这里重新聊。记忆不删——她是记得的。
     if (!isMe && !isLast && !locked) acts.push({ k: 'rewind', t: '从这里重聊' });
     // 分支（v0.5.1.2）：这条还有别的走向（同一父消息下的兄弟）就给一个切换入口。
@@ -3420,6 +3455,11 @@ async function showMsgMenu(el) {
       // 换一个版本（v0.4.0）：不删旧的，再要一版并排存着
       const mm = all.find(x => x.id === id);
       if (mm) regenAsVariant(mm);
+    } else if (k === 'fromseg') {
+      // 进分段模式（v0.5.4.6）：这条消息临时按空行切成几块、每块可点。
+      // 点第 N 块 = 保留第 1..N-1 段，从第 N 段起重写。
+      const mm = all.find(x => x.id === id);
+      if (mm) enterSegPick(el, mm);
     } else if (k === 'altgreet') {
       await rotateGreeting(id);
     } else if (k === 'regen') {
@@ -3605,7 +3645,7 @@ async function setVariant(m, idx) {
  * 走的是现成的 regenerate()：它会删掉这一轮并重发。
  * 我们【在删之前把旧内容抄下来】，等新回复落库再并成版本表。
  */
-async function regenAsVariant(m) {
+async function regenAsVariant(m, keepPrefix) {
   if (busy) { toast('还在生成中，先按停止再换版本'); return; }
   if (_pickingImages) { toast('图片还在处理，稍等一下'); return; }
   // 分支（v0.5.1.2）：这四处「对最后一条/某一条动手」的操作只看活动那一条线，
@@ -3624,7 +3664,7 @@ async function regenAsVariant(m) {
   const vs = variantsOf(m);
   const idx = Math.max(0, Math.min(vs.length - 1, Number(m.vIdx) || 0));
   vs[idx] = { text: m.content, story: m.story, speakerId: m.speakerId };
-  await regenerate();
+  await regenerate(keepPrefix);
   // regenerate 末尾是 send()（没 await），这里等它跑完
   for (let i = 0; i < 480 && busy; i++) await new Promise(r => setTimeout(r, 250));
   if (busy) { toast('这次生成太久了，版本没合并进去'); return; }
@@ -3644,6 +3684,72 @@ async function regenAsVariant(m) {
   }
   await renderMessages();
   toast('换好了 —— 这条现在有 ' + merged.length + ' 个版本，在气泡下面左右切', 5600);
+}
+
+/** 正在选段的那一条（v0.5.4.6）。null = 不在分段模式。 */
+let _segPick = null;
+
+/** 退出分段模式：把原来那段 HTML 原样换回去。 */
+function exitSegPick() {
+  const s = _segPick;
+  if (!s) return;
+  _segPick = null;
+  try {
+    document.removeEventListener('click', s.outside, true);
+    document.removeEventListener('keydown', s.esc);
+  } catch { /* 监听器没挂上也照样恢复 */ }
+  if (s.tEl && s.tEl.isConnected) {
+    s.tEl.classList.remove('seg-mode');
+    s.tEl.innerHTML = s.html0;
+  }
+}
+
+/**
+ * 进入「从这段起重写」的分段模式（v0.5.4.6）。
+ *
+ * ⚠️ 只在选段时【临时】改这一条的 DOM，退出就把原来的 innerHTML 换回去 ——
+ *    日常渲染那条管线一行没动。原因：正文是 white-space:pre-wrap 的整块文本，
+ *    段落不是独立元素；而 pairBlockStars 会把块级星号【跨段】包进一个 <em>，
+ *    在渲染管线里按段包 <span> 会拆出 </span></em> 这种非法嵌套。
+ *    代价：分段模式下块级星号如果跨段，两块里各显示一半 —— 退出就恢复。
+ *
+ * @param {any} msgEl 这条消息的 .msg 元素
+ * @param {any} m     消息记录（content 是【模型原样输出】，不是渲染后的 HTML）
+ */
+function enterSegPick(msgEl, m) {
+  const tEl = msgEl && msgEl.querySelector ? msgEl.querySelector('.t') : null;
+  const paras = splitParas(m && m.content);
+  if (!tEl) return;
+  if (paras.length < 2) { toast('这一条只有一段，没有可保留的部分'); return; }
+  if (_segPick) exitSegPick();
+  const html0 = tEl.innerHTML;
+  const outside = (ev) => { if (!tEl.contains(ev.target)) exitSegPick(); };
+  const esc = (ev) => { if (ev.key === 'Escape') exitSegPick(); };
+  _segPick = { tEl, html0, outside, esc };
+  tEl.classList.add('seg-mode');
+  tEl.innerHTML = paras.map((p, i) => {
+    const can = i > 0;
+    return '<div class="seg-pick" data-i="' + i + '">'
+      + '<span class="seg-n">第 ' + (i + 1) + ' 段'
+      + (can ? ' · 点这里，这一片往后重写' : ' · 保留') + '</span>'
+      + renderBody(p) + '</div>';
+  }).join('');
+  tEl.querySelectorAll('.seg-pick').forEach((el, i) => {
+    // 第 1 块上面没有可保留的东西，点了等于整条重写 —— 那种情况用「换一个版本」
+    if (i === 0) { el.style.cursor = 'default'; return; }
+    el.onclick = (ev) => {
+      ev.stopPropagation();
+      const keep = paras.slice(0, i).join('\n\n');
+      exitSegPick();
+      toast('前 ' + i + ' 段锁住，从第 ' + (i + 1) + ' 段起重写', 3200);
+      regenAsVariant(m, keep);
+    };
+  });
+  // 冒泡到 document 之前先挂上，否则这一下点击会立刻把模式关掉
+  setTimeout(() => {
+    document.addEventListener('click', outside, true);
+    document.addEventListener('keydown', esc);
+  }, 0);
 }
 
 /**
@@ -3859,7 +3965,7 @@ function bindBranchUI() {
   if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeBranchModal(); });
 }
 
-async function regenerate() {
+async function regenerate(keepPrefix) {
   // 和 retrySend 同理：下面会先删掉那条用户消息再调 send()，
   // 而 send() 在 busy / 图片处理中会直接 return —— 消息就白删了。
   if (busy) { toast('还在生成中，先按停止再重新生成'); return; }
@@ -3928,7 +4034,7 @@ async function regenerate() {
   await renderMessages();
   // ⚠️ 把 sameSpk 带过去（v0.4.0 复查，用户拍板续写/重生成走 A）：
   //    群聊时它让"重新生成"仍然由【刚才那个人】重说 —— 不带的话指针已经推到下一个人了。
-  send({ sameSpeaker: sameSpk, regen: true });
+  send({ sameSpeaker: sameSpk, regen: true, keepPrefix: keepPrefix || '' });
 }
 
 // 每帧最多真正滚一次。流式输出时每个 chunk 都会调它，以前是一次调用排一个
@@ -6910,6 +7016,9 @@ async function send(opts) {
   // ⚠️ 必须在【删消息之前】取好再传 —— regenerate() 先删掉旧回复再调 send()，
   //    那时候再去读"上一条回复是谁"读到的是更早的那条了。
   const sameSpeaker = (opts && opts.sameSpeaker) || '';
+  // 「从这段起重写」（v0.5.4.6）：用户长按选中的那几段原文，已经由代码锁死。
+  // 模型的输出会接在它后面（拼接在落库前，不在提示词里指望模型照抄）。
+  const keepPrefix = String((opts && opts.keepPrefix) || '').trim();
   // 自动续一幕（v0.4.1.4）：这一轮是"她们自己往下演"的第几幕（0 = 不是自动的）
   const autoRun = Number((opts && opts.autoRun) || 0);
   // 他主动开口 = 重新上弦（v0.5.1.7）。autoRun 只有自动串联那一支才传，
@@ -7267,7 +7376,7 @@ let namedInText = false;
     // 常驻世界书（v1.21.51）：只有「一直生效」那一档进稳定前缀，
     // 命中式的条目仍然走下面的 worldbookHits → 本轮段。
     const wbConst = await worldbookConst(myCharId);   // 常驻条目：进稳定前缀，也要记一笔（见下面的 turnInj）
-    sysStable = buildStablePrompt(myChar, P, wbConst);
+    sysStable = buildStablePrompt(myChar, P, wbConst, keepPrefix);
     // 世界书：拿"用户这句 + 最近几条"去撞触发词。
     // 必须用 past（不含刚才那条还没写进去的），再补上本轮 text ——
     // history 里最新一条就是本轮用户消息，重复拼会命中两次（虽然去重后无影响，但没必要）。
@@ -8127,6 +8236,14 @@ let namedInText = false;
         pushDefLog(full, _df.text, _df.hits);
         full = _df.text;
       }
+    }
+
+    // 4) 从这段起重写：保留段由代码锁死，模型碰不到（v0.5.4.6）。
+    // ⚠️ 必须放在【去味之后】—— 去味洗的是模型新写的那部分，
+    //    先把保留段拼进去的话，用户认可的那几段也会被洗一遍，那就不是"一字不改"了。
+    // ⚠️ 放在【拆段之前】：拼好整条再按「分段发送」拆，形状和正常一轮一致。
+    if (keepPrefix) {
+      full = keepPrefix + '\n\n' + stripRepeatedHead(keepPrefix, full);
     }
 
     // 4) 拆成要落库的几段
@@ -20355,7 +20472,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.4.5';
+const WEB_VERSION_FALLBACK = '0.5.4.6';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

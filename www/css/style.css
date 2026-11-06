@@ -133,6 +133,18 @@ body{
 /* 自己那一侧气泡是亮紫底，.82 的白字会发灰，收一点 */
 .msg.me .bub .inner-thought{ opacity:.92; }
 
+/* 「从这段起重写」的分段模式（v0.5.4.6）。
+   只在选段时临时挂上去，退出就整段换回 renderBody 的结果 ——
+   日常渲染那条路一行没改（原因见 app.js 的 splitParas 注释）。 */
+.msg .t.seg-mode{ white-space:normal; }
+.seg-pick{ padding:9px 11px; border-radius:10px; border:1px dashed transparent;
+  cursor:pointer; white-space:pre-wrap; transition:background .12s,border-color .12s; }
+.seg-pick + .seg-pick{ margin-top:6px; }
+.seg-pick .seg-n{ display:block; font-size:11px; opacity:.45; margin-bottom:3px; }
+.seg-pick .seg-hint{ display:block; font-size:11.5px; opacity:.55; margin-top:3px; }
+.seg-pick.on,.seg-pick:active{ background:rgba(255,255,255,.10); border-color:rgba(255,255,255,.34); }
+.msg.me .seg-pick.on,.msg.me .seg-pick:active{ background:rgba(0,0,0,.10); border-color:rgba(0,0,0,.22); }
+
 /* 0.5.3.7：非对话描写 / 描写详细程度 两个档位【恢复】。
    0.5.3.4 曾用 .off-ctl 把这两组控件藏起来（当时改成三通道，档位不进提示词）；
    0.5.3.7 把档位重新接回提示词（长度管写多长、详细程度管镜头推多近），控件也放出来。

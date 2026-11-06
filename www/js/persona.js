@@ -971,7 +971,7 @@ function userAddressBlock(char, s) {
     + '（这一节只管措辞和认知，不改变任何情节。空着的事就是【你不知道】，不要替他补。）\n'
     + lines.join('\n');
 }
-export function buildStablePrompt(char, s, constWb) {
+export function buildStablePrompt(char, s, constWb, keepPrefix) {
   const parts = [];
 
   // ⚠️ v0.5.4.5：放在最开头，作为【这一轮怎么演的框架】，不是人格的一部分。
@@ -1439,6 +1439,20 @@ const descLevel = (!s.descLevel || s.descLevel === 'global') ? 'mid' : s.descLev
       '两处不一致时，按这段写，不要按设定里那套写。）\n' +
       '写动作、神态、描写时也以此为准，不要写出和这里矛盾的东西' +
       '——比如这里说你没穿外套，就不要写拉外套的领子。\n' + look);
+  }
+
+  // 「从这段起重写」（v0.5.4.6）：前半段用户已经认可、由【代码】锁死，只让模型接后面。
+  //
+  // 这三句「不要重复 / 不要改写 / 不要总结」不能省 —— 模型习惯写完整回复，
+  // 只给「接着写」它会从前半段重写一遍。代码那边还有一道 stripRepeatedHead 兜底。
+  // 放最末尾：这是本轮最特殊的信息，不该被上面的常规段落稀释。
+  const _kp = String(keepPrefix || '').trim();
+  if (_kp) {
+    parts.push('# 这一段你刚才已经写过了\n'
+      + '（下面这几段你已经写出来了，他一字没改就要往下接，\n'
+      + '不要重复它们、不要改写它们、不要总结它们 —— 直接从下一段开始写。\n'
+      + '你写的是【接在这几段后面】的部分。）\n'
+      + _kp);
   }
 
   return parts.join('\n\n');

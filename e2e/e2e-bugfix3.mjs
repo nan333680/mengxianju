@@ -225,7 +225,8 @@ t('孤儿组状态会被清', /_memOpen\.delete\('__orphan__'\)/.test(src));
 
 console.log('');
 console.log('=== 6. 其余修复 ===');
-t('regenerate 有 busy 保护', /async function regenerate\(\) \{[\s\S]{0,400}if \(busy\)/.test(src));
+// ⚠️ v0.5.4.6：regenerate 多了一个 keepPrefix 形参，正则不能写死 () —— 改成接受任意参数表
+t('regenerate 有 busy 保护', /async function regenerate\([^)]*\) \{[\s\S]{0,400}if \(busy\)/.test(src));
 t('retrySend 也挡图片处理中', /if \(_pickingImages\) \{ toast\('图片还在处理，稍等一下再重试'\); return; \}/.test(src));
 // v1.21.54 改：原来断言的是"usage = null; 紧挨着 if (bubble)"——中间插任何一行都会假红
 // （这次插的是 thinkBuf = ''）。改成断言【行为】：重试分支里 usage 与思考缓冲都要清掉。

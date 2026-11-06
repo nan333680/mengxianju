@@ -202,6 +202,9 @@ await page.evaluate(() => {
 });
 await page.waitForFunction(() => !!document.querySelector('.msg-menu'), { timeout: 8000 }).catch(() => {});
 await sleep(300);
+// ⚠️ v0.5.4.7：「这一轮用了什么」在「更多…」里（原地替换，同一个 .msg-menu）
+await page.evaluate(() => { const m = document.querySelector('.msg-menu [data-more]'); if (m) m.click(); });
+await sleep(300);
 const hasInj = await page.evaluate(() => [...document.querySelectorAll('.msg-menu button')].some(b => b.textContent.indexOf('这一轮用了什么') >= 0));
 t('长按菜单里有「这一轮用了什么」', hasInj, '');
 await page.evaluate(() => { const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.indexOf('这一轮用了什么') >= 0); if (b) b.click(); });

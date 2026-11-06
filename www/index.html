@@ -119,6 +119,7 @@
   <header class="topbar">
     <button class="icon-btn" id="btn-chars-back">←</button>
     <div class="title"><span data-i18n-en="Characters">角色</span></div>
+    <button class="icon-btn" id="btn-search-open" data-i18n-en="Search" title="搜聊天记录">🔍</button>
     <button class="icon-btn" id="btn-new-char" data-i18n-en="+">＋</button>
   </header>
   <main class="scroll">
@@ -1516,6 +1517,20 @@
 <!-- ============ 导入：先看内容，再选模式 ============ -->
 <!-- 刻意不复用 #modal：那个只有「确定/取消」两个按钮，这里要 5 选 1 + 一段文件预览。
      也刻意排在 #modal 之后 —— .view 之外的弹窗同样靠 DOM 顺序决定层级（血泪 8）。 -->
+<!-- ============ 搜聊天记录（v0.5.4.7）============
+     只搜消息正文。记忆只有几十条、设置页本来就能看，纳进来是自找麻烦。
+     数据直接读全表过滤，不建索引、不上向量 —— 实测全库几千条在几十毫秒级。 -->
+<div id="search-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box search-box">
+    <h4 data-i18n-en="Search chat history">搜聊天记录</h4>
+    <input id="search-input" type="search" placeholder="输入至少 2 个字，包含匹配" autocomplete="off">
+    <div id="search-results" class="search-results"></div>
+    <div class="modal-btns">
+      <button class="ghost-btn" id="search-close" data-i18n-en="Close">关闭</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ 剧情卡（v0.5.0）============ -->
 <!-- 一张卡 = 这段关系要往哪走。为什么是弹窗不是设置页里的一项：
      它跟着【这个角色/这个群】走，是聊天时随时要看要改的东西，

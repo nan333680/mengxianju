@@ -3214,6 +3214,8 @@ async function showMsgMenu(el) {
     if (!isMe && isLast && !locked && splitParas(m.content).length >= 2) {
       acts.push({ k: 'fromseg', t: '从这段起重写' });
     }
+    // 搜聊天记录（v0.5.4.7）：从菜单进，省得先回列表页。进「更多…」那组。
+    acts.push({ k: 'search', t: '在这段里搜' });
     // 回溯：丢掉这条之后的所有对话，从这里重新聊。记忆不删——她是记得的。
     if (!isMe && !isLast && !locked) acts.push({ k: 'rewind', t: '从这里重聊' });
     // 分支（v0.5.1.2）：这条还有别的走向（同一父消息下的兄弟）就给一个切换入口。
@@ -3285,6 +3287,7 @@ async function showMsgMenu(el) {
     const k = tgt.dataset.k;
     closeMsgMenu();   // ⚠️ 先关；点到按钮之间的空隙（k 为空）也必须关掉
     if (!k) return;
+    if (k === 'search') { openSearch(''); return; }
     if (k === 'scene') { toast('这一轮的场景：' + m.scene); return; }
     if (k === 'inj') { await showInj(m.inj); return; }
     if (k === 'branch') { await switchBranch(m); return; }
@@ -13469,6 +13472,122 @@ function openEditFor(id) {
   openCharEdit(id);
 }
 
+// ================= 搜聊天记录（v0.5.4.7）=================
+//
+// 只搜【消息正文】。记忆只有几十条、设置页本来就能看，纳进来是自找麻烦。
+// 数据直接读全表过滤，不建索引表、不上向量 —— 全库几千条扫一遍是几十毫秒级。
+// ⚠️ 不要动 renderMessages 的分页窗口（MSG_PAGE）：搜索是查库，不是查 DOM。
+let _searchTimer = 0;
+const SEARCH_MIN = 2;   // 少于两个字不搜（否则每按一个键就是一次全表扫）
+
+/** 打开搜索弹窗。预填内容只有从长按菜单进来时才带 */
+function openSearch(prefill) {
+  const m = $('search-modal');
+  if (!m) return;
+  m.classList.remove('hidden');
+  const inp = $('search-input');
+  if (inp) {
+    inp.value = prefill || '';
+    setTimeout(() => inp.focus(), 50);
+  }
+  if (prefill) runChatSearch(prefill);
+  else {
+    const box = $('search-results');
+    if (box) box.innerHTML = '<div class="sys-line">输入至少 ' + SEARCH_MIN + ' 个字</div>';
+  }
+}
+
+function closeSearch() {
+  const m = $('search-modal');
+  if (m) m.classList.add('hidden');
+}
+
+/** 命中行：前后各留 20 字，换行压成空格（一条结果最多两行，多了读不完） */
+function searchSnippet(text, q) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  const i = flat.indexOf(q);
+  if (i < 0) return '';
+  const a = Math.max(0, i - 20), b = Math.min(flat.length, i + q.length + 20);
+  return (a > 0 ? '…' : '') + flat.slice(a, b) + (b < flat.length ? '…' : '');
+}
+
+function searchHl(text, q) {
+  const s = esc(text);
+  const e = esc(q);
+  if (!e) return s;
+  return s.split(e).join('<mark>' + e + '</mark>');
+}
+
+async function runChatSearch(q) {
+  const box = $('search-results');
+  if (!box) return;
+  q = String(q || '').trim();
+  if (q.length < SEARCH_MIN) {
+    box.innerHTML = '<div class="sys-line">输入至少 ' + SEARCH_MIN + ' 个字</div>';
+    return;
+  }
+  const hits = [];
+  for (const c of allChars) {
+    let list = [];
+    try { list = await msgs.list(c.id, 0, true); } catch { continue; }   // true = 含归档
+    for (const m of list) {
+      if (!m || m.deletedAt) continue;                                   // 删掉的不搜
+      const t = String(m.content || '');
+      const i = t.indexOf(q);
+      if (i < 0) continue;
+      hits.push({ c, m, i });
+    }
+  }
+  if (!hits.length) {
+    box.innerHTML = '<div class="sys-line">没搜到「' + esc(q) + '」</div>';
+    return;
+  }
+  // 角色内按时间倒序；角色之间按"这个角色有几条"排（命中多的排前面，更好找）
+  const byCid = new Map();
+  for (const h of hits) {
+    if (!byCid.has(h.c.id)) byCid.set(h.c.id, { c: h.c, rows: [] });
+    byCid.get(h.c.id).rows.push(h);
+  }
+  const groups = [...byCid.values()].sort((a, b) => b.rows.length - a.rows.length);
+  for (const g of groups) g.rows.sort((a, b) => (Number(b.m.ts) || 0) - (Number(a.m.ts) || 0));
+  box.innerHTML = groups.map(g => '<div class="sr-group">' + esc(g.c.name || '未命名')
+      + ' · ' + g.rows.length + ' 条</div>'
+      + g.rows.slice(0, 30).map(h => '<div class="sr-item" data-cid="' + esc(h.c.id)
+          + '" data-mid="' + esc(h.m.id) + '">'
+          + '<span class="sr-meta">'
+          + (h.m.archived ? '<span class="sr-tag">归档</span>' : '')
+          + esc(fmtStory(h.m.story) || '')
+          + '</span>'
+          + searchHl(searchSnippet(h.m.content, q), q)
+          + '</div>').join('')).join('');
+  box.querySelectorAll('.sr-item').forEach(el => {
+    el.onclick = () => jumpToChatMsg(el.dataset.cid, el.dataset.mid);
+  });
+}
+
+/** 跳到某条消息：切角色 → 归档里的话先展开 → 滚过去 */
+async function jumpToChatMsg(charId, msgId) {
+  closeSearch();
+  if (!charId || !msgId) return;
+  if (curCharId !== charId) await selectChar(charId);
+  resetTo('chat');
+  await new Promise(r => setTimeout(r, 150));
+  let el = document.querySelector('#messages .msg[data-id="' + msgId + '"]');
+  if (!el) {
+    // 可能在归档区：展开一次再找（复用 #arch-toggle 自己的展开逻辑，别硬写 scrollTop）
+    const tg = $('arch-toggle');
+    if (tg && !_archOpen) {
+      tg.click();
+      await new Promise(r => setTimeout(r, 200));
+      el = document.querySelector('#messages .msg[data-id="' + msgId + '"]');
+    }
+  }
+  if (!el) { toast('没找到那条 —— 它可能已经不在当前对话线上'); return; }
+  el.scrollIntoView({ block: 'center' });
+  el.classList.add('msg-flash');
+  setTimeout(() => el.classList.remove('msg-flash'), 1200);
+}
+
 function renderCharList() {
   const box = $('char-list');
   box.innerHTML = allChars.map(c => {
@@ -19645,7 +19764,15 @@ function bindEvents() {
   $('chat-avatar').onclick = openCurCharEdit;
   $('chat-titletxt').onclick = openCurCharEdit;
   $('btn-chars-back').onclick = goBack;
-  $('btn-new-char').onclick = () => openPresetPicker();
+  // 搜聊天记录（v0.5.4.7）：输入即搜，300ms 防抖 —— 每个键都全表扫一次会卡输入框
+$('btn-search-open').onclick = () => openSearch('');
+$('search-close').onclick = closeSearch;
+$('search-input').oninput = (e) => {
+  const q = e.target.value;
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => { runChatSearch(q); }, 300);
+};
+$('btn-new-char').onclick = () => openPresetPicker();
   $('btn-new-char2').onclick = () => openPresetPicker();
   // 新建群聊（v0.4.0）：群就是"成员是一组人的角色"，所以入口和建角色并排
   const ngBtn = $('btn-new-group');

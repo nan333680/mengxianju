@@ -192,7 +192,7 @@ await page.evaluate(() => { window.__streamSys.length = 0; });
 await sendOnce('今天呢');
 {
   const sys = await page.evaluate(() => window.__streamSys.join('\n---\n'));
-  t('提示词里有「第 2 天记下：他第 3 天休息一天」', sys.includes('第 2 天记下：他第 3 天休息一天'), 'len=' + sys.length + ' 含注入标题=' + sys.includes('你记得关于他的事') + ' 尾部=' + sys.slice(-300));
+  t('提示词里有「第 2 天记下：他第 3 天休息一天」', sys.includes('第 2 天记下：他第 3 天休息一天'), 'len=' + sys.length + ' 含注入标题=' + sys.includes('你记得关于对方的事') + ' 尾部=' + sys.slice(-300));
   t('提示词里有「今天是第 3 天」', sys.includes('今天是第 3 天'), 'len=' + sys.length);
 }
 

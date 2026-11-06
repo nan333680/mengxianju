@@ -1097,13 +1097,12 @@
           <label class="field row" data-i18n-nodes><span data-i18n-en="Show token usage">显示 token 使用量</span>
             <input id="s-showusage" type="checkbox">
           </label>
-          <p class="hint-text" data-i18n-en="Off by default: the ↑in ↓out badge is tuning information and clutters every bubble. Long-press any message and pick This message's usage to see its numbers."><b>默认关闭</b>：那行 ↑输入 ↓输出 是调参用的，挂在每条气泡上是干扰。想看某一条，长按它选「这条的用量」。聊天记录照常保存。</p>
+          <p class="hint-text" data-i18n-en-html="<b>Off by default</b>: the ↑in ↓out badge is tuning information and clutters every bubble. Long-press any message and pick This message's usage to see its numbers."><b>默认关闭</b>：那行 ↑输入 ↓输出 是调参用的，挂在每条气泡上是干扰。想看某一条，长按它选「这条的用量」。聊天记录照常保存。</p>
           <!-- 朗读（v1.21.56）：用 Web Speech API，音色由系统 TTS 引擎决定 -->
           <label class="field row" data-i18n-nodes><span data-i18n-en="Read her replies aloud">朗读她的回复</span>
             <input id="s-tts" type="checkbox">
           </label>
-          <p class="hint-text" data-i18n-en-html="She reads it out as soon as it arrives. Long-press any reply for Read this one.<br>It uses the phone's built-in speech engine (the voice depends on the system); this item is hidden if no Chinese voice pack is installed.">她说完自动念出来。长按任意一条回复也有「朗读这条」。
-            用的是手机自带的语音引擎（音色取决于系统），没装中文语音包时这一项不显示。</p>
+          <p class="hint-text" data-i18n-en-html="Only her <b>spoken lines</b> are read. Actions in brackets and thoughts in asterisks are skipped, so a reply made entirely of those has nothing to play.<br>It uses the phone's built-in speech engine (the voice depends on the system).">只念她<b>说出口的台词</b>。括号里的动作、星号里的心里话都不念 —— 所以整条都是动作的时候，不会有声音。用的是手机自带的语音引擎（音色取决于系统）。</p>
         </div>
       </div>
     </section>

@@ -33,8 +33,10 @@ t('含「临场设定」段', n2.includes('# 临场设定'));
 t('含内容', n2.includes('这一轮她说话很轻'));
 t('没有「相关设定」段', !n2.includes('# 相关设定'));
 t('排在时间之后', n2.indexOf('# 临场设定') > n2.indexOf('# 现在的时间'));
-t('排在记忆之后（比背景更靠后）', n2.indexOf('# 临场设定') > n2.indexOf('# 你记得关于他的事'),
-  n2.indexOf('# 临场设定') + ' vs ' + n2.indexOf('# 你记得关于他的事'));
+// ⚠️ 先确认记忆段真的在 —— 否则下面那条右边是 -1，比较恒真、永远绿（v0.5.4.8 补）。
+t('记忆段存在（否则下一条比的是 -1）', n2.indexOf('# 你记得关于对方的事') >= 0);
+t('排在记忆之后（比背景更靠后）', n2.indexOf('# 临场设定') > n2.indexOf('# 你记得关于对方的事'),
+  n2.indexOf('# 临场设定') + ' vs ' + n2.indexOf('# 你记得关于对方的事'));
 
 console.log('=== 3. 两档同时出现：各就各位 ===');
 const n3 = buildTurnNote(char, s, { memories: [mem(1)], useKaomoji: false, worldbook: front.concat(tail), clock });

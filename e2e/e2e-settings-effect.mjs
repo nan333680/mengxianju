@@ -118,7 +118,7 @@ console.log('=== 1. 基线：该有的段在，不该有的段不在 ===');
   t('没设临时场景 → 没有「# 当前场景」', !sys.includes('# 当前场景'));
   t('没设外貌 → 没有「# 你此刻的样子」', !sys.includes('# 你此刻的样子'));
   t('没写「他是谁」→ 没有「# 关于对方」', !sys.includes('# 关于对方'));
-  t('longMemory 开着且有记忆 → 有「# 你记得关于他的事」', sys.includes('# 你记得关于他的事'));
+  t('longMemory 开着且有记忆 → 有「# 你记得关于对方的事」', sys.includes('# 你记得关于对方的事'));
   t('记忆内容进去了', sys.includes('他喜欢喝咖啡'));
 }
 
@@ -180,7 +180,7 @@ console.log('=== 6. 「他是谁 / 他住哪」===');
   const sys = await send('在吗');
   t('有「# 关于对方」', sys.includes('# 关于对方'));
   t('他的设定进去了', sys.includes('他是个上班族'));
-  t('有「# 他住的地方」', sys.includes('# 他住的地方'));
+  t('有「# 对方住的地方」', sys.includes('# 对方住的地方'));
   t('居处进去了', sys.includes('租了个小房子'));
   await putChar({ myProfile: '', myEnv: '' });
 }
@@ -229,7 +229,7 @@ console.log('=== 9. 记忆开关 ===');
 {
   await putChar({ longMemory: false }); await enterChat();
   const sys = await send('在吗');
-  t('关掉长期记忆 → 记忆段整段不注入', !sys.includes('# 你记得关于他的事'));
+  t('关掉长期记忆 → 记忆段整段不注入', !sys.includes('# 你记得关于对方的事'));
   t('记忆正文也不在', !sys.includes('他喜欢喝咖啡'));
   await putChar({ longMemory: true });
 }

@@ -200,7 +200,7 @@ const DEFAULTS = {
   // 'lead'（主角）| 'side'（在场配角）| 'off'（不在场）
   userIdentity: 'lead',
   userAddressDefault: '',
-  // 「我的居住环境」：全局一份。他住的地方长什么样。
+  // 「我的居住环境」：全局一份。对方住的地方长什么样。
   // 加它的原因：模型没有环境设定时会自由发挥——凭空编窗外、编房间、编天气，
   // 跟用户实际的情况打架（长期记忆也拦不住，记忆记的是"事件"不是"环境"）。
   myEnv: '',
@@ -2979,6 +2979,14 @@ function ttsAvailable() {
  * ⚠️ 括号里的动作描写【不念】：那是给她演的画面，念出来是"（轻轻笑了一下）"，
  *    比不念还出戏。同理去掉 markdown 记号与多余的空白。
  */
+// ⚠️ 这个文件里有两段源码会被 e2e/e2e-star.mjs 抠出去塞进 new Function 单独跑，
+//    那个环境里没有 window / S / esc：
+//      · 第一段从 INNER_RE 那个声明切到 toast 那个函数声明 —— 所以 INNER_RE 必须
+//        排在 toast 之前，headStarAt 也必须落在这段里
+//      · 第二段从这个函数切到下面「读一段字」那个注释之前 —— 这个函数体里不许再定义
+//        新函数或新常量（注释随便写，切走不影响）
+//    ⚠️ 这段注释本身也别写那几个完整的锚点字符串：注释在上面的函数【之前】，
+//       它出现一次就会把 indexOf 的起点挪过来，切出来是空的。
 function ttsClean(text) {
   let t = String(text || '')
     .replace(/[（(][^）)]{0,300}[）)]/g, '')
@@ -3003,6 +3011,10 @@ function ttsClean(text) {
   }).join('\n');
   return t
     .replace(/[*_~`#>|]/g, '')
+    // 群聊「小说式一幕」认不出名字时整行原样留下（app.js:12073），
+    // 朗读要把标记剥掉只念内容 —— 否则会听见「阿芙，今天怎么样」。
+    // 只剥行首：那是 12073 唯一会留下标记的位置，正文里偶然的【】不动。
+    .replace(/(^|\n)[ \t]*【[^】\n]{1,24}】[ \t]*/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -8430,7 +8442,10 @@ let namedInText = false;
     if (LIVE) maybeReflect(myCharId).catch(() => { /* 反思失败不影响任何东西 */ });
     // 她说完自动读出来（v1.21.56，开关默认关）。
     // ⚠️ 放在【整段都落库之后】：分段发送时逐段念会一顿一顿的，连起来念才像说话。
-    if (S.ttsOn) speak(pieces.map(x => x.text).join(''));
+    // v0.5.4.8：join('') → join('\n')。仍然是一次 speak、一个 voice、不间断；
+    //   换行只是让 ttsClean 能按行剥掉群聊的【名字】标记（见 12073），
+    //   它末尾的 \s+ → ' ' 会把换行压回空格，听感不变。
+    if (S.ttsOn) speak(pieces.map(x => x.text).join('\n'));
     // 占位气泡：v2 不在这里删 —— 里头还留着候选 0 流式长出来的正文，
     // 交给 paintFlow 原地换成正式那条（换了候选也不重打一遍，见 paintFlow 的 phEl 参数）。
     const _phEl = document.getElementById(placeholderId);
@@ -14361,7 +14376,7 @@ async function scChatSnapshot(charId, range) {
  * v0.5.2.5 两处改动（评审 P0-1 / P0-2）：
  *   ① 不再「先拼再 slice(0, 2400)」：真实长卡上「她是谁」+「世界」就已经 3500 字，
  *      最后那块记忆永远被切掉，切点还落在半句中间。现在交给 scenectx.js 做块级装配。
- *   ② 补齐聊天侧有、小说侧一项都没读的资料：对话范例 / 关于对方 / 他住的地方 /
+ *   ② 补齐聊天侧有、小说侧一项都没读的资料：对话范例 / 关于对方 / 对方住的地方 /
  *      你怎么称呼他 ── 评审那句「小说里的『你』是空白、她的『声音』缺失」。
  *      复用 userSideLines() 而不是另拼一份，理由见 persona.js 里那两个函数的注释。
  *
@@ -14424,7 +14439,7 @@ async function buildSceneContext(charId, sceneId, scene) {
     if (ul && ul.length) parts.user = ul.join('\n');
   } catch { /* 拿不到就不带 */ }
 
-  // —— 关于对方 / 他住的地方 ——
+  // —— 关于对方 / 对方住的地方 ——
   // 回落规则与 persona.js 的 buildStablePrompt 一致：角色级优先，没设过才用全局那份。
   const profile = String((ch.myProfile !== undefined && ch.myProfile !== null)
     ? ch.myProfile : (S.myProfile || '')).trim();
@@ -14802,7 +14817,7 @@ function sceneLogHtml(sc) {
   if (!evs.length && !ns.length && !change && !dropped.length) return '';
   const CN = {
     self: '她是谁', canon: '后来补的设定', voice: '她说话的样子', user: '你怎么称呼他',
-    profile: '关于对方', env: '他住的地方', world: '这个世界的底色', mem: '你们之间已经这样了'
+    profile: '关于对方', env: '对方住的地方', world: '这个世界的底色', mem: '你们之间已经这样了'
   };
   let h = '<div class="rv-log">';
   h += '<div class="rv-log-h">这一场的场记</div>';
@@ -20651,7 +20666,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.4.7';
+const WEB_VERSION_FALLBACK = '0.5.4.8';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

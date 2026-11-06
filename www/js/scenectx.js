@@ -8,7 +8,7 @@
 //   总长超了就整条丢块，绝不从中间截断一句话。
 //
 // 顺序就是重要性顺序（评审 0.5.2.5 的 P0-2）：
-//   她是谁 → 她说话的样子 → 你怎么称呼他/怎么看他 → 关于对方 → 他住的地方
+//   她是谁 → 她说话的样子 → 你怎么称呼他/怎么看他 → 关于对方 → 对方住的地方
 //   → 这个世界的底色 → 你们之间已经这样了
 //
 // 丢弃顺序是世界书在前、记忆在后：世界书模型自己能编一半，
@@ -45,7 +45,7 @@ export const SCENE_CTX_BLOCKS = [
   { key: 'voice', title: '她说话的样子', max: 700, essential: true },
   { key: 'user', title: '你怎么称呼他、怎么看他', max: 450, essential: true },
   { key: 'profile', title: '关于对方', max: 300, essential: true },
-  { key: 'env', title: '他住的地方', max: 200, essential: true },
+  { key: 'env', title: '对方住的地方', max: 200, essential: true },
   // 下面两块可以整条丢（见上面 world / mem 那句）。
   { key: 'world', title: '这个世界的底色', max: 900, essential: false },
   { key: 'mem', title: '你们之间已经这样了', max: 550, essential: false }

@@ -84,6 +84,20 @@ t('块级外的正文照念', s2.includes('主人方才说要罚'), JSON.stringi
 const s3 = await run('ttsClean', '你好。*正常心声*再见。');
 t('正常成对心声也不念', !s3.includes('正常心声') && s3.includes('你好'), JSON.stringify(s3));
 
+console.log('=== 五、群聊名字标记：念之前要剥掉，但不许碰正文 ===');
+// 12073 那一支：认不出名字时整行原样留下，标记在行首
+const g1 = await run('ttsClean', '【阿芙】今天怎么样');
+t('名字标记不念', !g1.includes('阿芙'), JSON.stringify(g1));
+t('标记后面的内容照念', g1.includes('今天怎么样'), JSON.stringify(g1));
+
+// 两个 piece 用 \n 拼进来（8433 的 join），第二个标记也要剥
+const g2 = await run('ttsClean', '你好。\n【阿芙】今天怎么样');
+t('第二段的名字标记也剥', !g2.includes('阿芙'), JSON.stringify(g2));
+
+// 只剥行首：正文中间偶然出现的【】必须留着（这是不选全局剥的理由）
+const g3 = await run('ttsClean', '她说【笑】然后就走了。');
+t('正文中间的【】保留', g3.includes('【笑】'), JSON.stringify(g3));
+
 t('无未捕获报错', errs.length === 0, errs.slice(0,2).join(' | '));
 console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
 await browser.close(); server.close();

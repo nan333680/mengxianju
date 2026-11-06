@@ -88,12 +88,12 @@ console.log('  含仲裁语: ' + sysAll.includes('以世界书那条为准'));
 t('住所设定注入', sysAll.includes('独栋小楼'));
 t('世界书条目注入（关键词命中）', sysAll.includes('老式公寓'));
 t('仲裁语已写入', sysAll.includes('以世界书那条为准'));
-t('仲裁语点明"世界书优先"', sysAll.includes('那条是他为这个地方单独写的'));
-t('旧的硬措辞保留（领域声明还在）', sysAll.includes('写到他家、房间、窗外、周边环境时以此为准'));
+t('仲裁语点明"世界书优先"', sysAll.includes('那条是对方为这个地方单独写的'));
+t('旧的硬措辞保留（领域声明还在）', sysAll.includes('写到对方的家、房间、窗外、周边环境时以此为准'));
 
 console.log('');
 console.log('=== 位置关系 ===');
-const iEnv = sysAll.indexOf('# 他住的地方');
+const iEnv = sysAll.indexOf('# 对方住的地方');
 const iWb  = sysAll.indexOf('# 相关设定');
 console.log('  住所段下标=' + iEnv + '  世界书段下标=' + iWb);
 t('两段都在', iEnv >= 0 && iWb >= 0);

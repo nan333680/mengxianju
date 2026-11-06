@@ -105,7 +105,10 @@ await page.goto('http://127.0.0.1:' + port + '/', { waitUntil: 'networkidle0', t
 await sleep(1200);
 await page.evaluate(() => indexedDB.deleteDatabase('ai-companion'));
 await page.reload({ waitUntil: 'networkidle0' }); await sleep(600);
-await seedChars(page, [{ name: '甲', id: 'ga' }, { name: '乙', id: 'gb' }, { name: '单聊她', id: 'gsolo' }]);
+// ⚠️ gsolo 要显式开 longMemory（v0.5.4.8）：seedChars 建的角色默认 false（e2e-helper.mjs:31），
+//    不开的话角色级会盖掉全局那个 true，记忆段永远不注入。
+await seedChars(page, [{ name: '甲', id: 'ga' }, { name: '乙', id: 'gb' },
+  { name: '单聊她', id: 'gsolo', extra: { longMemory: true } }]);
 await page.evaluate(async () => {
   const o = indexedDB.open('ai-companion');
   const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
@@ -122,6 +125,9 @@ await page.evaluate(async () => {
   //    它【故意留最近 20 条不总结】（还在用的上下文不必急着提炼）。
   //    所以特征句必须落在最老那一批里，总数也得超过 20，否则 chunk 是空的、
   //    连一次 API 都不会发（第一版就是只种了 4 条，四条断言全空）。
+  // ⚠️ 单聊角色也给一条记忆（v0.5.4.8 补）：没有它，下面第 4 节「单聊走老标题」
+  //    那条断言的前半永远 false、只靠后半兜着 —— 等于从来没测到标题。
+  await put('memories', { id: 'gsolo1', charId: 'gsolo', text: '她养了一只黑猫。', kind: 'fact', ts: Date.now() });
   const base = Date.now() - 3600000;
   await put('messages', { id: 'm1', charId: 'ggrp1', role: 'user', content: '你们在聊什么', ts: base });
   await put('messages', { id: 'm2', charId: 'ggrp1', role: 'assistant', speakerId: 'ga',
@@ -195,7 +201,9 @@ await sleep(1200);
 chatReq = null;
 await send('在吗');
 sys = sysOf();
-t('单聊还是老标题「你记得关于他的事」或压根没有记忆段', sys.indexOf('你记得关于他的事') >= 0 || sys.indexOf('你自己看在眼里的事') < 0, sys.slice(0, 80));
+// v0.5.4.8：gsolo 现在有种记忆了，所以这条改成【只认前半】——
+// 原来写成 || ，记忆段不在时后半恒真，等于从来没测到标题。
+t('单聊走老标题「你记得关于对方的事」', sys.indexOf('你记得关于对方的事') >= 0, sys.slice(0, 120));
 t('单聊不出现群那两段小标题', sys.indexOf('这个群里大家都知道的事') < 0, '');
 
 console.log('=== 5. 群设置页的「群记忆」入口 + 按「谁记得的」分组 ===');

@@ -399,8 +399,8 @@ export function memoryTimeRule(day) {
   return '【时间锚 · 必须遵守】现在是剧情第 ' + d + ' 天。记忆正文里不要出现「今天/明天/后天/昨天/前天」这类相对日期——'
     + '过几天再看就不知道是哪天了。一律换算成绝对天数：今天=第 ' + d + ' 天，明天=第 ' + (d + 1) + ' 天，'
     + '后天=第 ' + (d + 2) + ' 天，昨天=' + yesterday + '。'
-    + '例如「他明天休息」要写成「他第 ' + (d + 1) + ' 天休息」。'
-    + '如果他原话是「第二天」「过两天」，也按他说话的那天往后数，写成具体第几天。\n\n';
+    + '例如「你明天休息」要写成「你第 ' + (d + 1) + ' 天休息」。'
+    + '如果对方原话是「第二天」「过两天」，也按对方说话的那天往后数，写成具体第几天。\n\n';
 }
 
 /**
@@ -418,8 +418,8 @@ export function memoryLine(m) {
   else if (rec.legacy === true && hasRelativeDay(text)) {
     out = text + '（旧记忆·日期不明，里面的今天/明天/昨天不要按现在推算）';
   }
-  if (rec.kind === 'belief') out = '（她以为，不一定真）' + out;
-  if (rec.kind === 'goal') out = '（她想做的，还没做到）' + out;
+  if (rec.kind === 'belief') out = '（你以为，不一定真）' + out;
+  if (rec.kind === 'goal') out = '（你想做的，还没做到）' + out;
   if (rec.kind === 'event' && memoryDay(rec.untilDay)) {
     const hh = (typeof rec.untilHour === 'number')
       ? ' ' + String(rec.untilHour).padStart(2, '0') + ':' + String(rec.untilMinute || 0).padStart(2, '0')

@@ -48,13 +48,13 @@ export function critiqueAsk(o = {}) {
   const pool = Array.isArray(o.pool) ? o.pool : [];
   const n = pool.length || 1;
   const inner = String(o.inner == null ? '' : o.inner).trim() || '（没写）';
-  const userText = String(o.userText == null ? '' : o.userText).trim() || '（他没说具体的）';
+  const userText = String(o.userText == null ? '' : o.userText).trim() || '（对方没说具体的）';
   const moveName = String(o.moveName == null ? '' : o.moveName).trim() || '（没定）';
 
   const head = [
-    '（她这一轮没说出口的是：' + inner + '）',
-    '（他这一轮说的是：' + userText + '）',
-    '（这一轮她打算的是：' + moveName + '）',
+    '（你这一轮没说出口的是：' + inner + '）',
+    '（对方这一轮说的是：' + userText + '）',
+    '（这一轮你打算的是：' + moveName + '）',
     '',
     '下面是同一个人对同一句话写的 ' + n + ' 条回复。挑出【最像这个人、最不像 AI】的那一条。',
     '',
@@ -72,12 +72,12 @@ export function critiqueAsk(o = {}) {
     '- 每句都语法完整、句句都在收尾',
     '- 金句收尾、排比、突然升华',
     '',
-    '像她的，加分：',
+    '像你本人的，加分：',
     '- 里面有具体的动作或具体的物件',
     '- 有停顿、有留白、有说了半句不说了',
     '- 句子长短不齐、有的话不完整',
-    '- 答非所问但符合她这个人',
-    '- 说出口的只是她心里的一部分，不是全部'
+    '- 答非所问但符合你这个人',
+    '- 说出口的只是你心里的一部分，不是全部'
   ].join('\n');
 
   const cand = [];

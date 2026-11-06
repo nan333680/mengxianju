@@ -2057,11 +2057,11 @@ function hardSuffix() {
 /** 主动开口那一条的指令（§4.8 逐字）。innerText 来自独白，activity 来自 deriveLife。 */
 function proactiveAsk(innerText, activity, hours) {
   return [
-    '（你脑子里刚转过这几句：' + (innerText || '（也没什么，就是想找他说句话）') + '）',
+    '（你脑子里刚转过这几句：' + (innerText || '（也没什么，就是想找对方说句话）') + '）',
     '（你现在：' + (activity || '在忙自己的事') + '）',
     '',
-    '他已经 ' + hours + ' 小时没跟你说话了。你先开口。',
-    '只写一句话，最多 20 个字：可以是问他在干嘛、可以是说你自己这会儿的事、可以是一句没头没尾的话。',
+    '对方已经 ' + hours + ' 小时没跟你说话了。你先开口。',
+    '只写一句话，最多 20 个字：可以是问对方在干嘛、可以是说你自己这会儿的事、可以是一句没头没尾的话。',
     '不要寒暄，不要「在吗」，不要问「你怎么不理我」，不要解释你为什么找他。'
   ].join('\n') + hardSuffix();
 }
@@ -2105,7 +2105,7 @@ async function maybeProactiveOpen(charId) {
     const recent = path.slice(-12).map(m => ({ role: m.role, content: String(m.content || '') }));
     // 先让她在心里过一遍（独白），再用那几句去写这一条 —— 直接写会写成一句礼貌的招呼
     const inner = await runInner({
-      stable, recent, userText: '（他已经 ' + hours + ' 小时没找你说话了）', api: apiCfg, signal: null
+      stable, recent, userText: '（对方已经 ' + hours + ' 小时没找你说话了）', api: apiCfg, signal: null
     }).catch(() => '');
     let got = '';
     try {
@@ -2804,7 +2804,7 @@ async function renderMessages(preloaded) {
 // 对策：单例 + 请求序号，让并发调用只保留最后一次；任何关闭动作都把残留清干净。
 let _pressTimer = null;
 let _msgMenu = null;    // 当前唯一菜单
-let _subMenu = null;    // 「更多…」弹出来的二级菜单（v0.5.4.7）
+
 let _menuSeq = 0;       // 关闭或新开时 +1，用来作废还在 await 中的旧请求
 
 /**
@@ -2825,8 +2825,7 @@ function closeMsgMenu(animate = true) {
     kill(_msgMenu);
     _msgMenu = null;
   }
-  _subMenu = null;
-  // 兜底：任何原因留下的残留菜单一并清掉（二级也是 .msg-menu，一起走）
+  // 兜底：任何原因留下的残留菜单一并清掉
   document.querySelectorAll('.msg-menu').forEach(kill);
 }
 
@@ -2945,28 +2944,6 @@ function placeMenu(menu, el) {
   menu.style.left = Math.round(left) + 'px';
   menu.style.top = Math.round(top) + 'px';
   menu.style.transformOrigin = below ? '50% 0%' : '50% 100%';
-}
-
-/**
- * 二级菜单的定位（v0.5.4.7）：贴着一级【横着】弹，右边放不下就翻到左边。
- * 竖向的可用高度沿用 placeMenu 那套 inset（状态栏/手势条），别另写一套。
- */
-function placeSubMenu(sub, base) {
-  const r = base.getBoundingClientRect();
-  const mw = sub.offsetWidth, mh = sub.offsetHeight;
-  const cs = getComputedStyle(document.documentElement);
-  const sat = parseFloat(cs.getPropertyValue('--sat')) || 0;
-  const sab = parseFloat(cs.getPropertyValue('--sab')) || 0;
-  const padX = 8, padT = 8 + sat, padB = 8 + sab;
-  const vw = window.innerWidth, vh = window.innerHeight;
-  let left = r.right + 6;
-  if (left + mw > vw - padX) left = r.left - mw - 6;
-  if (left < padX) left = Math.max(padX, vw - mw - padX);
-  let top = r.top;
-  if (top + mh > vh - padB) top = vh - mh - padB;
-  top = Math.max(padT, top);
-  sub.style.left = Math.round(left) + 'px';
-  sub.style.top = Math.round(top) + 'px';
 }
 
 // ================= 朗读（v1.21.56）=================
@@ -3238,7 +3215,10 @@ async function showMsgMenu(el) {
   //    而 .msg-menu 没有 max-height 也没有滚动 —— 小屏上会顶出屏幕。
   //    ⚠️ 以后新增入口一律进「更多…」。一级这四个位置留给
   //      "每次长按都要用"的，别再往里塞。
-  const PRIMARY_K = ['copy', 'regen', 'variant', 'fromseg'];
+  // ⚠️ 一级五项到顶（四项常驻 + 一个条件出现的 branch）。以后加第六个要先换出一个。
+  // branch 必须待在最短路径上：0.5.3.1 的顶部提示条只解决了「知道有岔路」，
+  // 「怎么切」还是要长按那条消息 —— 它再进二级，那条提示条就成了死链。
+  const PRIMARY_K = ['copy', 'regen', 'variant', 'fromseg', 'branch'];
   const primary = acts.filter(a => PRIMARY_K.indexOf(a.k) >= 0);
   const more = acts.filter(a => PRIMARY_K.indexOf(a.k) < 0);
   const mkBtn = (a) => `<button data-k="${a.k}">${tt(a.t)}</button>`;
@@ -3252,38 +3232,32 @@ async function showMsgMenu(el) {
   placeMenu(menu, el);
   _msgMenu = menu;
 
-  // 点菜单以外的任何地方都关掉。二级也算"内部" —— 不然点它会被当成外部点击。
-  menu._onOutside = (ev) => {
-    if (menu.contains(ev.target)) return;
-    if (_subMenu && _subMenu.contains(ev.target)) return;
-    closeMsgMenu();
-  };
+  // 点菜单以外的任何地方都关掉（「更多…」是原地替换，没有第二个面板要照顾）
+  menu._onOutside = (ev) => { if (!menu.contains(ev.target)) closeMsgMenu(); };
   setTimeout(() => {
     if (_msgMenu === menu) document.addEventListener('pointerdown', menu._onOutside, true);
   }, 0);
 
-  // 「更多…」：贴着一级横着弹二级，再点一次收起（v0.5.4.7）
+  // 「更多…」= 【原地替换】，不是并排弹第二个面板（v0.5.4.7）。
+  //
+  // ⚠️ 为什么不能并排：.msg-menu 的 max-width 是 min(76vw,260px)，390px 屏上
+  //    一级 260 + 二级 260 = 520 > 390 —— 物理上放不开，要么二级被裁、要么一级被压到
+  //    170px 最小宽、四个字折行。360px 的老机型更窄。inset 那套只解决上下，横向没有余量。
+  //    原地替换还有个白送的好处：还是同一个 .msg-menu，位置不用重算，e2e 的选择器也照样扫得到。
+  const htmlPrimary = menu.innerHTML;
   const openMore = () => {
-    if (_subMenu) { _subMenu.remove(); _subMenu = null; return; }
     if (!more.length) return;
-    const sub = document.createElement('div');
-    sub.className = 'msg-menu sub';
-    sub.innerHTML = more.map(mkBtn).join('');
-    document.body.appendChild(sub);
-    placeSubMenu(sub, menu);
-    _subMenu = sub;
-    // 二级点下去复用一级那套分派：造个只带 dataset.k 的假事件喂给 menu.onclick，
-    // 不把那一大段 if/else 抄第二份（抄了迟早两边不一致）。
-    sub.onclick = (ev) => {
-      const k2 = /** @type {any} */ (ev.target).dataset.k;
-      if (!k2) return;
-      closeMsgMenu();
-      /** @type {any} */ (menu).onclick({ target: { dataset: { k: k2 } } });
-    };
+    menu.innerHTML = '<button data-back="1" class="back">‹ 返回</button>' + more.map(mkBtn).join('');
+    placeMenu(menu, el);   // 内容变了高度变了，重新夹一次边界
+  };
+  const backToPrimary = () => {
+    menu.innerHTML = htmlPrimary;
+    placeMenu(menu, el);
   };
   menu.onclick = async (e) => {
     const tgt = /** @type {any} */ (e.target);
     if (tgt.dataset && tgt.dataset.more) { openMore(); return; }
+    if (tgt.dataset && tgt.dataset.back) { backToPrimary(); return; }
     const k = tgt.dataset.k;
     closeMsgMenu();   // ⚠️ 先关；点到按钮之间的空隙（k 为空）也必须关掉
     if (!k) return;
@@ -4195,8 +4169,8 @@ async function foldIntoRolling(charId, msgs) {
       apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model: S.model,
       messages: [
         { role: 'system', content:
-          `你在帮「${who}」维护一份【前情提要】。这份提要会一直带在她的上下文里，\n`
-          + `让她在很久之后仍然记得早先发生过什么。\n\n`
+          `你在帮「${who}」维护一份【前情提要】。这份提要会一直带在角色的上下文里，\n`
+          + `让角色在很久之后仍然记得早先发生过什么。\n\n`
           + `【输入】两部分：\n`
           + `· 已有的前情提要（可能是空的）\n`
           + `· 刚归档的一批对话\n\n`

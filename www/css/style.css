@@ -640,8 +640,11 @@ input + .hint-text{ margin-top:8px; }
 }
 .msg-menu button:active{ background:var(--bg3); }
 .msg-menu button.cancel{ color:var(--fg3); text-align:center; }
-/* 「更多…」弹出的二级（v0.5.4.7）：贴着一级横着放，层级要压过一级 */
-.msg-menu.sub{ z-index:1001; }
+/* 「更多…」是原地替换，不是第二个面板（v0.5.4.7）——
+   并排放不下：390px 屏上一级 260 + 二级 260 = 520 > 390。 */
+.msg-menu button.back{ color:var(--fg3); font-size:13.5px; padding:8px 16px; }
+/* 二级可能有 9 项，放不下就滚，别顶出屏幕 */
+.msg-menu{ max-height:70vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }
 
 /* ===== 搜聊天记录（v0.5.4.7）===== */
 .search-box{ width:min(92vw, 520px); }

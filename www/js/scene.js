@@ -525,7 +525,7 @@ export function sceneProsePrompt(scene, opts = {}) {
     }
   }
   if (a.userMode === 'actor' && opts.userLine) {
-    p.push('【他已经说过的话（不要重复，不要替他再说一遍）】');
+    p.push('【对方已经说过的话（不要重复，不要替他再说一遍）】');
     p.push(String(opts.userLine).slice(0, 400));
     p.push('');
   }

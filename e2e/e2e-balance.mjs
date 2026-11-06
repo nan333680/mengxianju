@@ -157,6 +157,10 @@ const box = await page.evaluate((i)=>{const r=document.querySelectorAll('.msg')[
 await page.touchscreen.touchStart(box.x,box.y); await sleep(620);
 await page.evaluate((i)=>{const el=document.querySelectorAll('.msg')[i];if(el)el.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));},i1);
 await sleep(400); await page.touchscreen.touchEnd(); await sleep(400);
+// ⚠️ v0.5.4.7：「删除这条」在「更多…」里。原地替换 —— 点开后还是 .msg-menu，
+// 所以只是多一步，选择器不用换。
+await page.click('.msg-menu [data-more]');
+await sleep(220);
 await page.click('.msg-menu [data-k="del"]');
 await sleep(150);
 const imm = await readDeleted();

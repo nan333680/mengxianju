@@ -209,7 +209,7 @@ export function arcPrompt(raw, opts) {
   const head = [];
   if (a.title) head.push('这段叫「' + a.title + '」。');
   if (a.direction) {
-    head.push('他要这段往这个方向走：' + a.direction);
+    head.push('对方要这段往这个方向走：' + a.direction);
     head.push('这是【方向】不是剧本：你自己安排每轮演到哪一步，不要为了赶进度把后面的事提前搬上来。');
   }
   // v0.5.0.2：上一拍真的演完了就带一句结果。
@@ -240,7 +240,7 @@ export function arcPrompt(raw, opts) {
     // 于是 5 拍 3 轮就演完 —— 那不是节奏，是提纲。
     const turnLine = b.turns > 0
       ? '这一拍才演了 ' + b.turns + ' 轮' + (b.turns < a.minTurns
-          ? '（至少 ' + a.minTurns + ' 轮才收），现在还不够 —— 别把她往终点推，先让这一拍自己长。'
+          ? '（至少 ' + a.minTurns + ' 轮才收），现在还不够 —— 别把你往终点推，先让这一拍自己长。'
           : '（已经够 ' + a.minTurns + ' 轮了），可以往收的地方引，但别一步跳过去。')
       : '';
     if (b.turn) {
@@ -266,6 +266,6 @@ export function arcPrompt(raw, opts) {
   if (a.constraints.length) {
     lines.push('这几件事【不要发生】：' + '\n' + a.constraints.map(c => '· ' + c).join('\n'));
   }
-  lines.push('他要是把话题岔开了，先接住他的话，再往回带 —— 别硬拽回这条线，也别把方向当成台词念出来。');
+  lines.push('对方要是把话题岔开了，先接住他的话，再往回带 —— 别硬拽回这条线，也别把方向当成台词念出来。');
   return lines.join('\n\n');
 }

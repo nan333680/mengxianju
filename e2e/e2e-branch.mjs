@@ -148,6 +148,12 @@ const menuOpen = async (id) => {
   }
 };
 const menuItems = () => page.evaluate(() => [...document.querySelectorAll('.msg-menu button')].map(b => b.textContent.trim()));
+// ⚠️ v0.5.4.7：一级只剩五项，「从这里重聊」在「更多…」里（原地替换，不是第二个面板）。
+// 先点开它再扫/点；点开之后还是同一个 .msg-menu，原选择器照样能用。
+const openMore = async () => {
+  await page.evaluate(() => { const m = document.querySelector('.msg-menu [data-more]'); if (m) m.click(); });
+  await sleep(220);
+};
 const clickMenu = async (label, ms = 8000) => {
   for (let i = 0; i < Math.ceil(ms / 120); i++) {
     const ok = await page.evaluate((lb) => {
@@ -176,6 +182,7 @@ t('屏幕上 4 条都在', (await shown()).length === 4, JSON.stringify(await sh
 
 // ---- 3. 从这里重聊：不删，直接重走这一段 ----
 await menuOpen('m2');
+await openMore();
 t('非最后一条的菜单里有「从这里重聊」', (await menuItems()).includes('从这里重聊'), JSON.stringify(await menuItems()));
 await clickMenu('从这里重聊');
 await sleep(400);

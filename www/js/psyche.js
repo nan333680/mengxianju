@@ -466,8 +466,8 @@ export function psychePrompt(raw, opts = {}) {
     // 读数超过阈值时补一句人话 —— 光给数字，模型不知道该往哪偏。
     const extra = p.stance.irritation >= HOT_IRRITATION
       ? '。你还没消气，别急着翻篇，也别主动示好'
-      : (p.stance.warmth >= 3 ? '。这会儿你对他是有好感的，别端着' : '');
-    L.push('· 对他的读数：' + sl + extra);
+      : (p.stance.warmth >= 3 ? '。这会儿你对对方是有好感的，别端着' : '');
+    L.push('· 对对方的读数：' + sl + extra);
   }
   if (p.want.goal) {
     L.push('· 你这会儿想要的：' + p.want.goal
@@ -483,8 +483,8 @@ export function psychePrompt(raw, opts = {}) {
   // 信息差（活人感 v2）：她瞒着的事。这里必须写「别主动交代」——
   // 只要列出来不约束，模型会把它当成"待揭示的剧情"顺手讲掉，隐瞒就消失了。
   const sc = p.secrets.filter(x => x && x.t && !x.dead)
-    .map(x => x.t + ageNote(x.at, now) + (x.reveal ? '（除非他先问起' + x.reveal + '，否则别主动说）' : ''));
-  if (sc.length) L.push('· 你瞒着他的：' + sc.join('；'));
+    .map(x => x.t + ageNote(x.at, now) + (x.reveal ? '（除非对方先问起' + x.reveal + '，否则别主动说）' : ''));
+  if (sc.length) L.push('· 你瞒着对方的：' + sc.join('；'));
   // 她自己的生活（活人感 v2）：跟他没关系的事。人是先有自己的日子，才有他的话。
   // 不给"所以要不要提"的指令 —— 提不提都行，她不是来汇报的。
   const se = p.selfEvents.filter(x => x && !x.dead).map(x => (x && x.t) ? x.t + ageNote(x.at, now) : '').filter(Boolean);

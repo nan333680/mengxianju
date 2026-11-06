@@ -53,7 +53,7 @@ function materialOf(p) {
   add('还没问出口的：', p.openLoops);
   add('还没消的：', p.grudges);
   add('你自己这两天：', p.selfEvents);
-  add('瞒着他的：', p.secrets);
+  add('瞒着对方的：', p.secrets);
   add('你心里认定的：', p.beliefs);
   return out.join('\n');
 }
@@ -77,7 +77,7 @@ export function reflectAsk(o = {}) {
     '）'
   ];
   if (recent) {
-    L.push('', '（他最近说的几句：', recent.slice(0, 400), '）');
+    L.push('', '（对方最近说的几句：', recent.slice(0, 400), '）');
   }
   L.push(
     '',

@@ -198,10 +198,12 @@ console.log('=== 4. 星号渲染：一对 = 斜体，两个 = 加粗，尖括号
       strongN: last.querySelectorAll('strong,b').length,
       scriptN: last.querySelectorAll('script').length };
   });
-  t('渲染出了 inner-thought', dom && dom.emN === 1, dom && dom.emN);
+  // v0.5.5：`**这是加粗**` 现在也按心里话渲染（用户实测那就是她的内心独白），
+  // 所以这一段里有两处 em，不是一处。原来两条断言测的是旧行为。
+  t('渲染出了两处 inner-thought', dom && dom.emN === 2, dom && dom.emN);
   t('斜体里是心里那句话', dom && dom.emText === '这话我才不说。', dom && dom.emText);
-  t('单个星号包裹已经没了（只剩 markdown 的双星号）', dom && !(dom.text || '').includes('*这话'), dom && (dom.text || '').slice(0, 80));
-  t('双星号没被当成心里话', dom && dom.emN === 1);
+  t('星号记号一个都不剩', dom && !(dom.text || '').includes('*'), dom && (dom.text || '').slice(0, 80));
+  t('双星号也按心里话渲染（v0.5.5）', dom && dom.emN === 2);
   t('尖括号被转义（没有 script 节点）', dom && dom.scriptN === 0, dom && dom.scriptN);
 }
 

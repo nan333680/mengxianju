@@ -66,12 +66,31 @@ console.log('=== 三、不许回退的三条 ===');
 const ok1 = await run('renderBody', '你好。*正常心声*再见。');
 t('正常成对心声仍然渲染', ok1.includes('<em class="inner-thought">正常心声</em>') && ok1.includes('你好。'), ok1);
 
+// v0.5.5：双星号按「她的意图」渲染成心里话，不是加粗、也不是删记号。
+// ⚠️ 这条在 v0.5.5 之前测的是反的（断言「不是心里话」），而当时的实现是把记号吃掉、
+//    内容留成普通文字 —— 断言绿、行为错。
 const ok2 = await run('renderBody', '**加粗**');
-t('加粗不被当成心里话', !ok2.includes('inner-thought'), ok2);
+t('双星号按心里话渲染', ok2.includes('<em class="inner-thought">加粗</em>'), ok2);
 
+// v0.5.5：括号里不解析星号。
+// ⚠️ 原来那两条都是假通过：`!includes('*')` 在「被吃成 <em>」之后照样成立，
+//    而 `!startsWith('<em')` 永远成立 —— 颜文字前面永远有个 '('。
 const ok3 = await run('renderBody', '(*/ω＼*)');
-t('颜文字不出现裸星号', !ok3.includes('*'), ok3);
-t('颜文字没被整行包成心里话', !ok3.startsWith('<em'), ok3);
+t('颜文字原样保留', ok3 === '(*/ω＼*)', ok3);
+t('颜文字没被包成心里话', !ok3.includes('inner-thought'), ok3);
+
+// 真实中招的那三个之一（KAOMOJI_MOODS 里成对半角星的 3 条：(*^ω^*) (*´ω｀*) (*｀ω´*)）
+const ok4 = await run('renderBody', '(*^ω^*)');
+t('成对星号的颜文字不被吃', ok4 === '(*^ω^*)', ok4);
+
+// 洞一：独占一行的 ** 包多行 —— 记号不会被吃、内容要变暗
+const ok5 = await run('renderBody', '**\n多行\n**');
+t('块级双星号变心里话', ok5.includes('<em class="inner-thought">多行</em>'), ok5);
+
+// 洞二：跨行括号里的星号不能被当心里话
+const ok6 = await run('renderBody', '（她笑了 *嗯*\n然后又哭了）');
+t('跨行括号里的星号不动', ok6.includes('*嗯*'), ok6);
+t('跨行括号里没被包成心里话', !ok6.includes('inner-thought'), ok6);
 
 console.log('=== 四、朗读：这两种形状不能念出来 ===');
 const s1 = await run('ttsClean', '*他那个东西在响。');

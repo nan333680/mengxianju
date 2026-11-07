@@ -3276,7 +3276,10 @@ async function showMsgMenu(el) {
   const menu = document.createElement('div');
   menu.className = 'msg-menu';
   menu.innerHTML = primary.map(mkBtn).join('')
-    + (more.length ? '<button data-more="1">' + tt('更多…') + '</button>' : '')
+    // v0.5.5：把二级项数写出来。四个字「更多…」看不出里面有 2 项还是 20 项 ——
+    //    用户不会主动去翻一个不知道有多厚的抽屉。数字是现算的（more 是这次渲染
+    //    刚 filter 出来的），branch 这种条件项进出，数字跟着变。
+    + (more.length ? '<button data-more="1">' + tt('更多…') + '（' + more.length + '）</button>' : '')
     + '<button data-k="cancel" class="cancel">' + tt('取消') + '</button>';
   document.body.appendChild(menu);
   placeMenu(menu, el);
@@ -20704,7 +20707,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.4.8';
+const WEB_VERSION_FALLBACK = '0.5.5';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

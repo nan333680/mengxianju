@@ -7,7 +7,7 @@
 //      stream=false、max_tokens=200、temperature=1、noThink（thinking:disabled）
 //   C. 接线：app.js 收尾在 LIVE 开关下调用 maybeReflect，且 12 小时判据落地
 //
-// 不进 CI 清单（要启浏览器），走 tools/run-regression.ps1 全覆盖。
+// 进 CI 清单（v0.5.5.1 起，见 .github/workflows/ci.yml 的 $suites）；本地也能单跑。
 import puppeteer from 'puppeteer-core';
 import http from 'http';
 import fs from 'fs';

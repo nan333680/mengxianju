@@ -119,8 +119,13 @@ const gp = await page.evaluate(async () => {
   const st = await kv.get('settings', {});
   return { p: typeof st.myProfile === 'string' ? st.myProfile : '', e: typeof st.myEnv === 'string' ? st.myEnv : '' };
 });
-t('私人那两项用的是本机那份（卡里没带、也没被顶掉）', !!c && c.myProfile === gp.p && c.myEnv === gp.e,
-  JSON.stringify({ mine: c && c.myProfile.slice(0, 12), global: gp.p.slice(0, 12) }));
+// ⚠️ v0.5.5.2：全局为空时导入【不写这个键】（保持 undefined，继续回落）——
+//    写成 '' 等于「有值但为空」，以后用户在设置页填了也不会落到这个角色上。
+//    所以这里要接受两种：全局有值 → 角色等于全局那份；全局空 → 角色为空或 undefined。
+const eqP = gp.p ? c && c.myProfile === gp.p : !(c && c.myProfile);
+const eqE = gp.e ? c && c.myEnv === gp.e : !(c && c.myEnv);
+t('私人那两项用的是本机那份（卡里没带、也没被顶掉）', !!c && eqP && eqE,
+  JSON.stringify({ mine: String((c && c.myProfile) || '').slice(0, 12), global: gp.p.slice(0, 12) }));
 
 const entries = await page.evaluate(async () => {
   const { wb, kv } = await import('./js/db.js');

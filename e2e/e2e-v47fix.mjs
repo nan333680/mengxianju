@@ -78,7 +78,9 @@ await page.reload({ waitUntil:'networkidle0' }); await sleep(1200);
 
 console.log('=== 1. 设置页里那两块没了 ===');
 await openSettings();
-t('设置页不再有「我的相关设定」', !(await page.$('#mine-fold')));
+// v0.5.5.2：全局那一份【回到设置页】了（出厂默认值改成空，需要用户自己填）。
+// 原来这条断言的是「设置页不再有」—— 那是 v1.21.47 的行为，现在反过来了。
+t('设置页又有「我的设定」入口了', !!(await page.$('#mine-fold')));
 t('设置页不再有「她该怎么理解你」输入框', !(await page.$('#s-profile')));
 t('设置页不再有「我居住的环境」输入框', !(await page.$('#s-env')));
 
@@ -90,9 +92,10 @@ t('有「他的居处」折叠头', !!(await page.$('#e-home-fold')));
 t('有设定输入框', !!(await page.$('#e-mine')));
 t('有居处输入框', !!(await page.$('#e-home')));
 const dv = await page.$eval('#e-mine', el => el.value);
-t('默认带着出厂那份「他的设定」', dv.length > 100, '长度=' + dv.length);
+// v0.5.5.2：出厂默认值从 570 字通用模板改成了空 —— 一份「通用的我」对谁都不像。
+t('出厂默认是空的', dv.length === 0, '长度=' + dv.length);
 const brief0 = await page.$eval('#e-mine-brief', el => el.textContent);
-t('折叠头上写着行数', /\d+\s*行/.test(brief0), brief0);
+t('折叠头上写着「未填」', brief0 === '未填', brief0);
 await jsClick('#e-mine-fold'); await sleep(500);
 t('点开能展开', !!(await page.$('#e-mine-wrap.open')));
 
@@ -148,7 +151,9 @@ t('计数写对了（打开时是 0）', cntAll === '已选 0 / 1', cntAll);
 await jsClick('#pick-chars-none'); await sleep(250);
 t('「全不选」生效', (await page.$eval('#pick-chars-count', el => el.textContent)) === '已选 0 / 1');
 await jsClick('#pick-chars-all'); await sleep(250);
-await jsClick('#pick-chars-ok'); await sleep(900);
+await jsClick('#pick-chars-ok'); await sleep(500);
+// v0.5.5.2：批量覆盖前多了一道确认框（不可撤销的操作不该点一下就落库）。
+await page.click('#modal-ok'); await sleep(900);
 const applied = await page.evaluate(async () => {
   const { chars } = await import('/js/db.js');
   const c = await chars.get('v47-b');

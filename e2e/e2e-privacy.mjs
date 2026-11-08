@@ -35,9 +35,11 @@ if (dIdx >= 0) {
     if (!profile) { try { profile = JSON.parse(m[1]); } catch (e) { /* 留给下面报错 */ } }
   }
 }
-t('源码里只有一份 myProfile 字面量（不该再有第二份硬编码文案）', literals === 1, '找到 ' + literals + ' 处');
-t('默认那份不是空的、有实际内容', profile.length >= 100, profile.length + ' 字');
-t('默认那份是通用模板（上班族），不是私人自述', /上班族|工作日|通勤/.test(profile), profile.slice(0, 24));
+// ⚠️ v0.5.5.2：出厂默认值改成了【空】—— 那段 570 字「通用模板」本身就不该进源码。
+// 原来这三条断言的是「有一份非空的通用模板」，现在反过来了：
+// 默认必须是空的，而且源码里不该再有任何硬编码的 myProfile 文案。
+t('源码里没有硬编码的 myProfile 文案（默认已空）', literals === 0, '找到 ' + literals + ' 处');
+t('出厂默认是空的', profile === '', JSON.stringify(profile).slice(0, 40) + '（' + profile.length + ' 字）');
 const hitSelf = FORBIDDEN.filter(w => profile.indexOf(w) >= 0);
 t('默认那份不含旧私人自述的特征词', hitSelf.length === 0, hitSelf.join(' / '));
 

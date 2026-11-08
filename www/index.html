@@ -397,7 +397,9 @@
 
     <!-- 「你的设定」「你的居处」（v1.21.47）：原来在 ⚙ 里、全局共用一份，
          现在按角色分开 —— 每个角色对「你是谁、你住哪」可以有自己的理解。
-         新建角色拿的是【出厂那份通用模板】（不是给你量身写的）；老角色由一次性迁移接手。 -->
+         v0.5.5.2：出厂默认值改成【空】了（那段 570 字的通用模板已删）。
+         所以新建角色这一项原来是空的 —— 想让她认识你，要么在这里写，
+         要么在「我的设置 → 我的设定」写一份通用的、再「写入角色…」批量发给选中的角色。 -->
     <section class="group">
       <button class="fold-head" id="e-mine-fold">
         <span data-i18n-en="About you">你的设定</span>
@@ -411,7 +413,7 @@
           <div class="profile-foot" data-i18n-nodes>
             <span class="cnt" id="e-mine-count">—</span>
             <span class="btns">
-              <button class="ghost-btn sm" id="btn-e-mine-reset" data-i18n-en="Reset to default">填回默认</button>
+              <button class="ghost-btn sm" id="btn-e-mine-reset" data-i18n-en="Revert changes">撤销修改</button>
               <button class="ghost-btn sm" id="btn-e-mine-apply" data-i18n-en="Apply to other characters...">应用到其他角色…</button>
             </span>
           </div>
@@ -1019,6 +1021,29 @@
           <label class="field" data-i18n-nodes><span data-i18n-en="What she calls you by default">她默认怎么叫你</span>
             <input id="s-uaddr" type="text" placeholder="不填就是「你」" data-i18n-en-ph="blank = “you”">
           </label>
+        </div>
+      </div>
+    </section>
+    <section class="group">
+      <!-- 「我的设定 / 我的居住环境」（v0.5.5.2）：这两项 v1.21.47 起变成【角色级】，
+           个体那份在角色编辑页；全局这份以前在源码里写死一段 570 字模板，
+           现在默认空、回到设置页由你自己填，并能一键写给选中的角色。 -->
+      <button class="fold-head" id="mine-fold">
+        <span data-i18n-en="About me">我的设定</span>
+        <em class="fold-num" id="mine-hint">—</em>
+        <i class="fold-arrow">▾</i>
+      </button>
+      <div class="fold-wrap" id="mine-wrap">
+        <div class="fold-inner">
+          <p class="profile-tip" data-i18n-en-html="A plain description of you (who you are, how your days go). Written from <b>your</b> side &mdash; she reads it as &quot;this is who I'm talking to&quot;. Leave it blank and she just won't get this section.">用你自己的话写「我是谁」—— 她是照着这段来认识你的。留空就没有这一段。</p>
+          <label class="field" data-i18n-nodes><span data-i18n-en="About me">我的设定</span>
+            <textarea id="s-myprofile" rows="6" maxlength="8000" placeholder="比如：我是谁、做什么、作息、脾气、在意什么" data-i18n-en-ph="e.g. who you are, what you do, your hours, your temper"></textarea>
+          </label>
+          <button class="ghost-btn sm" id="btn-s-myprofile-apply" data-i18n-en="Apply to characters…">写入角色…</button>
+          <label class="field" data-i18n-nodes><span data-i18n-en="Where I live">我的居住环境</span>
+            <textarea id="s-myenv" rows="4" maxlength="8000" placeholder="窗外是什么、屋子多大、有什么家具、周边环境" data-i18n-en-ph="what's outside the window, how big, what's in it"></textarea>
+          </label>
+          <button class="ghost-btn sm" id="btn-s-myenv-apply" data-i18n-en="Apply to characters…">写入角色…</button>
         </div>
       </div>
     </section>

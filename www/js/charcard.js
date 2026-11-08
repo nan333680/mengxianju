@@ -591,6 +591,10 @@ const MK_CARD_KEYS = [
   // ⚠️ v0.5.3.2：风格卡（样例段落 + 禁用词）也是这个角色的设定，跟 canonExtra 同一条理由 ——
   //    不进卡的话，换台机器导回来她的腔调就变了。
   'styleCard',
+  // ⚠️ v0.5.5.2：这四项是【她那一侧】的认知 —— 「她怎么称呼你 / 她以为你是谁 /
+  //    她知道你什么 / 她对你的态度」。属于角色设定，不是用户的私事，所以跟着卡走。
+  //    它们 v0.5.2.5 加进来，一直没进这张表 —— 导出再导入就静默丢掉（和 canonExtra 同一类错误）。
+  'userAddress', 'userPerception', 'userKnowledge', 'userAttitude',
 ];
 
 function mkParams(char) {
@@ -619,7 +623,11 @@ const STR_KEYS = {
   reasoningEffort: 32, verbosity: 32, descLevel: 32,
   detailDrive: 32, povStyle: 8, searchPolicy: 8, clockPolicy: 8,
 };
-const TEXT_KEYS = { appearance: 8000, appearanceLive: 8000, scene: 8000, canonExtra: 4000 };
+const TEXT_KEYS = {
+  appearance: 8000, appearanceLive: 8000, scene: 8000, canonExtra: 4000,
+  // v0.5.5.2：她那一侧的四项认知跟着卡走，各给 4000 字上限（和 canonExtra 同档）。
+  userAddress: 4000, userPerception: 4000, userKnowledge: 4000, userAttitude: 4000,
+};
 
 function sanitizeParam(k, v) {
   // 风格卡是对象，不是字符串/数字 —— 外来卡里的形状一概不信，一律重建。

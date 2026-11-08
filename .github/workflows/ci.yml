@@ -21,7 +21,8 @@ on:
 jobs:
   check:
     runs-on: windows-latest
-    timeout-minutes: 25
+    # v0.5.5.1：从 25 提到 40 —— 清单里加了 7 套（star/stop/segrewrite/memreview/reflect/chatsearch/contattach）
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -78,7 +79,17 @@ jobs:
             'e2e-stylecard',
             # 突发情况（v0.5.4）：连点 / 停止 / 切角色 / 断流 / 断网 / 流里掺坏 JSON /
             # 八千字 / 连切八次 / 生成到一半刷新。九种全是劫持 fetch 造假，0 费用。
-            'e2e-chaos'
+            'e2e-chaos',
+            # ---- v0.5.5.1 补进清单的 7 套 ----
+            # 原来这 7 套只靠本地 run-regression 跑。e2e-reflect 头里写「不进 CI 清单（要启浏览器）」
+            # 的理由不成立 —— 上面那 33 套全都要启浏览器。
+            'e2e-star',        # 正文渲染：星号四形态 + 颜文字 + 括号预挖
+            'e2e-stop',        # 停止/中断：半截回复的去向
+            'e2e-segrewrite',  # 从这段起重写
+            'e2e-memreview',   # 记忆写入前的方向复核
+            'e2e-reflect',     # 周期性反思
+            'e2e-chatsearch',  # 全库搜索
+            'e2e-contattach'   # 续写契约（不落用户消息）
           )
           $fail = 0
           foreach ($s in $suites) {

@@ -172,13 +172,14 @@ const DEFAULTS = {
   // 默认【关】：你手动加的记忆，整理时原样保留，她不许改也不许删
   allowEditMine: false,
   // 剧情时间是否细化到「几点几分」（全局开关，默认关 = 保持只有"第几天+时段"）
-  // 「我的设定」：角色级字段 char.myProfile 才是生效值（v1.21.47 起），
-  //   这里这一份只剩【新建角色的初始值】一个身份。
-  // ⚠️ 它会原样编译进 APK，反编译不需要运行就能逐字读到 ——
-  //   所以这里只能放【不含个人信息的通用模板】，不要把私人自述写回来。
-  //   （旧的那份 691 字自述已挪出源码，见 _archive/myprofile-original-1.21.50.txt）
+  // 「我的设定」：角色级字段 char.myProfile 才是生效值（v1.21.47 起）。
+  //
+  // v0.5.5.2：默认值改成【空】。原来这里是一段 570 字的通用模板 ——
+  //   它会原样编译进 APK（反编译不用运行就能逐字读到），所以只能写不含个人信息的东西，
+  //   而一份「通用的我」对谁都不像。真正那份在 settings.myProfile，由用户在设置页自己填。
+  //   默认空 = 没设就没有「# 关于对方」这一段，比她读一份假自述好。
   // 它每轮都注入 system、是稳定前缀（命中 prefix 缓存），改一次会整体失效一次。
-  myProfile: "【我是谁】\n普通上班族。工作日朝九晚六，通勤要花上一段，白天基本不在线，晚上和周末才真正有空。\n\n【日常状态】\n日子过得平常，没什么大事。下班回来常常是累的，话比白天少 —— 那不是冷淡，是电量低。\n偶尔加班，偶尔什么都不想干，第二天一般就恢复了。\n\n【怎么跟我说话】\n· 不用一直找话题，安静一会儿也没关系。\n· 有事说事，别绕圈子。别催我、别教育我、别替我做决定。\n· 我说话偏直白，不爱绕弯子，那不是不耐烦。\n· 我忙或累的时候回得慢、回得短，别往心里去。\n\n【我在意的】\n被记住小事 比 被夸 更让我高兴\n不用刻意热闹 比 硬找话说 更舒服\n你是什么样就什么样 比 一直顺着我 更好\n\n这只是一份通用说明。相处久了，以你真正了解到的我为准。",
+  myProfile: '',
   // 「世界书」总开关（v1.15.2 起）：关掉就完全不注入任何世界书条目。
   // 三套库（角色组 / 单独角色）都受它控制。
   //
@@ -1217,6 +1218,18 @@ function refreshNameHint() {
   b.textContent = ad || nm || '就叫「你」';
 }
 
+/** 「我的设定」折叠块的角标（v0.5.5.2）：一眼看出填没填、多长 */
+function refreshMineHint() {
+  const b = $('mine-hint');
+  if (!b) return;
+  const a = String((S && S.myProfile) || '').trim().length;
+  const e = String((S && S.myEnv) || '').trim().length;
+  const parts = [];
+  if (a) parts.push('设定 ' + a + ' 字');
+  if (e) parts.push('环境 ' + e + ' 字');
+  b.textContent = parts.length ? parts.join(' · ') : '空';
+}
+
 function refreshEditAddrBrief() {
   const ids = ['e-useraddr', 'e-userperc', 'e-userknow', 'e-useratt'];
   const n = ids.filter(id => $(id) && $(id).value.trim()).length;
@@ -1284,11 +1297,14 @@ function refreshPickCount() {
  * ⚠️ 是【复制快照】不是引用：覆盖完源角色再改，被覆盖的那些不会跟着变 ——
  *    用户要的是"覆盖"，这就是符合直觉的那个语义。
  */
-function openPickChars(field, label, text) {
-  const others = allChars.filter(c => c.id !== editingId);
+function openPickChars(field, label, text, excludeId) {
+  // v0.5.5.2：第四个参数 excludeId —— 不传时按老行为排除正在编辑的那个角色；
+  //   设置页（全局那一份）传 null，因为那里没有"当前角色"，全部角色都该可选。
+  const ex = (excludeId === undefined) ? editingId : excludeId;
+  const others = allChars.filter(c => c.id !== ex);
   if (!others.length) { toast('还没有别的角色'); return; }
   _pickCharsCtx = { field, label, text };
-  $('pick-chars-title').textContent = '把「' + label + '」应用到其他角色';
+  $('pick-chars-title').textContent = '把「' + label + '」应用到角色';
   $('pick-chars-sub').innerHTML = '勾上的会被<b>这一份整段替掉</b>，没勾的不动。<br>'
     + '覆盖之后两边就各是各的了 —— 你再改这一个，他们的不会跟着变。';
   $('pick-chars-list').innerHTML = others.map(c => {
@@ -1630,8 +1646,11 @@ async function migrateGlobalProfileToChars() {
   let n = 0, failed = 0;
   for (const c of allChars) {
     const patch = {};
-    if (c.myProfile === undefined) patch.myProfile = gp;
-    if (c.myEnv === undefined) patch.myEnv = ge;
+    // ⚠️ v0.5.5.2：全局为空时【不写】。默认值改成空之后，无条件写会把 "" 灌进每个角色 ——
+    //    而 persona.js:1108 判的是 `!== undefined`，空字符串算「有值」，
+    //    那个角色从此就是「有值但为空」，以后用户在设置页填了也不会回落。
+    if (c.myProfile === undefined && gp) patch.myProfile = gp;
+    if (c.myEnv === undefined && ge) patch.myEnv = ge;
     if (!Object.keys(patch).length) continue;
     // 单个角色写失败不该挡住启动
     try { await chars.put({ ...c, ...patch }); Object.assign(c, patch); n++; } catch { failed++; }
@@ -11728,10 +11747,21 @@ async function saveCharEdit() {
     // ⚠️ 三态键要能【退回】跟随全局（v0.3.1）：data 里没有这个键 = 用户在编辑页选了
     //    「跟随全局」，但 { ...c, ...data } 会把 c 上的旧值留下来 —— 于是那个选项
     //    形同虚设（选了保存后角色仍然是自己的值）。这里显式删掉。
+    // ⚠️ v0.5.5.2："空"有两种，别混：
+    //   · 原本有值、你把它清空 → 写 ''，这个角色从此不再回落全局（这是你的明确意思）
+    //   · 原本就是 undefined（没设过）→ 不写这个键，保持 undefined，继续回落设置页那份全局的
+    //   分不清的后果：默认值改空之后，只点一次 ✓ 就把 '有值但为空' 焊在角色上，
+    //   以后在设置页填了也不会生效（persona.js 判的是 !== undefined）。
+    if (!data.myProfile && c.myProfile === undefined) delete data.myProfile;
+    if (!data.myEnv && c.myEnv === undefined) delete data.myEnv;
     const nextC = { ...c, ...data, appearanceLive: '' };
     for (const k of FOLLOW_KEYS) if (data[k] === undefined) delete nextC[k];
     await chars.put(nextC);
   } else {
+    // 新建角色同理（v0.5.5.2）：这一项空着就【不写这个键】—— 让它保持 undefined，
+    // 以后在设置页填了「我的设定」，没单独写过的角色都会回落用到。
+    if (!data.myProfile) delete data.myProfile;
+    if (!data.myEnv) delete data.myEnv;
     const c = { id: uid(), ...data, presetKey: editPresetKey, createdAt: Date.now() };
     await chars.put(c);
     id = c.id;
@@ -16743,6 +16773,37 @@ function bindSettings() {
     refreshNameHint();
   };
   refreshNameHint();
+  // 「我的设定 / 我的居住环境」（v0.5.5.2）：全局那一份回到设置页。
+  //   默认值已经是空的了 —— 空就是没有「# 关于对方」那一段，不填也不会出错。
+  //   用 onchange 不用 oninput：这是一段几百字的散文，边打边存会把库刷爆。
+  {
+    const mp = $('s-myprofile'), me = $('s-myenv');
+    if (mp) {
+      mp.value = String(S.myProfile || '');
+      mp.onchange = async e => {
+        await saveSettings({ myProfile: e.target.value });
+        refreshMineHint();
+        toast('我的设定已保存');
+      };
+    }
+    if (me) {
+      me.value = String(S.myEnv || '');
+      me.onchange = async e => {
+        await saveSettings({ myEnv: e.target.value });
+        refreshMineHint();
+        toast('居住环境已保存');
+      };
+    }
+    // ⚠️ 折叠绑定不能放在这里：`fold` 是 const 箭头函数，定义在 20237 ——
+    //    这个函数在它之前执行，放这里会 `fold is not defined`，
+    //    而且一旦抛异常，后面所有设置项的绑定全部不执行（i18n / 备份频率那批会集体红）。
+    //    折叠挂到 20334 那一组去。
+    refreshMineHint();
+    const btnMp = $('btn-s-myprofile-apply'), btnMe = $('btn-s-myenv-apply');
+    // excludeId 传 null：设置页没有"当前角色"，全部角色都该出现在勾选列表里。
+    if (btnMp) btnMp.onclick = () => openPickChars('myProfile', '我的设定', String(S.myProfile || ''), null);
+    if (btnMe) btnMe.onclick = () => openPickChars('myEnv', '我的居住环境', String(S.myEnv || ''), null);
+  }
 
   $('s-apikey').value = S.apiKey;
   $('s-baseurl').value = S.baseUrl;
@@ -18565,8 +18626,11 @@ async function importCharacterCard(card, avatarDataUrl = '') {
     // 三态键不继承（v0.3.1）：继承一份快照进去 = 这个角色从此脱离全局。
     ...omitFollowKeys(pickCharParams(S)),   // 新角色默认继承当前全局参数
     // 「他的设定 / 他的居处」（v1.21.47）也是角色级，导入时同样给个初始值
-    myProfile: typeof S.myProfile === 'string' ? S.myProfile : '',
-    myEnv: typeof S.myEnv === 'string' ? S.myEnv : '',
+    // ⚠️ v0.5.5.2：全局为空时【不写这两个键】。
+    //    写成 '' 等于「有值但为空」—— persona.js:1108 判的是 `!== undefined`，
+    //    于是这个角色以后在设置页填了全局也不会回落。不写就保持 undefined，正常回落。
+    ...(typeof S.myProfile === 'string' && S.myProfile ? { myProfile: S.myProfile } : {}),
+    ...(typeof S.myEnv === 'string' && S.myEnv ? { myEnv: S.myEnv } : {}),
     // 卡里若带梦弦居自己的参数，以卡为准 —— 放在最后覆盖上面的默认值。
     // 老卡（别家导出的、或 v1.21.47 之前我们自己导的）没有这一段，返回空对象。
     ...readMkParams(card),
@@ -20271,18 +20335,23 @@ $('btn-new-char').onclick = () => openPresetPicker();
   fold('e-canon-fold', 'e-canon-wrap', refreshEditMineBrief);   // 角色页：后来补的设定（v0.5.3）
   fold('e-addr-fold', 'e-addr-wrap', refreshEditAddrBrief);
   fold('name-fold', 'name-wrap', refreshNameHint);
+  fold('mine-fold', 'mine-wrap', refreshMineHint);   // 设置页「我的设定」（v0.5.5.2）
   $('e-mine').oninput = refreshEditMineBrief;
   $('e-home').oninput = refreshEditMineBrief;
   $('e-canon').oninput = refreshEditMineBrief;
-  // 「填回默认」和设置页原来那个一样：只填进框，不直接落库
+  // v0.5.5.2：这个按钮原来叫「填回默认」，填的是 DEFAULTS.myProfile 那段 570 字模板。
+  //   默认值改成空之后，「填回默认」= 清空输入框 —— 而确认框还写着「换成默认的那份」，
+  //   点下去会静默删掉用户写的东西。现在改成「撤销修改」：恢复成打开这个角色时框里那份。
+  //   取值方式和 11469 行一致：角色有值用角色的，没有才用全局的。
   $('btn-e-mine-reset').onclick = async () => {
-    const ok = await confirmBox('填回默认内容',
-      '<p>把这一份换成<b>默认的那份</b>？</p>'
-      + '<p>只是填进上面的框里，<b>还没保存</b>——你先看看，改完再点右上角 ✓。</p>', '填回默认');
+    const ok = await confirmBox('撤销修改',
+      '<p>把框里的内容恢复成<b>上次保存的那一份</b>？</p>'
+      + '<p>只改上面的框，<b>不会删掉任何已保存的内容</b>——想真的生效再点右上角 ✓。</p>', '撤销修改');
     if (!ok) return;
-    $('e-mine').value = DEFAULTS.myProfile;
+    const c = editingId ? await chars.get(editingId) : null;
+    $('e-mine').value = (c && c.myProfile !== undefined) ? c.myProfile : (S.myProfile || '');
     refreshEditMineBrief();
-    toast('已填回默认，记得点右上角 ✓ 保存');
+    toast('已恢复成上次保存的内容');
   };
   $('btn-e-mine-apply').onclick = () => openPickChars('myProfile', '你的设定', $('e-mine').value);
   $('btn-e-home-apply').onclick = () => openPickChars('myEnv', '你的居处', $('e-home').value);
@@ -20322,6 +20391,11 @@ $('btn-new-char').onclick = () => openPresetPicker();
     const ids = [...document.querySelectorAll('#pick-chars-list input[type=checkbox]')]
       .filter(b => b.checked).map(b => b.dataset.id);
     if (!ids.length) { toast('一个都没勾'); return; }
+    // v0.5.5.2：批量覆盖是不可撤销的，落库前一定再过一道确认框（副标题只是提示，不算确认）。
+    const ok = await confirmBox('覆盖 ' + ids.length + ' 个角色',
+      '<p>将覆盖 <b>' + ids.length + '</b> 个角色现有的「' + esc(label) + '」，<b>不可撤销</b>。</p>'
+      + '<p>没勾的一个都不动。</p>', '覆盖');
+    if (!ok) return;
     for (const id of ids) {
       const c = await chars.get(id);
       if (!c) continue;
@@ -20732,7 +20806,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.5.1';
+const WEB_VERSION_FALLBACK = '0.5.5.2';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

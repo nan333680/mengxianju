@@ -476,6 +476,22 @@ export async function* streamChat(opts) {
   }
 }
 
+/**
+ * 把两次调用的用量加起来。字段名跟 usage 一致，缺一个就当场跳过。
+ *
+ * v0.5.5.3：原来住在 candidate.js（三条候选要把它三份用量相加）。候选撤了之后
+ * 唯一还在用的是「重写那一次也要记进去」，它就跟着 usage 一起挪到这一层。
+ */
+export function addUsage(a, b) {
+  if (!b) return a || null;
+  const out = a ? { ...a } : {};
+  for (const k of Object.keys(b)) {
+    const n = Number(b[k]);
+    if (Number.isFinite(n)) out[k] = (Number(out[k]) || 0) + n;
+  }
+  return out;
+}
+
 /** 非流式调用（用于记忆总结等） */
 export async function onceChat(opts) {
   const {

@@ -1,5 +1,5 @@
 import { kv, chars, msgs, mem, wb, scenes, uid, wipeAll, dbAdmin, DB_VERSION } from './db.js';
-import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, testConnection, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS } from './api.js';
+import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, testConnection, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS, addUsage } from './api.js';
 import { buildStablePrompt, buildTurnNote, askHits, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR, userSideLines } from './persona.js';
 import { assembleSceneContext, cleanExample, cutAtSentence } from './scenectx.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
@@ -37,17 +37,18 @@ import { normalizeStyleCard } from './stylecard.js';
 // Psyche v1（0.5.3.6）：跨轮的心理状态 + 每轮的判断层。
 // 两处都只在 send() 里用；任何一个坏了都必须能退回老路径（见 send 里那段注释）。
 import { normalizePsyche, emptyPsyche, decayPsyche, applyPsycheDelta, psycheActive, psychePrompt, deriveLife, relationLine, applyRelation, lifeLine } from './psyche.js';
+// ⚠️ MOVE_NAME 不能删：评审撤了，但「这一轮用了什么」那个面板还在用它把 move 翻成中文
+//    （app.js 的 inj 面板）。上一版按「评审撤了它就没用了」删过一次，tsc 当场报
+//    TS2304 Cannot find name 'MOVE_NAME' —— 那是条会真炸的 ReferenceError，不是类型噪音。
 import { runDirector, directorDelta, normalizeDirector, MOVE_NAME } from './director.js';
-// 活人感 v2（0.5.3.6）：独白 / 三条候选 / 评审 / 拟真节奏。
-// 四个文件都只做纯变换或单次请求，失败一律退回老路径 ——
-// 这一步坏掉不能挡住聊天（文档 §3 第 2 条）。
+// 活人感 v2（0.5.3.6）：独白 / 拟真节奏。
+// v0.5.5.3：三条候选和评审撤了（理由见下面生成那段的注释），独白仍是独立一次请求。
+// 失败一律退回老路径 —— 这一步坏掉不能挡住聊天（文档 §3 第 2 条）。
 import { runInner } from './innerthought.js';
-import { genCandidates, addUsage } from './candidate.js';
 // 周期性反思（0.5.4.1，借 Generative Agents 的 reflection）：
 // 把攒了几天的几件事合成一条更稳的看法，写回 beliefs。
 // 一天最多一次，失败返回 null，不挡聊天。
 import { runReflect, shouldReflect, applyReflect } from './reflect.js';
-import { runCritique } from './critique.js';
 import { planCadence } from './cadence.js';
 // 本地向量（0.5.3.6 辅助层）：模型在 APK 里，用 ONNX Runtime 跑，只做重复检测。
 // ⚠️ 拿不到就返回 null（浏览器 / e2e / 老壳），上层必须当场退回关键词路径。
@@ -158,10 +159,16 @@ const DEFAULTS = {
   // ⚠️ 每一段都是一次完整请求、都是 6K 起的 max_tokens —— 默认必须是 0。
   epicChain: 0,
   // —— 活人感 v2 总开关（0.5.3.6）——
-  // 开：一轮五步（独白 → 判断 → 三条候选 → 评审 → 条件重写），多等 12~20 秒，
-  //     回复里会有「没说出口的那一层」，句子也不再一条比一条完整。
+  // 开：独白 + 判断各一次（并行），然后一条流式正文。回复里会有「没说出口的那一层」。
   // 关：完全回到 0.5.3.5 那条老路 —— 一次请求、一条流式、350ms 逐条上屏；
-  //     独白 / 判断 / 三条候选 / 评审 / 拟真节奏 / 主动开场，一起停。
+  //     独白 / 判断 / 拟真节奏 / 主动开场，一起停。
+  //
+  // ⚠️ v0.5.5.3：原来这里还有「三条候选 → 评审 → 条件重写」三步，撤了。
+  //    不是因为慢才撤，是因为它【不成立】：官方 thinking_mode 文档写明思考模式下
+  //    temperature 不支持（设了不报错、也没有任何效果），而 deepseek-flash 默认
+  //    就开着思考。三条候选的 0.85/1.00/1.15 发出去是三个同样的请求，
+  //    唯一的区别只剩末尾那句收/放提示 —— 付三份上下文 + 三份思考，买了两句话。
+  //    用户实测「质量跟单条 high 差不多」，与该结论一致。
   // ⚠️ 只有两档（用户 m02892 第 2 条：开/关，直接管理全部），没有「只开一半」。
   // ⚠️ 判空一律写 `S.liveV2 !== false`：老库里没有这个键，undefined 必须当成【开】。
   liveV2: true,
@@ -1989,7 +1996,7 @@ async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
   // 角色设置里的「打字延迟」在 v2 下必须还算数：v1 是老节奏里那个 ×typingDelay 的乘数，
   // v2 一接手节奏，这个滑块就会【静默失效】—— 用户在角色设置里拧到 3.0，
   // 回复的快慢一模一样，他只会以为设置坏了。所以这里把 P.typingDelay 当倍率传下去
-  // （和 candidate.js 的 temperList 对温度做的是同一件事：角色设置是基准，不是废键）。
+  // （角色设置是基准，不是废键 —— 这一点和角色温度在生成那趟里的地位相同）。
   // ⚠️ 用 effSettings(myChar, S) 现算，别读 P：这个函数也被主动开场那几个路径调用，
   //    那时 P 还停在上一个角色（或者干脆是 null），读 P 会拿到别人的打字速度。
   const eff = effSettings(myChar, S);
@@ -2004,8 +2011,7 @@ async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
   const tmpIds = [];   // 屏幕上的临时气泡（逐字打完再换成正式那条）
   let drawn = 0;       // 已经画到第几条 added
   let ph = phEl || null;   // 还在屏幕上的占位气泡（只对第一条有效）
-  // 屏幕上已经有候选 0 的正文了：先原地换成正式的第一条（不打字、不消失、不停顿）。
-  // 评审挑了别的候选时，这里就是「改了一句」，而不是「整段消失、从头再来」。
+  // 屏幕上已经有流式那一趟的正文了：先原地换成正式的第一条（不打字、不消失、不停顿）。
   // ⚠️ 占位必须在进循环【之前】消化掉：cadence 有 12% 概率在第一条前面插一条
   //    极短语气条，那时 step.text 不等于 texts[0]，占位就会一直挂在最上面，
   //    屏幕上变成「候选 0 + 嗯 + 正式第一条」三条并存 —— 比闪回更难看。
@@ -7115,12 +7121,12 @@ async function send(opts) {
   // 声明在函数顶层的原因和 turnInj 一样：在 try #1 里赋值、在 try #2 的落库处读。
   let turnPsy = null;
   // 活人感 v2（这一轮的三件附加料）——同样必须声明在函数顶层：
-  // 它们是在 try #1 里算出来的，却在 try #2 的评审、重写、落库、上屏里读。
+  // 它们是在 try #1 里算出来的，却在 try #2 的提示词拼装、重写、落库、上屏里读。
   // 声明在 try #1 里面 = 块作用域，跨到 try #2 就是 ReferenceError（e2e 逮到过）。
   let psyBefore = null;   // 这一轮的 psyche 读数（上屏节奏要看它的 life.busy/energy）
-  let psyDir = null;      // 判断层的输出（move/mood/withhold…），评审要用 move 名
-  let innerText = '';     // 这一轮的独白（归一后），评审要看同一份
-  let sysStable = '';     // 稳定前缀，评审也要用「同样的 system 前缀」
+  let psyDir = null;      // 判断层的输出（move/mood/withhold…），落库时挂到消息上
+  let innerText = '';     // 这一轮的独白（归一后），进提示词、也进「这一轮用了什么」
+  let sysStable = '';     // 稳定前缀，独白/判断这两趟都要用「同样的 system 前缀」
   // 群里重新生成 / 换版本时，由调用方把"刚才说话的那个人"传进来（v0.4.0 复查）。
   // ⚠️ 必须在【删消息之前】取好再传 —— regenerate() 先删掉旧回复再调 send()，
   //    那时候再去读"上一条回复是谁"读到的是更早的那条了。
@@ -7693,7 +7699,10 @@ let namedInText = false;
     } catch { /* 推导失败就沿用读到的旧生活状态，不影响下面的判断 */ }
 
     if (LIVE && S.apiKey) {
-      const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 };
+      // ⚠️ v0.5.5.3：20s → 12s。这两趟在正文之前，谁跑满整轮就多等多久。
+      //    两个都有兜底（独白拿不到就用判断层那句，判断拿不到就退回老路径），
+      //    所以宁可早点放弃，也不让人盯着空白气泡。
+      const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 12000 };
       const recentForJudge = (pastRaw || []).slice(-12).map(m => ({ role: m.role, content: m.content }));
       // 独白和判断没有先后依赖 —— 串行就是白等一倍。两个都失败也能继续。
       const [innerGot, dirGot] = await Promise.all([
@@ -8037,39 +8046,18 @@ let namedInText = false;
     // 首次请求失败自动重试一次（手机网络首次连接常偏慢/抖动）
     let attempt = 0;
     let usage = null;
-    let cands = null;   // 三条候选（v2）；评审挑中的那条才进 full
-    let candsRetry = false;   // 三候选全失败时只退回老路径一次，别来回打转
+    // v0.5.5.3：候选池里只剩一条了，形状照旧留着 —— 下面的重试 / 截断兜底 / 用量
+    // 都按「池子里第 0 条」写的，换成裸字符串等于把这些分支全部重写一遍，没必要。
+    //
+    // 为什么撤掉三条候选（而不是把温度拉开）：官方 thinking_mode 文档写明思考模式下
+    // temperature 不支持（「设了不报错，也没有任何效果」），而 deepseek-flash 默认
+    // 就开着思考。0.85/1.00/1.15 发出去是三个同样的请求，唯一的区别只剩末尾那句
+    // 收/放提示 —— 付三份上下文 + 三份思考，买了两句话。用户实测质量与单条 high 相当。
+    let cands = null;
     for (;;) {
       try {
-        // 三条候选并行（v2 §2 P3）：温度 0.85 / 1.00 / 1.15，风格不是一个模子。
-        // 只有第 0 条往气泡里流式打字 —— 屏幕上先有个东西在长，不至于干等二十秒；
-        // 三条全回来后再评审挑一条，最终上屏的永远是挑中的那条（见下面 cadence 那段）。
-        if (LIVE) {
-        cands = await genCandidates({
-          baseMsgs: apiMsgs,
-          signal: abortCtl && abortCtl.signal,
-          // ⚠️ 只有第 0 条往气泡里长（0.5.3.6 修，用户 m02892 第 3 条）。
-          //    原来：候选 0 边流边打 → 评审挑了第 2 条 → 气泡被删 → 从头再打一遍，
-          //    用户看到的就是「先出一遍、消失、再出一遍」。
-          //    现在：流式只负责让屏幕先有字（别干等二十秒），
-          //    评审结束后由 paintFlow 把这个气泡【原地换】成最终那条（见上屏段）。
-          onDelta: (t) => {
-            if (!bubble) return;
-            bubble.textContent = String(t || '').replace(/\*/g, '');
-            scrollBottom();
-          },
-          genOpts: {
-            apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
-            // 角色自己的温度档位是【基准】：默认 1.0 → 0.85/1.0/1.15；设 0.5 → 0.35/0.5/0.65。
-            // 不传的话 candidate.js 会按 1.0 算，角色设置里的温度就静默失效了。
-            temperature: P.temperature,
-            maxTokens: P.maxTokens, topP: P.topP,
-            reasoningEffort: P.reasoningEffort,
-            onThink: (t) => { thinkBuf = t; }   // 收尾时回调（v1.21.30）；三路里最后写完的那路赢
-          }
-        });
-        } else {
-          // 总开关关掉：0.5.3.5 的单条流式，边流边打（用户熟悉的那条老路）。
+        {
+          // 0.5.3.5 的单条流式，边流边打（用户熟悉的那条老路）。
           let acc = '';
           const st1 = streamChat({
             apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
@@ -8087,13 +8075,12 @@ let namedInText = false;
             //    中断时最外层 catch 读的是 full —— 只写局部 acc 的话，
             //    它读到的永远是空串，于是「用户按停止 / 生成中切角色」这两条路
             //    都以为【一个字都没收到】：半截不落库、只弹一句「已停止生成」，
-            //    屏幕上刚吐出来的那半句当场消失。总开关关掉时走的就是这条分支。
+            //    屏幕上刚吐出来的那半句当场消失。
             full = acc;
             if (bubble) { bubble.textContent = String(acc).replace(/\*/g, ''); scrollBottom(); }
           }
-          // 包成一个单元素候选池：下面评审、pick、重写全都照原样走，
-          // pickIdx 必然是 0。usage 传 null —— 它已经由 onUsage 记过一次了，
-          // 这里再给一份会被 addUsage 加两遍。
+          // 包成单元素池：下面 take / 重写 / 落库全按「第 0 条」走。
+          // usage 传 null —— 它已经由 onUsage 记过一次了，再给一份会被加两遍。
           cands = { list: [{ idx: 0, temp: P.temperature, text: acc, finish: finishReason, usage: null }], usage: null };
         }
         bubble?.classList.remove('dots');
@@ -8128,21 +8115,6 @@ let namedInText = false;
           console.warn('[ctx] 上下文超长，但已经没有可再丢的历史了（额度 ' + histBudget + '）—— 不重发，直接报错');
           throw err;
         }
-        // 三条候选全都没回来（v2，文档 §2 约束②）：这不是「服务端拒绝」，是这一次三条
-        // 都没出话 —— 退回 v1 的单条流式，照样能聊；不许因为候选层出问题把这一轮挡死。
-        if (!candsRetry && /三条候选全都没回来/.test(String((err && err.message) || ''))) {
-          candsRetry = true;
-          console.warn('[v2] 三条候选全都没回来，退回单条流式：' + ((err && err.message) || err));
-          // 分两种情况，别混：
-          //  ① 三条都回来了、只是内容是空的 → 不是网络问题，交一张空候选下去，
-          //     让「空回复 → 本地兜底一句」那条老路接住（v25fix 覆盖的就是这条）。
-          //  ② 三条全是请求失败（500/断网）→ 这是真失败，照旧报错卡让人重试，
-          //     假装兜底一句才是最糟的：用户以为发出了，其实服务端全挂了。
-          if (err && err.cause) throw err;
-          cands = { list: [{ idx: 0, temp: P.temperature, text: '', finish: 'empty', usage }], usage };
-          bubble?.classList.remove('dots');
-          break;
-        }
         // ⚠️ 不能重试的错误别重试（v0.5.3.2，清单 §3.1）：
         //    key 错、余额空、模型名打错、参数不支持、内容被拦 —— 再问一遍答案一样，
         //    只是白花一次请求、多等 700ms，用户还看不出为什么没反应。
@@ -8167,33 +8139,11 @@ let namedInText = false;
       }
     }
 
-    // —— 选出这一轮真正要发出去的那条（v2 §2 P4/P5）——
-    // 候选 0 是底：评审没回来（超时 / JSON 坏了 / 被中断）就发它。
-    let crit = null;
-    // 总开关关掉时不评审：没有三条候选可挑，再让模型评一句只是多花一次钱。
-    if (LIVE && cands && cands.list && cands.list.length) {
-      try {
-        crit = await runCritique({
-          pool: cands.list,
-          inner: innerText,
-          userText: visibleText,
-          moveName: (psyDir && MOVE_NAME[psyDir.move]) || '',
-          stable: sysStable,
-          api: { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 },
-          signal: abortCtl && abortCtl.signal
-        });
-        if (crit && crit.usage) usage = addUsage(usage, crit.usage);
-      } catch (err) {
-        console.warn('[critique] 评审这次没跑成，直接用候选 1：' + ((err && err.message) || err));
-        crit = null;
-      }
-    }
-    // 用量记【三条之和】：钱是真花了，不能只记挑中的那条。
+    // v0.5.5.3：没有候选、没有评审了 —— 池子里这一条就是正文。
     if (cands && cands.usage) usage = addUsage(usage, cands.usage);
-    const pickIdx = (crit && crit.pick != null && cands.list[crit.pick]) ? crit.pick : 0;
-    full = cands.list[pickIdx].text;
-    // finish 用【挑中的那条】的：候选 0 没被截断、挑中的那条被截断了，也得按截断处理。
-    finishReason = cands.list[pickIdx].finish || '';
+    const _pick = (cands && cands.list && cands.list[0]) || null;
+    full = _pick ? _pick.text : '';
+    finishReason = (_pick && _pick.finish) || '';
 
     full = full.trim();
 
@@ -8258,23 +8208,16 @@ let namedInText = false;
       // ⚠️ 有放弃上限（0.5.3.4 复查）：连续两次补不到就只靠提示词，见上面 innerMiss 的注释。
       const _miss = innerMiss.get(myCharId) || 0;
       const _needInner = !innerSeen && _miss < 2 && !/\*[^*\n]{1,300}\*/.test(full);
-      // 第三个重写条件（v2 §2 P5）：评审自己给出的硬伤。
-      // 评审说「两条以上毛病」或直接给了重写方向 —— 那就是三条候选里没一条立得住，
-      // 与其硬发一条它自己都不认的，不如让它照着那句方向再写一次。
-      // 只有一条毛病时不触发：那种基本都是小瑕疵，重写的边际收益抵不上多等十几秒。
-      const _critFlaws = (crit && crit.flaws) || [];
-      const _needRewrite = _critFlaws.length >= 2 || !!(crit && crit.rewriteHint);
-      if (_th.length || _needInner || _needRewrite) {
+      // v0.5.5.3：原来还有第三个条件 —— 评审说「两条以上毛病」或给了重写方向。
+      // 评审撤了，这条跟着走：现在只有「命中万能动作」和「缺星号那一层」会触发重写。
+      if (_th.length || _needInner) {
         const asks = [];
         if (bad.length) asks.push('用了「' + bad.join('」「')
           + '」，这些是模板动作，不是这个角色此刻真会做的 —— 把这些写法全换掉，'
           + '写她这会儿手里在拿什么、身上哪儿不舒服、刚才那个动作还没做完');
         if (_needInner) asks.push('整条里没有那一层没说出口的心里话 —— 补一句，'
           + '单独用一对 * 包住（形如 *……*，一句就够，不要用两个星号）');
-        // 评审给的方向优先（它是看着三条候选说的），没有就把它列的毛病铺开。
-        if (_needRewrite) asks.push((crit && crit.rewriteHint) || _critFlaws.join('；'));
         console.warn('[重写] ' + (bad.length ? '命中万能动作 ' + bad.join(' / ') : '缺星号那一层')
-          + (_needRewrite ? ' / 评审说：' + ((crit && crit.rewriteHint) || _critFlaws.join('；')) : '')
           + ' —— 要求重写一次');
         try {
           const retryMsgs = apiMsgs.concat([
@@ -8535,8 +8478,9 @@ let namedInText = false;
 
   } catch (e) {
     console.error(e);
-    // 活人感 v2：中断如果发生在「三条候选还在跑」的时候，正文还在 candidate.js 手里 ——
-    // 它把已经流出来的半截挂在 AbortError.partial 上，这里接过来，按老规矩落「（已中断）」。
+    // 活人感 v2：中断如果发生在正文流式中途，半截有两种挂法 ——
+    // streamChat 的调用方读到多少就同步进 full（见生成那段），genCandidates 时代
+    // 则挂在 AbortError.partial 上。这里都接住，按老规矩落「（已中断）」。
     // 不接的话中断那一轮只剩一句 toast，用户以为刚才那半句被吞了。
     if (e && e.name === 'AbortError' && !String(full || '').trim() && e.partial) full = String(e.partial);
     // ⚠️ 先记日志再动界面（0.5.3.5）：下面几条分支会改 toast / 删消息，
@@ -17178,7 +17122,7 @@ function bindSettings() {
     try { await proactiveClear(); ok++; } catch { /* 原生没装也正常 */ }
     try { await proactiveStop(); ok++; } catch { /* 同上 */ }
     try { await pwPoolSet([]); } catch { /* 本地预写池清不掉只是白占一点空间 */ }
-    toast('活人感 v2 已关掉：独白 / 判断 / 三候选 / 评审 / 节奏 / 主动开场与通知全停' +
+    toast('活人感 v2 已关掉：独白 / 判断 / 拟真节奏 / 主动开场与通知全停' +
       (ok ? '' : '（原生那侧没响应，可能本来就没启用）'), 4200);
   };
 
@@ -20812,7 +20756,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.5.2';
+const WEB_VERSION_FALLBACK = '0.5.5.3';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

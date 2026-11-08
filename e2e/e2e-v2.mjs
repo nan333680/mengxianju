@@ -1,15 +1,16 @@
-// e2e-v2.mjs —— 活人感 v2（0.5.3.6）：独白 / 三候选 / 评审 / 上屏节奏 / 生活与关系 / 主动开场
+// e2e-v2.mjs —— 活人感 v2：独白 / 单条正文 / 上屏节奏 / 生活与关系 / 主动开场
+//
+// v0.5.5.3 起三条候选和评审都撤了（理由见 candidate.js 删除时留下的 app.js 注释），
+// 这一套跟着改成「一轮 = 独白 + 判断（并行）+ 一条流式正文」。
 //
 // 覆盖两类：
 //   A. 纯函数（页面里直接 import 模块跑）
 //      innerthought.js：normalizeInner（编号 / markdown / 行数 / 400 字上限）
-//      critique.js：parseCritique（围栏 / 尾逗号 / 中文引号 / 越界 / 非法）
 //      cadence.js：planCadence（固定 rnd 把 delayMs 断言死 / busy / 低电量 / 前插短条）
 //      psyche.js：deriveLife（各时段）/ relationLine / applyRelation（clamp）
-//   B. 端到端（劫持 fetch：非流式按 system 里的指令分四类，流式按温度分三条候选）
-//      · 一次 send 里：独白进提示词 + 三条候选温度 0.85/1.0/1.15 + 评审挑 pick + 用量累加
-//      · flaws>=2 触发第 4 个流式请求（重写），且上屏的是重写版
-//      · pick 越界 / 评审输出不是 JSON → 用候选 0，聊天不断
+//   B. 端到端（劫持 fetch：非流式按 system 里的指令分类，流式只回一条正文）
+//      · 一次 send 里：独白、判断各一次，正文只有一条（温度 = 角色自己的档位）+ 用量
+//      · 判断层返回非 JSON → 照样出话
 //      · 独白失败 → 提示词里没有那段，聊天照常
 //      · 群聊：按发言人各存一份 psyche
 //      · 主动开场：只开口一次，第二次进来不再开口
@@ -84,19 +85,18 @@ await page.evaluateOnNewDocument((dirJson) => {
 
   window.__cfg = {
     dir: dirJson,
-    // 默认：挑第 3 条（= 温度 1.15 那条），一条毛病都不挑 —— 不该触发重写
-    crit: '{"pick": 3, "flaws": [], "rewrite": ""}',
     // 独白故意给成「带编号 + markdown + 多行」，normalizeInner 要能吃下去
     inner: ["1. 第一反应是没懂", "- 手停在半空", "**咽回去了**", "# 想岔开", "", "真话是我也在意", "第五行", "第六行"].join(NLC),
     proactive: "你还醒着吗",
-    dirFail: false
+    // v0.5.5.3：三条候选撤了，这一轮正文就是它。带一对星号，免得撞上
+    // 「缺星号那一层」那条重写判据（那是另一套用例的事）。
+    body: "正文一条 *这句是心里话*"
   };
   window.__hits = { once: [], stream: [] };
   const realFetch = window.fetch.bind(window);
   const allOf = (body) => (((body && body.messages) || []).map(m => String(m.content || ""))).join(NLC);
   const kindOf = (all) => {
     if (all.indexOf("# 这一轮先别写正文") >= 0) return "dir";
-    if (all.indexOf("只输出 JSON") >= 0 && all.indexOf('"pick"') >= 0) return "crit";
     if (all.indexOf("先别写回复") >= 0) return "inner";
     if (all.indexOf("你先开口") >= 0) return "proactive";
     return "other";
@@ -113,23 +113,20 @@ await page.evaluateOnNewDocument((dirJson) => {
       const kind = kindOf(all);
       window.__hits.once.push({ kind, all });
       const cfg = window.__cfg || {};
-      if (kind === "dir") return json({ choices: [{ message: { content: JSON.stringify(cfg.dir || {}) } }], usage });
-      if (kind === "crit") return json({ choices: [{ message: { content: String(cfg.crit || "") } }], usage });
+      if (kind === "dir") return json({ choices: [{ message: { content: typeof cfg.dir === "string" ? cfg.dir : JSON.stringify(cfg.dir || {}) } }], usage });
       if (kind === "inner") return json({ choices: [{ message: { content: String(cfg.inner || "") } }], usage });
       if (kind === "proactive") return json({ choices: [{ message: { content: String(cfg.proactive || "") } }], usage });
       return json({ choices: [{ message: { content: "" } }], usage });
     }
-    // 流式：先认重写（正文里带着「上面这条不合格」），再按温度分三条候选
+    // 流式：先认重写（正文里带着「上面这条不合格」），否则就是这一轮的正文。
+    // v0.5.5.3：不再按温度分三条 —— 候选层已经撤了，一轮只该有一条。
     const isRewrite = all.indexOf("上面这条不合格") >= 0;
     const temp = Number(body.temperature);
+    const cfg2 = window.__cfg || {};
     window.__hits.stream.push({ temp, isRewrite, all });
-    let text;
     // ⚠️ 重写版必须带一对星号：v1 留下的「缺星号那一层」判据还在（innerSeen 冷启动），
     //    不带星号的重写版会被判不合格、保留原样 —— 这条断言测的就变成"重写被否"了。
-    if (isRewrite) text = "重写版（修好了）*这句是心里话*";
-    else if (Math.abs(temp - 0.85) < 1e-6) text = "候选甲（0.85）";
-    else if (Math.abs(temp - 1.15) < 1e-6) text = "候选丙（1.15）";
-    else text = "候选乙（1.0）";
+    const text = isRewrite ? "重写版（修好了）*这句是心里话*" : String(cfg2.body || "正文一条 *这句是心里话*");
     const chunk = (o) => "data: " + JSON.stringify(o) + SEP;
     const payload = chunk({ choices: [{ delta: { content: text } }] })
       + chunk({ choices: [{ delta: {}, finish_reason: "stop" }], usage })
@@ -270,48 +267,6 @@ t("normalizeInner 空输入/空值返回空串", A1.emptyOk && A1.nullOk);
 t("normalizeInner 削掉「（第一反应）」这类结构标签", A1.tagOk, A1.tagText);
 t("normalizeInner 不动真正带括号的心里话", A1.tagKeep, A1.tagText);
 
-const A2 = await page.evaluate(async () => {
-  const P = await import("/js/critique.js");
-  const N = String.fromCharCode(10);
-  const fenced = "```json" + N + '{"pick": 2, "flaws": ["说了太多解释",], "rewrite": "再短一点",}' + N + "```";
-  const a = P.parseCritique(fenced, 3);
-  const cnq = '{“pick”: 1, “flaws”: [], “rewrite”: “”}';
-  const b = P.parseCritique(cnq, 3);
-  const out = P.parseCritique('{"pick": 9, "flaws": [], "rewrite": ""}', 3);
-  const bad = P.parseCritique("我今天不太想评价", 3);
-  const zero = P.parseCritique('{"pick": 0}', 3);
-  const huge = P.parseCritique('{"pick": 1, "flaws": ["' + new Array(200).join("长") + '"], "rewrite": "' + new Array(200).join("长") + '"}', 3);
-  // 真模型会把每条 flaws 写成 40~60 字一整句，700 token 的预算在半截就断了，
-  // JSON 不闭合（0.5.3.7 真 key 实测）。这一条要能从截断文本里抢回 pick 和已闭合的 flaws。
-  const cut = P.parseCritique('{"pick": 2, "flaws": ["候选1太像在接话", "候选2把情绪总结出来了", "候选3', 3);
-  const dead = P.parseCritique('{"pick":', 3);
-  return {
-    aPick: a ? a.pick : null,
-    aFlaws: a ? a.flaws.length : -1,
-    aFlaw0: a ? String(a.flaws[0] || "") : "",
-    aRewrite: a ? a.rewriteHint : "",
-    bPick: b ? b.pick : null,
-    outNull: out === null,
-    badNull: bad === null,
-    zeroNull: zero === null,
-    flawLen: huge ? String(huge.flaws[0] || "").length : -1,
-    rwLen: huge ? String(huge.rewriteHint || "").length : -1,
-    cutPick: cut ? cut.pick : null,
-    cutFlaws: cut ? cut.flaws.length : -1,
-    deadNull: dead === null
-  };
-});
-t("parseCritique 剥围栏/尾逗号，编号 2 落到下标 1", A2.aPick === 1, "pick=" + A2.aPick);
-t("parseCritique 留下 flaws 与 rewrite", A2.aFlaws === 1 && A2.aFlaw0 === "说了太多解释" && A2.aRewrite === "再短一点", A2.aFlaw0 + " / " + A2.aRewrite);
-t("parseCritique 认中文引号", A2.bPick === 0, "pick=" + A2.bPick);
-t("parseCritique pick 越界返回 null", A2.outNull);
-t("parseCritique 不是 JSON 返回 null", A2.badNull);
-t("parseCritique pick 为 0 返回 null", A2.zeroNull);
-t("parseCritique 截断超长的 flaws/rewrite", A2.flawLen > 0 && A2.flawLen <= 40 && A2.rwLen >= 0 && A2.rwLen <= 80, "flaw=" + A2.flawLen + " rw=" + A2.rwLen);
-t("★ 被 max_tokens 截断的评审也能抢回 pick", A2.cutPick === 1, "pick=" + A2.cutPick);
-t("★ 截断时只收已经闭合的 flaws", A2.cutFlaws === 2, "flaws=" + A2.cutFlaws);
-t("连 pick 都没有的截断才返回 null", A2.deadNull);
-
 const A3 = await page.evaluate(async () => {
   const C = await import("/js/cadence.js");
   const fixed = () => 0.5;
@@ -428,7 +383,7 @@ async function switchTo(charId, patch) {
   if (patch) await setCfg(patch);
 }
 
-// ---- B1 正常一轮：独白 + 三候选 + 评审挑第 3 条 + 用量累加 ----
+// ---- B1 正常一轮：独白 + 判断（并行）+ 单条正文 ----
 prog("B1 mark begin");
 let mm = await mark();
 prog("B1 say begin");
@@ -437,37 +392,32 @@ prog("B1 say done");
 const h1 = await since(mm);
 prog("B1 since done");
 const k1 = h1.once.map(x => x.kind).sort().join(",");
-t("B1 一轮里独白、判断、评审各跑一次", k1 === "crit,dir,inner", "实际=" + k1);
-const temps1 = h1.stream.filter(x => !x.isRewrite).map(x => Number(Number(x.temp).toFixed(2))).sort((a, b) => a - b);
-t("B1 三条候选并行，温度 0.85/1.0/1.15", temps1.length === 3 && temps1[0] === 0.85 && temps1[1] === 1 && temps1[2] === 1.15, temps1.join(","));
-t("B1 没错可挑时不额外重写", h1.stream.every(x => !x.isRewrite), "流式请求数=" + h1.stream.length);
-// 温度在这家模型上不起作用（DeepSeek 官方：思考模式不支持 temperature，
-// deepseek-flash 非思考模式 top_p 固定 1.0）—— 三条的区分度靠结尾这句写法取向。
-const cands1 = h1.stream.filter(x => !x.isRewrite);
-const hinted1 = cands1.filter(x => String(x.all).indexOf("这一条收着写") >= 0 || String(x.all).indexOf("这一条放开写") >= 0);
-t("B1 三条里两条带写法取向", hinted1.length === 2, "带取向=" + hinted1.length);
-const c085 = cands1.find(x => Math.abs(Number(x.temp) - 0.85) < 1e-6) || {};
-t("B1 要上屏的第 1 条不附写法取向", String(c085.all || "").indexOf("这一条收着写") < 0 && String(c085.all || "").indexOf("这一条放开写") < 0);
+t("B1 一轮里独白和判断各跑一次", k1 === "dir,inner", "实际=" + k1);
+// v0.5.5.3 的核心断言：正文只该有一条。三条候选（0.85/1.0/1.15）已经撤了 ——
+// 官方 thinking_mode 文档写明思考模式下 temperature 无效，那三条本来就不是三种风格。
+t("B1 正文只有一条流式（三条候选已撤）", h1.stream.filter(x => !x.isRewrite).length === 1, "流式请求数=" + h1.stream.length);
+t("B1 没有额外的重写", h1.stream.every(x => !x.isRewrite), "流式请求数=" + h1.stream.length);
+const temps1 = h1.stream.filter(x => !x.isRewrite).map(x => Number(Number(x.temp).toFixed(2)));
+t("B1 这一条用的就是角色自己的温度", temps1.length === 1 && temps1[0] === 1, temps1.join(","));
 const gen1 = (h1.stream.find(x => !x.isRewrite) || {}).all || "";
-t("B1 生成提示词里带「你脑子里刚转过这几句」", gen1.indexOf("# 你脑子里刚转过这几句") >= 0);
-t("B1 生成提示词里带归一后的独白", gen1.indexOf("第一反应是没懂") >= 0);
-t("B1 评审看的也是同一份独白", ((h1.once.find(x => x.kind === "crit") || {}).all || "").indexOf("第一反应是没懂") >= 0);
+t("B1 正文那一趟的提示词里带「你脑子里刚转过这几句」", gen1.indexOf("# 你脑子里刚转过这几句") >= 0);
+t("B1 提示词里带归一后的独白", gen1.indexOf("第一反应是没懂") >= 0);
 t("B1 刚认识时不出现「你们之间」那句", gen1.indexOf("# 你们之间") < 0);
 prog("B1 asserts done");
 const bb1raw = await bubbles();
 prog("B1 bubbles done n=" + bb1raw.length);
 const bb1 = bb1raw.filter(x => x.ai);
-t("B1 pick=3 → 上屏第 3 条候选", bb1.length > 0 && bb1[bb1.length - 1].text.indexOf("候选丙") >= 0, bb1.length ? bb1[bb1.length - 1].text : "无");
+t("B1 上屏的是这一轮的正文", bb1.length > 0 && bb1[bb1.length - 1].text.indexOf("正文一条") >= 0, bb1.length ? bb1[bb1.length - 1].text : "无");
 const am1 = await aiMsgs("V1");
 prog("B1 aiMsgs done n=" + am1.length);
 const u1 = am1.length ? am1[am1.length - 1].usage : null;
-t("B1 用量记了三条候选 + 评审", !!u1 && JSON.stringify(u1).indexOf("400") >= 0, JSON.stringify(u1));
+t("B1 用量记在这一条上", !!u1 && Number(u1.prompt_tokens) > 0, JSON.stringify(u1));
 {
   console.log("  [logs]\n" + logs.filter(x => x.indexOf("[error]") >= 0 || x.indexOf("[warn]") >= 0).slice(-6).join("\n"));
 }
 
-// ---- B2 评审挑出两条毛病 → 触发重写 ----
-await setCfg({ crit: '{"pick": 2, "flaws": ["把话说满了", "客服腔"], "rewrite": ""}' });
+// ---- B2 判断层坏掉（返回的不是 JSON）→ 不挡聊天 ----
+await setCfg({ dir: "我今天不想判断" });
 prog("B2 setCfg done");
 mm = await mark();
 prog("B2 mark done");
@@ -475,43 +425,21 @@ await say("你在干吗");
 prog("B2 say done");
 const h2 = await since(mm);
 prog("B2 since done");
-const rw2 = h2.stream.filter(x => x.isRewrite);
-t("B2 flaws>=2 → 多跑一次重写", rw2.length === 1, "重写请求=" + rw2.length);
-t("B2 重写请求里带着被否掉的那条", rw2.length > 0 && rw2[0].all.indexOf("候选乙") >= 0);
+t("B2 判断层坏了也照样跑完这一轮", h2.stream.filter(x => !x.isRewrite).length === 1, "流式请求数=" + h2.stream.length);
 const bb2 = (await bubbles()).filter(x => x.ai);
-t("B2 上屏的是重写版", bb2.length > 0 && bb2[bb2.length - 1].text.indexOf("重写版") >= 0, bb2.length ? bb2[bb2.length - 1].text : "无");
+t("B2 判断层坏了 → 照样出话", bb2.length > 0 && bb2[bb2.length - 1].text.indexOf("正文一条") >= 0, bb2.length ? bb2[bb2.length - 1].text : "无");
+await setCfg({ dir: DIR });
 
-// ---- B3 pick 越界（评审乱给编号）----
-await switchTo("V2", { crit: '{"pick": 9, "flaws": [], "rewrite": ""}' });
-mm = await mark();
-await say("你好");
-const h3 = await since(mm);
-t("B3 pick 越界不触发重写", h3.stream.filter(x => x.isRewrite).length === 0);
-const bb3 = (await bubbles()).filter(x => x.ai);
-t("B3 pick 越界 → 退回第 1 条候选", bb3.length > 0 && bb3[bb3.length - 1].text.indexOf("候选甲") >= 0, bb3.length ? bb3[bb3.length - 1].text : "无");
-
-// ---- B4 评审输出不是 JSON ----
-await setCfg({ crit: "我觉得都还行" });
-mm = await mark();
-await say("嗯");
-const h4 = await since(mm);
-t("B4 评审坏了也不挡聊天", h4.stream.filter(x => !x.isRewrite).length === 3, "流式请求数=" + h4.stream.length);
-const bb4 = (await bubbles()).filter(x => x.ai);
-// ⚠️ 这里不能死等"候选甲"。V2 跑到这一轮已经有 2 条 assistant 历史、且都没有 *心里话*，
-//    v1 留下来的「缺星号那一层」兜底会照常触发一次重写 —— 那是设计内的（innerMiss 补两次才放弃），
-//    不是评审变好了。断言的意图是「评审坏了也照样出话、没有卡死」，不是「一定用第 1 条候选」。
-const _bb4 = bb4.length ? bb4[bb4.length - 1].text : "";
-t("B4 评审坏了 → 照样出话（候选 1 或补星号重写都算）",
-  bb4.length > 0 && (_bb4.indexOf("候选甲") >= 0 || _bb4.indexOf("重写版") >= 0), _bb4 || "无");
-
-// ---- B5 独白失败：提示词里没有那一段，聊天照常 ----
-await setCfg({ inner: "", crit: '{"pick": 1, "flaws": [], "rewrite": ""}' });
+// ---- B3 独白失败：提示词里没有那一段，聊天照常 ----
+await setCfg({ inner: "" });
 mm = await mark();
 await say("在吗");
-const h5 = await since(mm);
-const gen5 = (h5.stream.find(x => !x.isRewrite) || {}).all || "";
-t("B5 独白为空 → 提示词里没有那一段", gen5.indexOf("# 你脑子里刚转过这几句") < 0);
-t("B5 独白失败也照样出话", h5.stream.filter(x => !x.isRewrite).length === 3, "候选数=" + h5.stream.filter(x => !x.isRewrite).length);
+const h3 = await since(mm);
+const gen3 = (h3.stream.find(x => !x.isRewrite) || {}).all || "";
+t("B3 独白为空 → 提示词里没有那一段", gen3.indexOf("# 你脑子里刚转过这几句") < 0);
+t("B3 独白失败也照样出话", h3.stream.filter(x => !x.isRewrite).length === 1, "流式数=" + h3.stream.filter(x => !x.isRewrite).length);
+// 后面几段（群聊 / 主动开场）照旧要有独白，恢复回去
+await setCfg({ inner: ["1. 第一反应是没懂", "- 手停在半空", "**咽回去了**", "# 想岔开", "", "真话是我也在意", "第五行", "第六行"].join("\n") });
 
 // ---- B6 群聊：判断也跑，状态按发言人分开存 ----
 prog("B6 switchTo(VG) begin");

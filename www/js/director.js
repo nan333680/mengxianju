@@ -155,7 +155,7 @@ export function parseDirector(text) {
   if (a >= 0 && b > a) s = s.slice(a, b + 1);
   // 三步，顺序不能换：
   // ① 原样解析 —— 合法 JSON 里的中文引号是【正文】（例如 reading 里引用他的话），
-  //    先替换会把一条判断劈成两半（critique.js 那边踩过同样的坑）。
+  //    先替换会把一条判断劈成两半（同一个坑在评审那边也踩过，那一路已经撤了）。
   // ② 原样不成，才把尾逗号 / 中文引号当定界符洗一遍。
   // ③ 还是不成，多半是 max_tokens 截断（真模型常事），从原文里抢救字段。
   let o = null;
@@ -413,7 +413,7 @@ export async function runDirector(o) {
       // （onceChat 默认 90 秒 —— 手机上遇到慢网会让用户盯着转圈，
       //   这个代价比「这一轮没有内心戏」大得多。）
       timeoutMs: Number(api.timeoutMs) || 20000,
-      // 跟着这一轮一起断（同 critique.js）：不然点停止后 busy 还要挂满 20 秒。
+      // 跟着这一轮一起断（同独白那一趟）：不然点停止后 busy 还要挂满 20 秒。
       signal: signal || null
     });
   } catch (err) {

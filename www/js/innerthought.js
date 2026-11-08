@@ -16,8 +16,12 @@
 
 import { onceChat } from './api.js';
 
-/** 独白的输出上限。3~5 句中文，500 够，也给模型的呼吸留余量。 */
-const INNER_MAX_TOKENS = 500;
+/** 独白的输出上限。3~5 句中文，500 够，也给模型的呼吸留余量。
+ *
+ * ⚠️ v0.5.5.3：涨到 800。思考是【从 max_tokens 里扣】的（api.js onceChat 头部
+ *    那条实测注释记着：思考会把上限烧穿、content 返回空串），思考开着时 500
+ *    只剩三百来 token 写正文，「想了一堆、独白却是空串」的路就变宽了。 */
+const INNER_MAX_TOKENS = 800;
 
 /** 喂进去的历史条数。和 director 一样取 8：再多就是在重读整段聊天。 */
 const RECENT_N = 8;
@@ -128,9 +132,16 @@ export async function runInner(o) {
       temperature: 0.9,
       maxTokens: INNER_MAX_TOKENS,
       // 思考照开：写"没说出口的话"需要一点琢磨，关掉反而容易写成语录。
+      //
+      // ⚠️ v0.5.5.3：但必须【显式指定档位】。原来只写 noThink:false、不传档位，
+      //    落到 onceChat 默认的 reasoningEffort:'none' —— 而官方映射表里只有
+      //    low/high/max，没有 none（thinking_mode 文档）。它不是一个"声明过的低档"，
+      //    而是一个"没被声明的值"，实际跑成什么不由我们决定；而这一路和判断并行、
+      //    共享整轮的等待，所以这里钉死 low。
       noThink: false,
+      reasoningEffort: 'low',
       timeoutMs: Number(api.timeoutMs) || 20000,
-      // 跟着这一轮一起断（同 critique.js）：不然点停止后 busy 还要挂满 20 秒。
+      // 跟着这一轮一起断（同判断那一趟）：不然点停止后 busy 还要挂满 20 秒。
       signal: signal || null
     });
   } catch (err) {

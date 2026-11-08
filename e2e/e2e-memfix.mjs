@@ -62,7 +62,15 @@ await page.evaluateOnNewDocument(() => {
     let body = {};
     try { body = JSON.parse((opts && opts.body) || '{}'); } catch {}
     if (u.includes('/chat/completions')) {
-      window.__memCalls.push({ stream: !!body.stream, effort: body.reasoning_effort });
+      // v0.5.5.3：独白那一趟也是非流式，但它是【故意开着思考】（reasoningEffort: 'low'）——
+      // 它写的是"她没说出口的话"，不是"只输出 JSON"，两者的档位要求正好相反。
+      // 所以这里给它打个标记，下面数「记忆任务」时排掉。
+      const _all = ((body && body.messages) || []).map(m => String(m.content || "")).join("\n");
+      window.__memCalls.push({
+        stream: !!body.stream,
+        effort: body.reasoning_effort,
+        isInner: _all.indexOf("先别写回复") >= 0
+      });
       const json = '[{"text":"他老家在成都","kind":"fact","untilDay":null,"freq":"once"},'
                  + '{"text":"他怕黑，睡觉要留灯","kind":"fact","untilDay":null,"freq":"once"}]';
       if (body.stream) {
@@ -171,7 +179,8 @@ await sendOnce('在吗');
 // 等记忆任务
 for (let i=0;i<40;i++){ const n=await memCount(); if(n.length) break; await sleep(1000); }
 {
-  const calls = await page.evaluate(() => window.__memCalls.filter(c => !c.stream));
+  // 只数记忆任务：独白那一趟是「故意开思考」的，见上面 mock 里的注释。
+  const calls = await page.evaluate(() => window.__memCalls.filter(c => !c.stream && !c.isInner));
   t('有非流式调用（记忆任务）', calls.length > 0, '实际 ' + calls.length);
   t('每个都显式传了 reasoning_effort', calls.length > 0 && calls.every(c => c.effort !== undefined),
     JSON.stringify(calls.map(c=>c.effort)));

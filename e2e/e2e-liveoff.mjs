@@ -228,9 +228,10 @@ mm = await mark();
 await say("再说一句");
 const h2 = await since(mm);
 const kinds = h2.once.map(x => x.kind).sort().join(",");
-t("L4 打开后独白 + 判断 + 评审都在", kinds === "crit,dir,inner", "实际=" + kinds);
-const temps = h2.stream.filter(x => !x.isRewrite).map(x => Number(Number(x.temp).toFixed(2))).sort((a, b) => a - b);
-t("L4 打开后候选还是三条（0.85/1.0/1.15）", temps.length === 3 && temps[0] === 0.85 && temps[1] === 1 && temps[2] === 1.15, temps.join(","));
+// v0.5.5.3：三条候选和评审撤了，打开后只剩独白 + 判断（各一次，并行）。
+t("L4 打开后独白 + 判断都在", kinds === "dir,inner", "实际=" + kinds);
+const temps = h2.stream.filter(x => !x.isRewrite).map(x => Number(Number(x.temp).toFixed(2)));
+t("L4 打开后正文只有一条，温度就是角色值", temps.length === 1 && temps[0] === 1, temps.join(","));
 const gen2 = (h2.stream.find(x => !x.isRewrite) || {}).all || "";
 t("L5 打开后「你脑子里刚转过这几句」回来了", gen2.indexOf("# 你脑子里刚转过这几句") >= 0);
 

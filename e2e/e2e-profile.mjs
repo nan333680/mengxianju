@@ -73,7 +73,9 @@ await page.reload({waitUntil:'networkidle0'}); await sleep(500);
 
 console.log('=== 1. ⚙ 设置页里旧的那块已经撤掉 ===');
 await openSettings();
-t('没有「我的相关设定」大折叠头', !(await page.$('#mine-fold')));
+// v0.5.5.2：全局那一份回到设置页了（出厂默认值改成空，用户得自己填）。
+// 这条原来断言「没有」，现在反过来。
+t('设置页又有「我的设定」大折叠头了', !!(await page.$('#mine-fold')));
 t('没有「她该怎么理解你」输入框', !(await page.$('#s-profile')));
 t('没有「我居住的环境」输入框', !(await page.$('#s-env')));
 t('没有旧的保存按钮', !(await page.$('#btn-profile-save')));
@@ -88,16 +90,16 @@ t('有「他的居处」折叠头', !!(await page.$('#e-home-fold')));
 console.log('');
 console.log('=== 3. 默认内容 / 摘要 / 字数 ===');
 const pre = await page.$eval('#e-mine', el => el.value);
-t('默认已预填内容', pre.length > 100, '长度=' + pre.length);
-// v1.21.51：出厂默认从「私人自述」换成通用模板，关键词跟着换
-  t('默认是通用模板（上班族）', /上班族|工作日|通勤/.test(pre), pre.slice(0, 40));
+// v0.5.5.2：出厂默认从「570 字通用模板」改成【空】—— 那段模板会编进 APK，
+// 而一份「通用的我」对谁都不像。没填就没有「# 关于对方」这一段。
+t('出厂默认是空的', pre.length === 0, '长度=' + pre.length);
 const brief0 = await page.$eval('#e-mine-brief', el => el.textContent);
 console.log('   摘要: ' + brief0);
-t('摘要显示行数', /\d+\s*行/.test(brief0), brief0);
+t('摘要写「未填」', brief0 === '未填', brief0);
 await jsClick('#e-mine-fold'); await sleep(500);
 const cnt = await page.$eval('#e-mine-count', el => el.textContent);
 console.log('   字数: ' + cnt);
-t('显示字数', /\d+\s*字/.test(cnt), cnt);
+t('字数写「（空的）」', cnt === '（空的）', cnt);
 
 console.log('');
 console.log('=== 4. 改内容 → 点 ✓ → 写进角色自己的字段 ===');
@@ -142,18 +144,21 @@ const empty = await page.evaluate(async () => {
 t('空的时候没有这一段（明确留空 = 不要，不是回落全局）', !empty.includes('# 关于对方'));
 
 console.log('');
-console.log('=== 8. 「填回默认」只填框、不直接保存 ===');
+console.log('=== 8. 「撤销修改」只改框、不直接保存 ===');
 await openEdit();
 await page.evaluate(() => { const a=document.getElementById('e-mine'); a.value='乱写的'; a.dispatchEvent(new Event('input',{bubbles:true})); });
 await sleep(300);
 await jsClick('#btn-e-mine-reset'); await sleep(700); await jsClick('#modal-ok'); await sleep(700);
 const boxVal = await page.$eval('#e-mine', el => el.value);
-t('框里变回默认内容', boxVal.length > 100);
+// v0.5.5.2：按钮从「填回默认」改成「撤销修改」。默认值现在是空的，
+// 「填回默认」等于清空输入框、会静默删掉用户写的东西；现在它恢复成【上次保存的那一份】。
+t('框里恢复成上次保存的内容', boxVal === '【称呼】叫我阿澈就好。\n【雷区】别提工作。', JSON.stringify(boxVal.slice(0, 30)));
 const stillSaved = await readChar(mineId);
 t('还没保存，库里仍是刚才那份', stillSaved.myProfile === '【称呼】叫我阿澈就好。\n【雷区】别提工作。', JSON.stringify(stillSaved.myProfile));
 await jsClick('#btn-edit-save'); await sleep(1200);
 const nowSaved = await readChar(mineId);
-t('点 ✓ 之后才真的换掉', nowSaved.myProfile.length > 100 && nowSaved.myProfile !== stillSaved.myProfile);
+// 撤销之后再点 ✓，存的就是「上次保存的那一份」本身 —— 值不变，但保存链路走完了
+  t('点 ✓ 之后库里跟撤销后的框一致', nowSaved.myProfile === stillSaved.myProfile, JSON.stringify(nowSaved.myProfile.slice(0, 20)));
 
 console.log('');
 console.log('=== 9. 非对话描写程度条：新建角色的路径 ===');

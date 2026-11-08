@@ -15,6 +15,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync, execSync } from 'child_process';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,6 +36,38 @@ const suites = block[1].split('\n').map(l => l.replace(/#.*$/, '')).join('\n')
 const junk = suites.filter(s => !/^[A-Za-z0-9_.-]+$/.test(s));
 if (junk.length) { console.error('ci.yml 的 $suites 解析出可疑项：' + JSON.stringify(junk)); process.exit(2); }
 console.log('CI 套件清单：' + suites.length + ' 套');
+
+// ---------- 语法检查：$suites 段必须能被【真正的 PowerShell】解析 ----------
+// 上面那个 split(',') 只数得清有几个名字，看不见语法错误。
+// v0.5.5.2 的尾逗号就是这样漏过去的：`@('a','b',)` 在 PowerShell 里非法，
+// 但 split(',') 把它切成 ['a','b',''] 再 filter 掉空段 —— 项数、junk 检查全过，
+// 本地全绿，CI 41 秒 ParserError。
+// ⚠️ 不要以为「只有最后一个元素不能有尾逗号」：@() 数组字面量【任何位置】都不接受，实测。
+{
+  const tmp = path.join(os.tmpdir(), 'mxj-suites-' + process.pid + '.ps1');
+  try {
+    fs.writeFileSync(tmp, '$s = @(' + block[1] + '\r\n)\r\nWrite-Output $s.Count\r\n', 'utf8');
+    const out = execFileSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', tmp],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const n = Number(out);
+    if (!Number.isFinite(n) || n !== suites.length) {
+      console.error('  ✗ $suites 真解析出 ' + out + ' 项，正则切出 ' + suites.length + ' 项');
+      try { fs.unlinkSync(tmp); } catch { /* 忽略 */ }   // ⚠️ exit 会跳过 finally，这里必须自己收
+      process.exit(2);
+    }
+    console.log('  ✓ $suites 能被 PowerShell 解析，' + n + ' 项');
+  } catch (e) {
+    if (e && (e.code === 'ENOENT')) { console.error('  ⚠ 找不到 pwsh，跳过语法检查（CI 上一定会跑）'); }
+    else {
+      console.error('  ✗ ci.yml 的 $suites 有 PowerShell 语法错误：');
+      console.error(String(e.stderr || e.stdout || e.message).split('\n').slice(0, 8).join('\n'));
+      try { fs.unlinkSync(tmp); } catch { /* 忽略 */ }   // 同上
+      process.exit(2);
+    }
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* 忽略 */ }
+  }
+}
 
 // ---------- ③ 静态检查：CI 套件不许引用被 gitignore 的路径 ----------
 const IGNORED = ['tmp/', '_archive/', '_fixtures/', '_research/'];

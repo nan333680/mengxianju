@@ -200,8 +200,14 @@ console.log('   自动备份频率');
   await sleep(600);
   const saved = await page.evaluate(async () => { const { kv } = await import('/js/db.js'); return (await kv.get('settings', {})).myProfile; });
   t('我的设定存进去会 trim 掉首尾空格', saved === '测试', JSON.stringify(saved));
+  // 居住环境那一栏同理（同一个根因，别只钉一半）
+  await page.$eval('#s-myenv', el => { el.value = '  小屋子  '; el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await sleep(600);
+  const savedEnv = await page.evaluate(async () => { const { kv } = await import('/js/db.js'); return (await kv.get('settings', {})).myEnv; });
+  t('居住环境存进去也会 trim', savedEnv === '小屋子', JSON.stringify(savedEnv));
   // 收尾：清掉，别把测试值留给后面的套件
   await page.$eval('#s-myprofile', el => { el.value = ''; el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.$eval('#s-myenv', el => { el.value = ''; el.dispatchEvent(new Event('change', { bubbles: true })); });
   await sleep(400);
 }
 // ⚠️ 断言反转（v1.21.47）：「他的设定 / 他的居处」已从设置页搬到【角色编辑页】
@@ -324,6 +330,34 @@ await page.evaluate(() => document.querySelectorAll('#char-list .char-card butto
 await sleep(600);
 t('已回到角色编辑页', await page.$eval('#view-edit', el => el.classList.contains('active')));
 
+// v0.5.5.2：编辑页那两个框（#e-mine / #e-home）也要 trim。
+// 前面那两条只覆盖了设置页的全局那份，而 saveCharEdit 是【所有角色保存】都会走的路径 ——
+// 一处不 trim，一个尾随空格就让这个角色永久不再回落全局（persona.js 判 !== undefined）。
+{
+  const cid = await page.evaluate(() => {
+    const card = document.querySelectorAll('#char-list .char-card')[0];
+    card.querySelector('button[data-edit]').click();
+    return card.dataset.id;
+  });
+  await sleep(700);
+  await page.$eval('#e-mine', el => { el.value = '  山上的屋子  '; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.$eval('#e-home', el => { el.value = '  窗外有棵树  '; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await sleep(200);
+  await page.click('#btn-edit-save');
+  await sleep(900);
+  const savedChar = await page.evaluate(async (id) => {
+    const { chars } = await import('/js/db.js');
+    const c = await chars.get(id);
+    return c ? { p: c.myProfile, e: c.myEnv } : null;
+  }, cid);
+  t('编辑页的「你的设定」存进去也会 trim', savedChar && savedChar.p === '山上的屋子', JSON.stringify(savedChar && savedChar.p));
+  t('编辑页的「你的居处」存进去也会 trim', savedChar && savedChar.e === '窗外有棵树', JSON.stringify(savedChar && savedChar.e));
+  // ⚠️ 点完 ✓ 已经离开编辑页，而这个位置后面的第 5 节还指望「当前在编辑页」。
+  //    自己导航回去，别把状态依赖藏在对别人的运动作里（第一版就是这么把第 4 节撞挂的）。
+  await page.click('#btn-chars'); await sleep(500);
+  await page.evaluate(() => document.querySelectorAll('#char-list .char-card button[data-edit]')[0].click());
+  await sleep(600);
+}
 console.log('');
 console.log('=== 5. 覆盖全局：取消 → 勾退回 ===');
 await page.click('#e-override-global');

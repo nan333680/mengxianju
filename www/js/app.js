@@ -11703,8 +11703,14 @@ async function saveCharEdit() {
     appearance: $('e-look').value,
     appearanceOn: $('e-look-on').checked,
     // 「他的设定 / 他的居处」（v1.21.47）：从全局搬到角色级，随角色一起存
-    myProfile: $('e-mine').value,
-    myEnv: $('e-home').value,
+    // ⚠️ v0.5.5.2：必须 trim。这一项和下面 canonExtra / userAddress 那几项一样是文本，
+    //    但它们都 trim 了、这两项原来没有 —— 一个尾随空格就会存成 ' '：
+    //    `!data.myProfile` 为假（' ' 是 truthy），于是不 delete、' ' 落库；
+    //    而 persona.js 判的是 `!== undefined`，' ' 算「有值」→ 这个角色从此不再回落全局，
+    //    可界面上 1312 行用 String(cur).trim() 判空，显示的还是「还没有」。
+    //    一个空格 = 永久切断，界面上还说没切。
+    myProfile: $('e-mine').value.trim(),
+    myEnv: $('e-home').value.trim(),
     canonExtra: $('e-canon').value.trim(),
     // 「她怎么看你」（v0.5.2）：空串照存（不写 undefined），这样"清空"能真的存进去
     userAddress: $('e-useraddr').value.trim(),
@@ -16781,7 +16787,7 @@ function bindSettings() {
     if (mp) {
       mp.value = String(S.myProfile || '');
       mp.onchange = async e => {
-        await saveSettings({ myProfile: e.target.value });
+        await saveSettings({ myProfile: e.target.value.trim() });
         refreshMineHint();
         toast('我的设定已保存');
       };
@@ -16789,7 +16795,7 @@ function bindSettings() {
     if (me) {
       me.value = String(S.myEnv || '');
       me.onchange = async e => {
-        await saveSettings({ myEnv: e.target.value });
+        await saveSettings({ myEnv: e.target.value.trim() });
         refreshMineHint();
         toast('居住环境已保存');
       };

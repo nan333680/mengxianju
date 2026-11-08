@@ -7,13 +7,18 @@
 // 导出那一侧不在这里测：它要经 Filesystem / Share 插件，headless 里落不了地；
 // 打包逻辑本身由 e2e-charcard 的纯函数断言盯着。
 import puppeteer from 'puppeteer-core';
-import http from 'http'; import fs from 'fs'; import path from 'path';
+import http from 'http'; import fs from 'fs'; import path from 'path'; import os from 'os';
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const FIX = `${R}/_fixtures`;
+// ⚠️ v0.5.5.2：造出来的卡放系统临时目录，不放仓库 `_fixtures/`。
+//    原来写的是 `${R}/_fixtures` —— 靠 ci-precheck 的两个巧合绕过了静态检查
+//    （`IGNORED` 里是 '_fixtures/' 带尾斜杠，而这里连斜杠都没到；再加上 mkdirSync 用的是变量名，
+//      `wroteIt` 那条兜底也没认出来）。哪天有人补个尾斜杠就会突然报红，
+//    报的还是「引用了被忽略的路径（CI 上不存在）」，而它明明自己会建。
+//    这个目录本来就是给 e2e-import / e2e-wbpimport2 这类【读固定样本】的套件用的。
+const FIX = fs.mkdtempSync(path.join(os.tmpdir(), 'mxj-cardio-'));
 const MIME = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
-fs.mkdirSync(FIX, { recursive: true });
 const AVATAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const fixture = path.join(FIX, 'card-full.json');
 fs.writeFileSync(fixture, JSON.stringify({
@@ -44,6 +49,11 @@ await new Promise(r => server.listen(0,'127.0.0.1',r));
 const port = server.address().port;
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, protocolTimeout: 120000, args: ['--no-sandbox','--disable-dev-shm-usage','--disable-gpu'] });
 const page = await browser.newPage();
+// ⚠️ CI 的 runner 是 en-US，界面默认「跟随系统」。钉成中文，否则英文界面下断言中文文案的地方会红。
+await page.evaluateOnNewDocument(() => {
+  Object.defineProperty(navigator, 'language', { get: () => 'zh-CN', configurable: true });
+  Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'], configurable: true });
+});
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 const sleep = ms => new Promise(r=>setTimeout(r,ms));

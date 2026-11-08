@@ -192,6 +192,18 @@ console.log('   自动备份频率');
   });
   await sleep(600);
 }
+// v0.5.5.2：这两个框必须 trim。一个尾随空格会存成 ' '，而 persona.js 判的是
+// `!== undefined`，' ' 算「有值」→ 这个角色永久不再回落全局；
+// 可界面上用 String(cur).trim() 判空，显示的还是「还没有」——一个空格 = 永久切断。
+{
+  await page.$eval('#s-myprofile', el => { el.value = '  测试  '; el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await sleep(600);
+  const saved = await page.evaluate(async () => { const { kv } = await import('/js/db.js'); return (await kv.get('settings', {})).myProfile; });
+  t('我的设定存进去会 trim 掉首尾空格', saved === '测试', JSON.stringify(saved));
+  // 收尾：清掉，别把测试值留给后面的套件
+  await page.$eval('#s-myprofile', el => { el.value = ''; el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await sleep(400);
+}
 // ⚠️ 断言反转（v1.21.47）：「他的设定 / 他的居处」已从设置页搬到【角色编辑页】
 // （每个角色一份，不再是全局共用）。设置页里不该再看到它们。
 t('「我的相关设定」已从设置页撤掉', (await page.$$eval('#view-settings #mine-fold', els => els.length)) === 0);

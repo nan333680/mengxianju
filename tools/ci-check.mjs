@@ -86,7 +86,21 @@ console.log('== 4. i18n 里没有重复 key（JS 对象重复 key 不报错，�
     const ln = lines[i];
     if (!cur) {
       const open = ln.match(/^const\s+([A-Za-z_$][\w$]*)\s*=\s*\{/);
-      if (open) { cur = open[1]; startLine = i + 1; seen = new Map(); }
+      if (open) {
+        cur = open[1]; startLine = i + 1; seen = new Map();
+        // ⚠️ 单行对象（i18n.js:72 的 `const MAP = { en: EN };`）在这一行就闭合了，
+        //    没有单独的 `^};` 结尾 —— 不认这个的话，下一个对象（EXTRA_ZH，82-538 行）
+        //    整段都会被算成 MAP 的块：重复还能抓到，但报错会写「MAP 里的 X」，
+        //    照着名字去找会找错地方。
+        if (/\}\s*;?\s*$/.test(ln)) {
+          for (const mm of ln.matchAll(/(['"])((?:\\.|(?!\1).)*)\1\s*:/g)) {
+            const kk = mm[2];
+            if (seen.has(kk)) dups.push(open[1] + ' 里的「' + kk + '」（同一行内重复）');
+            else seen.set(kk, i + 1);
+          }
+          cur = null;
+        }
+      }
       continue;
     }
     if (/^\};/.test(ln)) { cur = null; continue; }         // 这一块结束

@@ -17202,7 +17202,10 @@ function bindSettings() {
     const c = allChars.find(x => x.id === cid);
     const txt = auditToText(cid, await auditList(cid), (c && c.name) || '');
     const box = $('modal');
-    $('modal-title').textContent = tt('记忆写入记录');
+    // ⚠️ 标题里带上角色名（v0.5.6 复查）：设置页不显示"当前是哪个角色"，
+    //    而这三个按钮都按 curCharId 取数据 —— 不带名字的话，用户点开很可能
+    //    看到的是上次聊的那个角色的记录，还以为是自己想找的那个。
+    $('modal-title').textContent = tt('记忆写入记录') + (c && c.name ? ' · ' + c.name : '');
     $('modal-text').innerHTML = '<pre class="mem-audit-pre">' + esc(txt) + '</pre>';
     $('modal-ok').textContent = tt('知道了');
     $('modal-cancel').classList.add('hidden');

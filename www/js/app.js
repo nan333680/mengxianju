@@ -2156,7 +2156,9 @@ async function maybeProactiveOpen(charId) {
     if (bond < PRO_BOND) return;                        // 还没熟到能主动找他
     if (Math.random() >= PRO_P) return;                 // 掷签：不是每次都开口
     const P2 = effSettings(c, S);
-    const life = deriveLife(psy, { now: Date.now(), char: c, rnd: lifeRndFor(c.id, Date.now()) });
+    // v0.5.5.4：钟点取【剧情】的，不是真实的 —— 两处必须同一个值，否则种子和档位会错开
+    const _proHour = storyHourFor(c.id);
+    const life = deriveLife(psy, { now: Date.now(), hour: _proHour, char: c, rnd: lifeRndFor(c.id, _proHour) });
     const hours = Math.max(1, Math.round(gap / 3600000));
     const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 };
     let stable = '';
@@ -2337,7 +2339,9 @@ async function prewriteProactive(charId) {
     if (!psy) psy = emptyPsyche();
     if ((Number(psy.relation && psy.relation.bond) || 0) < PRO_BOND) return;   // 还没熟到会主动找你
     const P2 = effSettings(c, S);
-    const life = deriveLife(psy, { now: Date.now(), char: c, rnd: lifeRndFor(c.id, Date.now()) });
+    // v0.5.5.4：钟点取【剧情】的，不是真实的 —— 两处必须同一个值，否则种子和档位会错开
+    const _proHour = storyHourFor(c.id);
+    const life = deriveLife(psy, { now: Date.now(), hour: _proHour, char: c, rnd: lifeRndFor(c.id, _proHour) });
     let stable = '';
     try { stable = buildStablePrompt(c, P2, await worldbookConst(charId)); } catch { stable = ''; }
     if (!stable) return;
@@ -2345,13 +2349,13 @@ async function prewriteProactive(charId) {
     const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 20000 };
     // 先独白再写：直接写三句会写成三句礼貌的招呼
     const inner = await runInner({
-      stable, recent, userText: '（他这会儿没在看手机）', api: apiCfg, signal: null
+      stable, recent, userText: '（他这会儿没在看消息）', api: apiCfg, signal: null
     }).catch(() => '');
     const ask = [
       '（你脑子里刚转过这几句：' + (inner || '（也没什么事，就是想起他了）') + '）',
       '（你现在：' + (life.activity || '在忙自己的事') + '）',
       '',
-      '你要在他没看手机的时候，过一阵子给他发一句话。现在先写好三句。',
+      '你要在他没看消息的时候，过一阵子给他发一句话。现在先写好三句。',
       '一句一行，每句最多 20 个字，三句彼此不一样：一句问他、一句说你自己这会儿的事、一句没头没尾的。',
       '不要寒暄，不要「在吗」，不要问「你怎么不理我」，不要解释你为什么找他，不要编号。'
     ].join('\n') + hardSuffix();
@@ -7077,15 +7081,40 @@ async function exportChatMarkdown() {
  */
 
 /**
+ * 某个角色此刻的【剧情】钟点（v0.5.5.4）。
+ *
+ * 为什么需要它：deriveLife / lifeRndFor 原来一律读 new Date().getHours()，
+ * 而用户的时间条大多是手动锁住的（clockState.locked）。于是剧情 11 点中午、
+ * 真实钟点凌晨 0 点，生活状态按真实钟点算成「在被窝里躺着，还没睡」——
+ * 她会写出「中午在被窝里」这种自相矛盾的开头，模型只能硬圆。
+ *
+ * 当前角色读 clockState；主动消息可能发给别的角色（定时器按真实间隔跑），
+ * 那时拿不到它的 clock，退回真实钟点 —— 宁可偶尔不同步，也不要读错别人的时间。
+ */
+function storyHourFor(charId) {
+  if (!charId || charId === curCharId) {
+    const h = clockState && Number(clockState.hour);
+    if (Number.isFinite(h)) return h;
+  }
+  return new Date().getHours();
+}
+
+/**
  * 「她这会儿在做什么」用的确定性伪随机（v0.5.4.3）。
  *
  * 同一个角色 + 同一个小时 → 同一条活动、同一个忙/闲。
  * deriveLife 接受 rnd 参数（e2e 用它注入固定序列），这里只是给线上调用一个稳定的种子：
  * 不稳定的生活比没有生活更假（上一轮值夜班、下一轮看书）。
+ *
+ * ⚠️ v0.5.5.4：第二个参数从【时间戳】改成【小时数】，而且必须和喂给 deriveLife
+ *    的 ctx.hour 是同一个值。只改 deriveLife 不改这里的话，剧情钟点不变、种子
+ *    却按真实钟点每小时跳一次 → 同一个剧情小时里 activity 会漂，比原来更乱。
  */
-function lifeRndFor(charId, now) {
-  const hour = new Date(now).getHours();
-  const key = String(charId || '') + '#' + hour;
+function lifeRndFor(charId, hour) {
+  const hh = Number.isFinite(Number(hour))
+    ? ((Math.floor(Number(hour)) % 24) + 24) % 24
+    : new Date().getHours();
+  const key = String(charId || '') + '#' + hh;
   let s = 0;
   for (let i = 0; i < key.length; i++) s = (s * 31 + key.charCodeAt(i)) | 0;
   s = Math.abs(s) || 1;
@@ -7695,7 +7724,12 @@ let namedInText = false;
       // 上一轮在值夜班、下一轮在看书，等于没有「她自己的生活」，只有每轮随机一句场景。
       // 现在按 charId + 小时做种子：一个小时内始终是同一件事，跨小时才换。
       const _now0 = Date.now();
-      psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: _now0, char: myChar, rnd: lifeRndFor(myChar.id, _now0) }) });
+      // v0.5.5.4：按【剧情】钟点算，不再按真实钟点。
+      // 手动锁时间时两者经常差一整段（剧情中午 11 点、真实凌 0 点），
+      // 按真实钟点算出「在被窝里躺着」，她就只能写出「中午在被窝里」。
+      // ⚠️ 这个值必须和下面 lifeRndFor 的第二个参数是同一个，否则种子和档位错开。
+      const _lifeHour = storyHourFor(myChar.id);
+      psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: _now0, hour: _lifeHour, char: myChar, rnd: lifeRndFor(myChar.id, _lifeHour) }) });
     } catch { /* 推导失败就沿用读到的旧生活状态，不影响下面的判断 */ }
 
     if (LIVE && S.apiKey) {
@@ -7868,6 +7902,12 @@ let namedInText = false;
       // 它不进聊天记录、不进历史 —— 只留在这里给「这一轮她心里」那一段展开看，
       // 也方便排查「提示词到底带没带独白」。
       inner: _cut(innerText, 200),
+      // 活人感 v2（v0.5.5.4）：这一轮「她本来在做的事」的原文。
+      // 为什么要留：它【每轮都进提示词】，而它的值是按钟点推出来的 ——
+      // 钟点错了，她就写出「剧情中午 11 点、我在被窝里」这种自相矛盾的开头。
+      // 之前这里没有它，出问题只能靠回复反推；有了它，改完之后翻任何一轮
+      // 都看得见当时的 lifeLine 到底是什么，验证才有落点。
+      life: _cut(lifeLine(psyBefore), 40),
     };
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -11179,6 +11219,13 @@ async function showInj(inj) {
       secs.push('<h4 class="inj-h">' + esc(tt('她脑子里')) + '</h4>'
         + il.map(t => '<div class="inj-row">' + esc(t) + '</div>').join(''));
     }
+  }
+  // ---- 活人感 v2：她这一轮本来在做的事 ----
+  // 它每轮都在提示词里，而且是【按钟点推】的 —— 钟点错一格，她就会写出
+  // 「中午在被窝里」那种开头。放在「她脑子里」后面：先看她怎么想的，再看她站在哪儿。
+  if (inj.life) {
+    secs.push('<h4 class="inj-h">' + esc(tt('她本来在做')) + '</h4>'
+      + '<div class="inj-row">' + esc(String(inj.life)) + '</div>');
   }
   if (inj.arc) {
     const ai = (Number(inj.arc.i) || 0) + 1;
@@ -20756,7 +20803,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.5.3';
+const WEB_VERSION_FALLBACK = '0.5.5.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

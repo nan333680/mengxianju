@@ -314,7 +314,10 @@ const A4 = await page.evaluate(async () => {
     warm1: warm1,
     warmClamped: rel.relation.warmth,
     llBusy: S.lifeLine({ life: { activity: "在忙", busy: true } }),
-    llIdle: S.lifeLine({ life: { activity: "躺着刷手机", busy: false } })
+    // ⚠️ v0.5.5.4：夹具原来写的是 "躺着刷手机" —— 那个活动已经从 LIFE_SLOTS 里删掉了。
+    // 这条测的是 lifeLine 拼不拼尾巴，和活动文本无关，换成表里真实存在的词，
+    // 免得以后看测试的人以为作息表里还有「手机」。
+    llIdle: S.lifeLine({ life: { activity: "躺着，不想动", busy: false } })
   };
 });
 t("deriveLife 深夜：睡了、忙、电量 0.2", A4.l3.a === "睡着了" && A4.l3.busy === true && A4.l3.e === 0.2, JSON.stringify(A4.l3));
@@ -325,7 +328,7 @@ t("relationLine 生人不说熟话", A4.rl0 === "", A4.rl0);
 t("relationLine 按亲密度换说法", A4.rl5.indexOf("不算生人") >= 0 && A4.rl15.indexOf("不用客气") >= 0 && A4.rl30.indexOf("没什么好客气") >= 0, A4.rl5 + " | " + A4.rl15 + " | " + A4.rl30);
 t("applyRelation 一轮只走一步（+0.15）", A4.warm1 === 1.15, "warmth=" + A4.warm1);
 t("applyRelation 有下限（不会掉穿 -5）", A4.warmClamped === -5, "warmth=" + A4.warmClamped);
-t("lifeLine 忙的时候带一句说明", A4.llBusy.indexOf("腾不出手") >= 0 && A4.llIdle === "躺着刷手机", A4.llBusy + " / " + A4.llIdle);
+t("lifeLine 忙的时候带一句说明", A4.llBusy.indexOf("腾不出手") >= 0 && A4.llIdle === "躺着，不想动", A4.llBusy + " / " + A4.llIdle);
 
 // ================= B. 端到端 =================
 prog("A done / B begin");

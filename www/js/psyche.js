@@ -508,14 +508,22 @@ export function psychePrompt(raw, opts = {}) {
  *
  * ⚠️ 这是「默认作息」，不是她的设定。要按角色不同，就从 ctx 里给 override —— 
  *    不要在这里按角色名写 if。签名留了口子（见 deriveLife 的 ctx.override）。
+ *
+ * ⚠️ v0.5.5.4：这个表里【不许再出现手机】（原文案四处带「手机」：被窝里刷手机 /
+ *    还没开手机 / 手机放一边 / 躺着刷手机）。理由不是"用户不喜欢"，
+ *    而是它每轮都被原样写进「你本来在做这件事：X」，等于软件自己往 prompt 里
+ *    塞一件她未必有的物件。实测证据：袿姬 5 条「我把手机按灭/塞到床单底下」，
+ *    全部落在深夜档；她 115 条世界书里 0 条含「手机」，卡里 0 次 —— 只能是从这里来的。
+ *    ⚠️ 换词只换措辞、不动 busy/energy：那两个档位决定回车速度和语气，
+ *       改了会把「她这会儿回得慢」也跟着改掉。
  */
 const LIFE_SLOTS = [
-  { from: 0, to: 6, act: ['睡着了', '半夜醒着，没开灯', '在被窝里刷手机'], busy: true, energy: 0.2 },
-  { from: 7, to: 9, act: ['在洗漱准备出门', '刚醒，还没开手机', '在吃早饭'], busy: false, energy: 0.6 },
-  { from: 10, to: 12, act: ['在工作/上课', '在忙，手机放一边', '在等人'], busy: true, energy: 0.8 },
+  { from: 0, to: 6, act: ['睡着了', '半夜醒着，没开灯', '在被窝里躺着，还没睡'], busy: true, energy: 0.2 },
+  { from: 7, to: 9, act: ['在洗漱准备出门', '刚醒，还没起', '在吃早饭'], busy: false, energy: 0.6 },
+  { from: 10, to: 12, act: ['在工作/上课', '在忙，顾不上别的', '在等人'], busy: true, energy: 0.8 },
   { from: 13, to: 14, act: ['在吃饭', '刚吃完，懒着', '在午休'], busy: false, energy: 0.8 },
   { from: 15, to: 18, act: ['在忙', '在收拾东西', '在外面'], busy: true, energy: 0.8 },
-  { from: 19, to: 22, act: ['刚回家', '在洗澡', '躺着刷手机', '在吃晚饭'], busy: false, energy: 0.7 },
+  { from: 19, to: 22, act: ['刚回家', '在洗澡', '躺着，不想动', '在吃晚饭'], busy: false, energy: 0.7 },
   { from: 23, to: 24, act: ['准备睡了', '在关灯', '还没困'], busy: false, energy: 0.4 }
 ];
 
@@ -532,7 +540,7 @@ function lifeSlot(hour) {
  * 现算「她这会儿在做什么」。
  *
  * 为什么每轮现算而不是存下来：作息是钟点的函数，存下来就会过夜过期 ——
- * 早上八点她还"在被窝里刷手机"，就露馅了。只把结果写回 psyche.life 供 UI 显示。
+ * 早上八点她还"在被窝里躺着，还没睡"，就露馅了。只把结果写回 psyche.life 供 UI 显示。
  *
  * @param {any} psyche
  * @param {{now?:number, hour?:number, char?:any, lastMsgAt?:number, rnd?:()=>number, override?:any}} ctx

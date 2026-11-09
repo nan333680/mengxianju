@@ -516,6 +516,9 @@ const EXTRA_ZH = {
   '她没说出口的': 'Unsaid',
   '她脑子里': 'Inside her head',
   '这一轮她心里': 'Inside her this turn',
+  // v0.5.5.4：检查器新增的一段（她这一轮本来在做的事，见 app.js 的 inj.life）。
+  // 不登记的话英文界面下这一段标题会漏成中文 —— i18n-report 扫不到动态拼接的串。
+  '她本来在做': 'What she was doing',
   '她听到的是：': 'What she heard:',
   '这一轮她打算：': 'What she means to do:',
   '可以主动提起的旧事：': 'Old thread she may reopen:',

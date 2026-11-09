@@ -1,4 +1,4 @@
-﻿<#
+<#
   归档一个版本：把「重建这个版本所需的一切」复制成一份独立快照。
 
   用途：把一个版本所需的东西复制成一份独立快照，放在 Releases 目录下。
@@ -55,7 +55,11 @@ Copy-Tree (Join-Path $root 'www')     (Join-Path $dest 'src\www')     $null
 # ⚠️ 也要排掉 app\src\main\assets\public —— 那是 cap sync 从 www 拷过去的副本，
 #    留着就是每个快照多一份重复的前端代码，而且它和 www 可能不是同一版，回溯时更迷惑。
 Copy-Tree (Join-Path $root 'android') (Join-Path $dest 'src\android') @('build','.gradle','.kotlin',(Join-Path $root 'android\app\src\main\assets\public')) 'keystore.properties'
-Copy-Tree (Join-Path $root 'e2e')     (Join-Path $dest 'src\e2e')     $null
+# ⚠️ e2e\ 下除了 *.mjs 还有两类东西：
+#    · test-image.png / crop-test.png 这类【测试素材】—— 必须带，不带就跑不了；
+#    · _v2.log 这类【运行残留】—— 每跑一次多一份，一天比一天重。
+#    只排日志，不排图片。
+Copy-Tree (Join-Path $root 'e2e')     (Join-Path $dest 'src\e2e')     $null '*.log'
 Copy-Tree (Join-Path $root 'assets')  (Join-Path $dest 'src\assets')  $null
 
 # ---- 顶层脚本 ----
@@ -63,7 +67,14 @@ Copy-Tree (Join-Path $root 'assets')  (Join-Path $dest 'src\assets')  $null
 #  根目录不再有需要单独扫描的脚本。
 
 # ---- 工具与依赖清单 ----
-Copy-Tree (Join-Path $root 'tools') (Join-Path $dest 'tools') $null
+#  ⚠️ v0.5.5.5：tools\ 下有几个【固定名】的运行残留（.reg-run.log / .e2e-report.txt /
+#  _e2e_out.tmp），它们不属于这个版本 —— 而下面那句是把整个 tools\ 拷过去。
+#  实测后果：releases\v0.5.5.5\tools\.reg-run.log 里躺着 11/06 那次的「4333 通过 / 4 失败」，
+#  而这一版的发布说明写的是 4354 通过 / 0 失败 —— 事后翻归档复核的人会看到正好相反的结论。
+#  归档的用途是"让别人能核对"，带一份错的证据比不带更糟。
+#  ⚠️ 用 '.*' 把所有【点开头】的文件都排掉（构建/类型检查/进度这类运行残留全是这个形状），
+#  紧接着下面那句 foreach 会把必须带上的 .gitignore 单独补回来。
+Copy-Tree (Join-Path $root 'tools') (Join-Path $dest 'tools') $null @('.*','*.log','*.tmp')
 foreach ($f in 'package.json','package-lock.json','capacitor.config.json','.gitignore') {
   $p = Join-Path $root $f
   if (Test-Path $p) { Copy-Item $p (Join-Path $dest ('tools\' + $f)) -Force }
@@ -77,6 +88,18 @@ foreach ($f in 'package.json','package-lock.json','capacitor.config.json','.giti
 #  私钥和明文口令躺在同一目录、目录名还带着版本号和 APK，一次打包外发就等于交出签名权。
 #  需要重建这个版本时，密钥从仓库根取：
 #      release.keystore  +  android\keystore.properties
+
+# ---- 当次的全量回归日志 ----
+#  ⚠️ 为什么要单独拷：真正的回归日志写在根目录的 _regress.log，而 tools\ 下那个
+#  .reg-run.log 是历史上某次跑的残留（固定名、从不更新）。上面已经把残留排除掉了，
+#  这里按版本名带一份当次的真日志，归档才自证得了。
+$reg = Join-Path $root '_regress.log'
+if (Test-Path $reg) {
+  Copy-Item $reg (Join-Path $dest ('_regress-' + $Version + '.log')) -Force
+  Write-Host "  回归日志：_regress-$Version.log"
+} else {
+  Write-Host "  警告：根目录没有 _regress.log —— 这次没跑全量回归？归档里就没有回归证据。"
+}
 
 # ---- 文档 ----
 Get-ChildItem -Path $root -Filter '*.md' -File | ForEach-Object {

@@ -1,4 +1,4 @@
-<#
+﻿<#
   归档一个版本：把「重建这个版本所需的一切」复制成一份独立快照。
 
   用途：把一个版本所需的东西复制成一份独立快照，放在 Releases 目录下。
@@ -94,11 +94,32 @@ foreach ($f in 'package.json','package-lock.json','capacitor.config.json','.giti
 #  .reg-run.log 是历史上某次跑的残留（固定名、从不更新）。上面已经把残留排除掉了，
 #  这里按版本名带一份当次的真日志，归档才自证得了。
 $reg = Join-Path $root '_regress.log'
+$regAppJs = Join-Path $root 'www/js/app.js'
+$regOk = $false
 if (Test-Path $reg) {
+  # ⚠️ 光"文件在"不够（v0.5.6 实测）：根目录的 _regress.log 可能是【上一次】跑留下的。
+  #    0.5.6 按要求没跑全量，但归档照样把 0.5.5.5 那份 4354/0 拷进来、
+  #    命名成 _regress-0.5.6.log —— 事后翻归档的人会以为 0.5.6 跑过全量并全绿。
+  #    这跟之前 tools/.reg-run.log 那份残留是同一个病：归档里带一份不属于这版的证据，
+  #    比不带更糟。
+  #    判据：日志比 www/js/app.js 旧 = 跑完之后又改过代码 = 这份日志不代表这版。
+  if (Test-Path $regAppJs) {
+    $rt = (Get-Item $reg).LastWriteTime
+    $at = (Get-Item $regAppJs).LastWriteTime
+    $regOk = ($rt -ge $at)
+    if (-not $regOk) {
+      Write-Host ("  警告：_regress.log（" + $rt.ToString('MM-dd HH:mm') + "）比 app.js（" + $at.ToString('MM-dd HH:mm') + "）旧")
+      Write-Host "        —— 跑完回归之后又改过代码，这份日志不代表这一版。归档里【不带】它。"
+    }
+  } else { $regOk = $true }
+}
+if ($regOk) {
   Copy-Item $reg (Join-Path $dest ('_regress-' + $Version + '.log')) -Force
   Write-Host "  回归日志：_regress-$Version.log"
-} else {
+} elseif (-not (Test-Path $reg)) {
   Write-Host "  警告：根目录没有 _regress.log —— 这次没跑全量回归？归档里就没有回归证据。"
+} else {
+  Write-Host "  归档里没有回归日志（见上面的原因）。发布说明里要写清楚这版跑没跑全量。"
 }
 
 # ---- 文档 ----

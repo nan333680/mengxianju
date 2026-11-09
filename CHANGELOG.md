@@ -86,6 +86,20 @@ e2e-memory 16/0     e2e-memfix 12/0     e2e-archpipeline 8/0
 这一版把 `memaudit.js` / `mempick.js` / `innerthought.js` / `cadence.js` /
 `scenectx.js` / `reflect.js` 一起补了进去（加了文件不记得补，App 白屏了才发现）。
 
+#### 关于这一版没跑全量
+
+**167 套里跑了 10 套。** 改动面是：`memaudit.js`（新）、三处 `auditPush`、
+设置页两个按钮、`i18n.js`、`ci-check.mjs`。
+
+**未验证的是那 161 套里的时序**：`auditCommit` 每次是「读整条 kv → push → 写回」，
+归档一次五批就是五次 read-modify-write（上限约 160KB）。`e2e-memsum` / `e2e-memtime` /
+`e2e-rollingsummary` / `e2e-arc*` 这些会大量走 `summarize*`，它们里有没有对时序敏感的断言，
+没人知道。
+
+**真机上怎么看出来**：看归档进度条在**批次之间**的停顿（第 2/5 批到第 3/5 批之间）。
+如果只是每批末尾多几毫秒，进度条几乎不动；如果 160KB 的读写有感，会在那里看出来。
+这比"整体感觉慢不慢"可靠 —— 整体慢可能只是网络。
+
 #### 复查后修的三处（都在这版内，没发新版本号）
 
 | | 问题 | 改法 |

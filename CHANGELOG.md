@@ -86,19 +86,21 @@ e2e-memory 16/0     e2e-memfix 12/0     e2e-archpipeline 8/0
 这一版把 `memaudit.js` / `mempick.js` / `innerthought.js` / `cadence.js` /
 `scenectx.js` / `reflect.js` 一起补了进去（加了文件不记得补，App 白屏了才发现）。
 
-#### 关于这一版没跑全量
+#### 全量回归
 
-**167 套里跑了 10 套。** 改动面是：`memaudit.js`（新）、三处 `auditPush`、
-设置页两个按钮、`i18n.js`、`ci-check.mjs`。
+**167 套 / 4368 项 / 0 失败 / 61.7 分钟**（2026-11-09 21:28，一次跑完全绿）。
 
-**未验证的是那 161 套里的时序**：`auditCommit` 每次是「读整条 kv → push → 写回」，
-归档一次五批就是五次 read-modify-write（上限约 160KB）。`e2e-memsum` / `e2e-memtime` /
-`e2e-rollingsummary` / `e2e-arc*` 这些会大量走 `summarize*`，它们里有没有对时序敏感的断言，
-没人知道。
+比 0.5.5.5 的 4354 项多了 14 项：`e2e-memtidy` 从 37 加到 51（审计第 7 节 + UI 验收第 8 节）。
 
-**真机上怎么看出来**：看归档进度条在**批次之间**的停顿（第 2/5 批到第 3/5 批之间）。
-如果只是每批末尾多几毫秒，进度条几乎不动；如果 160KB 的读写有感，会在那里看出来。
-这比"整体感觉慢不慢"可靠 —— 整体慢可能只是网络。
+打包前只跑了 10 套相关的（memtidy / memedit2 / archive2 / memkeep / i18n / memos /
+memory / memfix / archpipeline / settings），**全量是后补的** —— 那 161 套里
+`auditCommit` 多出来的那次「读整条 kv → push → 写回」有没有碰到时序敏感的断言，
+跑完才知道：没有。
+
+⚠️ 真机上仍要看一件事：`auditCommit` 每次搬动整条 JSON（上限约 160KB），
+归档一次五批就是五次 read-modify-write。**看归档进度条在批次之间的停顿**
+（第 2/5 批到第 3/5 批之间）—— 每批末尾多几毫秒就没事；如果那里有明显卡顿，
+说明 160KB 的读写有感，下版改成只留最近 10 批或分批存。
 
 #### 复查后修的三处（都在这版内，没发新版本号）
 

@@ -8950,6 +8950,19 @@ let _lastMemReviewStat = null;
 // 复核连续失败几次了。到上限就停掉，否则每批记忆都要白花一次请求。
 let _memReviewFails = 0;
 const MEM_REVIEW_MAX_FAILS = 3;
+// ⚠️ v0.5.5.5：熔断是【单向】的 —— 到上限就一直放行，永远不会自己恢复。
+//
+// 原来的写法：入口 9265 一到上限就 return items，而清零只写在成功那一条路（9314）。
+// 于是计数的走向只能是「涨到 3 → 永远停」，**唯一恢复途径是重启 App**（模块级 let 重载）。
+// 后果：只要连续 3 次复核没做成（网络抖一下 +1；模型不输出 {"bad":[]} 而是回一句
+// 「这些都对」也算 +1，后者尤其容易），这个会话剩下的时间里【所有记忆写入都不再复核方向】，
+// 而且不报错、界面上还显示着上一次的成功结果。
+//
+// 这能解释「0.5.4.4 明明加了复核、0.5.5.4 照样反」：复核可能早就在某次连续失败后关掉了。
+//
+// 修法：熔断加冷却 —— 距最后一次失败超过这个时长，就放一次机会重试。
+let _memReviewLastFailAt = 0;
+const MEM_REVIEW_COOL_MS = 10 * 60 * 1000;
 // ⚠️ 整理被防重入挡下来时，攒一个"跑完补一次"的标记（2026-09-28 修）。
 //
 // 起因（用户实测）：连点几下「重新思考」后，她的记忆退回到很久以前。
@@ -9262,7 +9275,20 @@ async function reviewMemoryDirection(items, transcript, char, who) {
   // 群聊的人称口径不同（记忆里用名字记，不出现「我」），这套问句不适用。
   if (isGroup(char)) return items;
   // 连续失败到上限就先停：复核是"锦上添花"，不该变成每批都白扔一次请求。
-  if (_memReviewFails >= MEM_REVIEW_MAX_FAILS) return items;
+  // ⚠️ v0.5.5.5：但【不能停死】。冷却过了就放一次机会，否则计数永远回不到 0
+  //    （清零只写在成功那条路上），这个会话剩下所有记忆写入都不再复核方向。
+  if (_memReviewFails >= MEM_REVIEW_MAX_FAILS) {
+    if (Date.now() - _memReviewLastFailAt < MEM_REVIEW_COOL_MS) {
+      // ⚠️ 熔断期间也要更新 stat：不更新的话，界面上一直显示上一次的成功结果
+      //    （「看 4 条，判 0 条方向可疑」），读起来像"复核还在跑"，其实早就停了。
+      _lastMemReviewStat = { at: Date.now(), total: list.length, bad: 0, failed: true,
+        msg: '熔断中（连续 ' + MEM_REVIEW_MAX_FAILS + ' 次没做成），冷却后再试',
+        fails: _memReviewFails };
+      return items;
+    }
+    // 冷却结束：只放一次，失败了会重新撞上限再进冷却
+    _memReviewFails = MEM_REVIEW_MAX_FAILS - 1;
+  }
   const userName = String((S && S.userName) || '').trim();
   const heText = (userName && userName !== who) ? '「' + userName + '」' : '他';
   const lines = list.map((it, i) => (i + 1) + '. ' + String(it.text).replace(/\s+/g, ' ').trim()).join('\n');
@@ -9296,6 +9322,7 @@ async function reviewMemoryDirection(items, transcript, char, who) {
     });
   } catch (err) {
     _memReviewFails++;
+    _memReviewLastFailAt = Date.now();   // v0.5.5.5：冷却从这里起算
     _lastMemReviewStat = { at: Date.now(), total: list.length, bad: 0, failed: true,
       msg: (err && err.message) || String(err), fails: _memReviewFails };
     // ⚠️ 不记 _lastMemError：记忆本身没失败。记进去会弹「上一轮记忆任务失败了」，
@@ -9306,6 +9333,7 @@ async function reviewMemoryDirection(items, transcript, char, who) {
   const bad = parseReviewBad(out);
   if (bad === null) {
     _memReviewFails++;
+    _memReviewLastFailAt = Date.now();   // v0.5.5.5：同上
     _lastMemReviewStat = { at: Date.now(), total: list.length, bad: 0, failed: true,
       msg: '复核的输出里找不到 {"bad":[...]}', fails: _memReviewFails };
     try { console.warn('[记忆方向复核] 输出里没有 JSON：', out); } catch { /* 同上 */ }
@@ -10311,11 +10339,17 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
         const { it, prov, absText, near, subj: _subj, known: _known, flip: _flip } = x;
         await mem.add({ id: uid(), charId: cidFor, text: absText, kind: it.kind,
                         key: it.key || (near && near.key) || '',
-                        // 走到这里 _subj 为空 = 既对不上旧条目、正文里又「我」「你」都没提，
-                        // 是真的判不出。subject 这条字段没有"未知"这个值 ——
-                        // normalizeMemory 和下游共 11 处一律把空串兜成 'char'，
-                        // 写 '' 到不了用户眼前就已经变成 char 了。所以不假装能"留空"，
-                        // 靠下面 status=draft + memReviewWhy 告诉用户"这条说的是谁没定"。
+                        // ⚠️ 这里分三种情况，注释必须和下面的 status 对上（v0.5.5.5 修正）：
+                        //   · _subj 有值            → 正常，用这个值
+                        //   · _subj 空、_known true → 对上了旧条目但旧条目没存 subject 字段
+                        //     （老数据 / 导入的卡）。方向有据可查，落 active；
+                        //     subject 只能给 'char' 占位 —— 这个字段没有"未知"值，
+                        //     normalizeMemory 和下游共 11 处一律把空串兜成 'char'，
+                        //     写 '' 到不了用户眼前。**用户看不到这个占位值**（subject 不进 UI），
+                        //     所以不会误导，但也确实没被修正过。
+                        //   · _subj 空、_known false → 真的判不出（对不上旧条目 + 正文没我你）。
+                        //     落 draft + 写明原因，摆进收件箱。
+                        // subject 这条字段没有"未知"这个值，所以不给用户看它，只用 status 说话。
                         subject: _subj || 'char',
                         scope: (near && near.scope) || 'character',
                         quote: (near && near.quote) || '',

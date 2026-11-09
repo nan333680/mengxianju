@@ -153,6 +153,51 @@ t('两个版本一个都没丢', a && a.n === 2, a && a.texts);
 const shown = await page.evaluate(() => [...document.querySelectorAll('#messages .msg.ai')].pop().querySelector('.bub').textContent);
 t('屏幕上显示的也是第 1 版', shown.includes('第1版回复。') && !shown.includes('第2版回复。'), shown);
 
+console.log('=== 3.5 每个版本各记一份注入快照（v0.5.6.1）===');
+// 这一套把 liveV2 关了（见文件头），判断层不跑 ⇒ 真实的 inj.psy 永远是 null，
+// 气泡里那个「她没说出口」折叠就永远不出现 —— 光靠发消息测不到这条路径。
+// 所以这里【手工往版本表里塞 psy.wd】，只验「折叠读的是当前那一版」这一件事。
+// ⚠️ 不要为了让折叠自己出现就打开 liveV2：那会让这一套依赖一条真实网络路径。
+const vsInfo = await page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const store = db.transaction('messages', 'readwrite').objectStore('messages');
+  const all = await new Promise(r => { const q = store.getAll(); q.onsuccess = () => r(q.result); });
+  const m = all.filter(x => x.charId === 'vv1' && x.role === 'assistant').sort((a, b) => (a.ts || 0) - (b.ts || 0)).pop();
+  if (!m || !Array.isArray(m.variants) || m.variants.length < 2) { db.close(); return null; }
+  m.variants[0].inj = Object.assign({}, m.variants[0].inj || {}, { psy: { wd: ['第1版没说出口的'] } });
+  m.variants[1].inj = Object.assign({}, m.variants[1].inj || {}, { psy: { wd: ['第2版没说出口的', '第二句'] } });
+  await new Promise(r => { const q = store.put(m); q.onsuccess = r; q.onerror = r; });
+  db.close();
+  return { n: m.variants.length, hasInj: m.variants.map(v => !!(v && v.inj)) };
+});
+console.log('   ' + JSON.stringify(vsInfo));
+t('两个版本各带着自己的 inj', !!vsInfo && vsInfo.n === 2 && vsInfo.hasInj.every(Boolean), vsInfo);
+
+const wwText = async () => page.evaluate(() => {
+  const el = [...document.querySelectorAll('#messages .msg.ai')].pop();
+  const d = el && el.querySelector('details.ww');
+  return d ? d.textContent : '';
+});
+// 切到第 2 版 —— 折叠要跟着变成第 2 版那份
+await page.evaluate(() => {
+  const el = [...document.querySelectorAll('#messages .msg.ai')].pop();
+  el.querySelector('.swipe [data-sw="1"]').click();
+});
+await sleep(1200);
+let ww = await wwText();
+console.log('   第 2 版折叠: ' + JSON.stringify(ww));
+t('切到第 2 版，折叠显示第 2 版那份', ww.includes('第2版没说出口的') && !ww.includes('第1版没说出口的'), ww);
+// 再切回第 1 版 —— 折叠要跟着变回去
+await page.evaluate(() => {
+  const el = [...document.querySelectorAll('#messages .msg.ai')].pop();
+  el.querySelector('.swipe [data-sw="-1"]').click();
+});
+await sleep(1200);
+ww = await wwText();
+console.log('   第 1 版折叠: ' + JSON.stringify(ww));
+t('切回第 1 版，折叠显示第 1 版那份', ww.includes('第1版没说出口的') && !ww.includes('第2版没说出口的'), ww);
+
 console.log('=== 4. 选中的那版真的会进下一轮上下文 ===');
 await send('接着聊');
 const sysAll = (lastReq && lastReq.messages ? lastReq.messages : []).map(m => String(m.content || '')).join('\n');

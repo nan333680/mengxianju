@@ -529,6 +529,10 @@ const EXTRA_ZH = {
   '清空记忆写入记录': 'Clear the memory write log',
   '只清这份记录。长期记忆一条都不动，备份也不动。': 'This only clears the log. No memory entry and no backup is touched.',
   '记录已清空': 'Log cleared',
+  // v0.5.6.1：版本表里【这一版】没有记录时，检查器要说明白为什么是空的。
+  // 不登记的话英文界面下这段话会漏成中文（i18n-report 扫不到代码里的拼串）。
+  '这一版没有写入记录 —— 它是在「每个版本各记一份」之前生成的。切回最新那一版还能看到。':
+    'No record was written for this version — it predates per-version records. Switch back to the latest version to see it.',
   '她听到的是：': 'What she heard:',
   '这一轮她打算：': 'What she means to do:',
   '可以主动提起的旧事：': 'Old thread she may reopen:',

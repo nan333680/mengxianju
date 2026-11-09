@@ -2527,7 +2527,11 @@ function msgHtml(m, depth = 0) {
   // 摊开摆在消息里就等于替她说了一半 —— 那正好抵消了这一层要的效果。
   // 但也不能完全不让人看：这是唯一能验证「她真的在忍住什么」的地方。
   // ⚠️ 只在【这一轮第一条】消息上有（落库时挂在 i===0），所以一条回复只出现一次。
-  const WW = (!isMe && m.inj && m.inj.psy && Array.isArray(m.inj.psy.wd)) ? m.inj.psy.wd : null;
+  // ⚠️ 取的是【当前那一版】的 inj（v0.5.6.1）：切版本时这个折叠必须跟着变。
+  // 原来读 m.inj（消息级），两个版本并排看到的是同一份「她没说出口」——
+  // 那正是用户报的「两个版本的折叠内容一样」。
+  const _mInj = isMe ? null : turnInjOf(m);
+  const WW = (_mInj && _mInj.psy && Array.isArray(_mInj.psy.wd)) ? _mInj.psy.wd : null;
   if (WW && WW.length) {
     inner += '<details class="ww"><summary>' + esc(tt('她没说出口')) + ' · ' + WW.length + '</summary>'
       + WW.map(x => '<div class="ww-row">' + esc(x) + '</div>').join('')
@@ -3203,7 +3207,9 @@ async function showMsgMenu(el) {
   // 用户 m00744 第 6 点要的就是"事后能查这一段设的是什么"。
   if (m.scene) acts.push({ k: 'scene', t: '当时的场景' });
   // 这一轮注入了什么（v0.5.1.1）：只有新版本记下的消息才有 inj
-  if (m.inj && !isMe) acts.push({ k: 'inj', t: '这一轮用了什么' });
+  // v0.5.6.1：判据看【当前那一版】。老数据切到没有记录的那一版时入口仍然保留 ——
+  // 点开说「这一版没有记录」，比让入口凭空消失好懂。
+  if (!isMe && (turnInjOf(m) || m.inj)) acts.push({ k: 'inj', t: '这一轮用了什么' });
   if (isArchived) {
     // 归档的消息【不给】编辑重发 / 从这里重聊：那两条的语义是「删掉这条之后的一切」，
     // 而归档不在当前时间线上，算下去会删错一大片。只给安全的两项。
@@ -3350,7 +3356,7 @@ async function showMsgMenu(el) {
     if (!k) return;
     if (k === 'search') { openSearch(''); return; }
     if (k === 'scene') { toast('这一轮的场景：' + m.scene); return; }
-    if (k === 'inj') { await showInj(m.inj); return; }
+    if (k === 'inj') { await showInj(turnInjOf(m)); return; }
     if (k === 'branch') { await switchBranch(m); return; }
     // 她还在生成时不要做这三件事：它们都是「先删消息再调 send()」，
     // 而 send() 在 busy 时会直接返回 —— 结果消息删了、也没重新生成。
@@ -3750,6 +3756,33 @@ function variantsOf(m) {
   return vs.map(v => (typeof v === 'string' ? { text: v } : v));
 }
 
+/**
+ * 这条消息【当前选中那一版】的注入快照（v0.5.6.1）。
+ *
+ * 为什么要有它：inj 原来只挂在消息上，而版本表里只存 text / story / speakerId。
+ * 于是「换一个版本」之后，两个版本共用同一份 inj ——
+ * 气泡底下那个「她没说出口」折叠、长按里的「这一轮用了什么」，
+ * 切到旧版时显示的仍然是【最新那版】的记录。用户看到的就是
+ * 「两个版本的折叠内容一模一样」。
+ *
+ * 现在生成时每个版本各存一份（见 regenAsVariant），这里负责按 vIdx 取。
+ * ⚠️ 没有 inj 的版本【如实返回 null】—— 宁可让人看见「这一版没有记录」，
+ *    也不要拿旁边那一版的记录顶上去。
+ */
+function turnInjOf(m) {
+  const vs = variantsOf(m);
+  if (!vs.length) return (m && m.inj) || null;
+  const i = Math.max(0, Math.min(vs.length - 1, Number(m && m.vIdx) || 0));
+  const v = vs[i] || {};
+  if (v.inj) return v.inj;
+  // ⚠️ 这一段【只对老数据命中】（v0.5.6.1 之前生成的消息），别删。
+  // 合并那一刻写的是 { ...first, variants: merged, vIdx: merged.length - 1 }，
+  // 所以消息身上那份 inj 一定属于【最后一版】，和用户之后切成第几版无关。
+  // 归给最后一版是唯一能还原的；别的版本如实说「没有记录」。
+  if (m && m.inj && i === vs.length - 1) return m.inj;
+  return null;
+}
+
 /** 切到第 idx 版：改的是 content，别的都不动 */
 async function setVariant(m, idx) {
   const vs = variantsOf(m);
@@ -3787,7 +3820,9 @@ async function regenAsVariant(m, keepPrefix) {
   }
   const vs = variantsOf(m);
   const idx = Math.max(0, Math.min(vs.length - 1, Number(m.vIdx) || 0));
-  vs[idx] = { text: m.content, story: m.story, speakerId: m.speakerId };
+  // v0.5.6.1：inj 也跟着存一份。不存的话两个版本共用消息上那一份，
+  // 切到旧版看到的还是新版生成时留下的记录（气泡折叠 + 「这一轮用了什么」都错）。
+  vs[idx] = { text: m.content, story: m.story, speakerId: m.speakerId, inj: m.inj };
   await regenerate(keepPrefix);
   // regenerate 末尾是 send()（没 await），这里等它跑完
   for (let i = 0; i < 480 && busy; i++) await new Promise(r => setTimeout(r, 250));
@@ -3799,7 +3834,8 @@ async function regenAsVariant(m, keepPrefix) {
     tail2.unshift(now[i]);
   }
   if (!tail2.length) { toast('这次没生成出内容，版本没换成'); return; }
-  const merged = vs.concat(tail2.map(x => ({ text: x.content, story: x.story, speakerId: x.speakerId })));
+  // 同理（v0.5.6.1）：新生成的那几版各自带着自己的 inj，一起进版本表。
+  const merged = vs.concat(tail2.map(x => ({ text: x.content, story: x.story, speakerId: x.speakerId, inj: x.inj })));
   const first = tail2[0];
   await msgs.add({ ...first, variants: merged, vIdx: merged.length - 1, content: merged[merged.length - 1].text });
   // 这次要是生成成了几条，把多余的并掉（它们的正文已经进版本表了）
@@ -11350,7 +11386,25 @@ function infoBox(title, html, onMount) {
  * 那条世界书命中没有、剧情卡停在哪一拍。在这之前这些都只能靠回复反推。
  */
 async function showInj(inj) {
-  if (!inj) return;
+  if (!inj) {
+    // v0.5.6.1：版本表里【这一版】没有记录。以前这里静默 return ——
+    // 点下去什么都不发生，看着像按钮坏了。现在说清楚它为什么是空的。
+    const box0 = $('modal');
+    $('modal-title').textContent = tt('这一轮用了什么');
+    $('modal-text').innerHTML = '<p class="hint-text">'
+      + esc(tt('这一版没有写入记录 —— 它是在「每个版本各记一份」之前生成的。切回最新那一版还能看到。'))
+      + '</p>';
+    $('modal-ok').textContent = tt('知道了');
+    $('modal-cancel').classList.add('hidden');
+    box0.classList.remove('hidden');
+    const close0 = () => {
+      box0.classList.add('hidden');
+      $('modal-cancel').classList.remove('hidden');
+      $('modal-ok').onclick = null;
+    };
+    $('modal-ok').onclick = close0;
+    return;
+  }
   const secs = [];
   const sec = (title, rows) => {
     if (!rows || !rows.length) return;
@@ -21045,7 +21099,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.6';
+const WEB_VERSION_FALLBACK = '0.5.6.1';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

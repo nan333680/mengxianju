@@ -10350,6 +10350,12 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
       // 这里直接用，不重算 —— 同一个输入算两遍迟早会分叉。
       for (const x of _plan) {
         const { it, prov, absText, near, subj: _subj, known: _known, flip: _flip } = x;
+        // ⚠️ 落库和审计共用这两个值。同一个三元表达式写两遍看着一致，
+        //    但审计的全部价值是「它记的就是实际发生的」—— 哪天只改一处
+        //    （比如加第三种 draft 理由），审计就开始记一份和库里不一样的东西，
+        //    而你还以为它是证据。
+        const _st = (_known && !_flip) ? 'active' : 'draft';
+        const _why = _flip ? '整理后主客可疑' : (_known ? '' : '整理后判不出说的是谁');
         await mem.add({ id: uid(), charId: cidFor, text: absText, kind: it.kind,
                         key: it.key || (near && near.key) || '',
                         // ⚠️ 这里分三种情况，注释必须和下面的 status 对上（v0.5.5.5 修正）：
@@ -10377,13 +10383,16 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
                         //   · 继承不到 subject = 没有旧条目可对，方向也没人核过
                         //   · 人称翻转 = 大概率合并时把主客接反了
                         // draft 不进注入（memory.js 的 activeOnly 只认 active），会摆在收件箱等人看一眼。
-                        status: (_known && !_flip) ? 'active' : 'draft',
-                        memReviewWhy: _flip ? '整理后主客可疑' : (_known ? '' : '整理后判不出说的是谁'),
+                        status: _st,
+                        memReviewWhy: _why,
                         legacy: (near && near.legacy === true) || prov.legacy });
         // 审计：这一条从哪条改成了什么。old 取「最像的那条」的原文（前 40 字够认出）。
+        // ⚠️ status / why 必须用上面那两个变量，不能在这里再算一遍 ——
+        //    审计的全部价值是"它记的就是实际发生的"。同一个三元表达式写两处，
+        //    哪天改了一处（比如加第三种 draft 理由），另一处不动，审计就开始记
+        //    一份和库里不一样的东西，而你还以为它是证据。
         auditPush(_aud, { op: 'add', old: (near && near.text) || '', now: absText,
-                          status: (_known && !_flip) ? 'active' : 'draft',
-                          why: _flip ? '整理后主客可疑' : (_known ? '' : '整理后判不出说的是谁') });
+                          status: _st, why: _why });
       }
       // 只删【参与了整理】的那些。受保护的自定义记忆压根没进 list，所以不会被动。
       for (const m of list) {

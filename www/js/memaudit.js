@@ -20,7 +20,10 @@
 import { kv, uid } from './db.js';
 
 const KEY = 'memAudit:';
-const MAX_BATCHES = 10;      // 最近 10 批（一次整理/总结 = 一批）
+// 20 批：按「新增到上限一半（至少 3 条）才整理」的门槛，memLimit 默认 20 →
+// 每新增 10 条记忆触发一次整理，两天一次很常见 = 一个月 15 次左右。
+// 10 批只够覆盖 20 天，月底反了、月初的记录已经被挤掉（v0.5.6 复查时改的）。
+const MAX_BATCHES = 20;      // 最近 20 批（一次整理/总结 = 一批）
 const MAX_ITEMS = 60;        // 一批最多记这么多条（整理 20 删 + 20 写，够用）
 const OLD_MAX = 40;          // oldText 只留前 40 字
 const NEW_MAX = 80;          // newText 只留前 80 字
@@ -54,7 +57,9 @@ export function auditStart(charId, from, reason = '') {
 /** 往这一批里记一条。batch 为空或已满就静默跳过（审计不该因为满了就报错）。 */
 export function auditPush(batch, it = {}) {
   if (!batch || !Array.isArray(batch.items)) return;
-  if (batch.items.length >= MAX_ITEMS) return;
+  // ⚠️ 满了不能只是 return —— 那会让导出看起来像"这次只动了 60 条"。
+  //    memLimit 调到 30 以上时，一次整理是 80 条（N 写 + N 删），必须看得出来被截了。
+  if (batch.items.length >= MAX_ITEMS) { batch.truncated = (batch.truncated || 0) + 1; return; }
   batch.items.push({
     op: String(it.op || 'add'),          // 'add' | 'del'
     old: cut(it.old, OLD_MAX),           // 被改写/被删之前的原文（前 40 字）
@@ -79,6 +84,8 @@ export async function auditCommit(batch) {
       id: batch.id, at: batch.at,
       from: batch.from, reason: batch.reason,
       items: batch.items,
+      // 被截断的条数（0 = 没截）。导出时要说出来，否则看的人以为只动了这么多条。
+      truncated: Number(batch.truncated) || 0,
     });
     // 只留最近 MAX_BATCHES 批：旧的一直堆着没有意义，而且 kv 是整条读写的
     while (list.length > MAX_BATCHES) list.shift();
@@ -121,9 +128,13 @@ export function auditToText(charId, batches, charName = '') {
     const from = FROM_NAME[b.from] || b.from || '?';
     const why = b.reason ? '（' + (REASON_NAME[b.reason] || b.reason) + '）' : '';
     lines.push('');
-    lines.push('■ ' + t.toLocaleString() + ' · ' + from + why + ' · ' + (b.items || []).length + ' 条');
+    const tr = Number(b.truncated) || 0;
+    lines.push('■ ' + t.toLocaleString() + ' · ' + from + why + ' · '
+      + (b.items || []).length + ' 条' + (tr ? '（还有 ' + tr + ' 条没记下，这一批被截断了）' : ''));
     for (const it of (b.items || [])) {
-      const op = it.op === 'del' ? '删' : '写';
+      // ⚠️ 三种 op 都要认。原来只分 del / 其他，abort 会显示成「写」——
+      //    而 abort 恰恰是"整批放弃、一条都没写"，显示成「写」是反的。
+      const op = it.op === 'abort' ? '放弃' : (it.op === 'del' ? '删' : '写');
       lines.push('  [' + op + ']' + (it.status ? ' ' + it.status : '') + (it.why ? ' · ' + it.why : ''));
       if (it.old) lines.push('    原: ' + it.old);
       if (it.now) lines.push('    新: ' + it.now);

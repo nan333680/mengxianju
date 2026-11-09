@@ -68,4 +68,41 @@ if (pkgV !== webV) console.log('   ⚠ package.json 的版本号和上面两个�
 console.log('   ✓ 一致');
 
 console.log('');
+
+console.log('== 4. i18n 里没有重复 key（JS 对象重复 key 不报错，后者静默覆盖前者）==');
+// ⚠️ 加这条的原因（v0.5.6）：这一版自己在 BY_ZH 里撞了一次 '先选一个角色'，
+//    而 tsc 只查语法、ci-check 其余三步也不看这个 —— 重复 key 在 JS 里是
+//    【合法】的，后者静默覆盖前者，中文界面永远看不出问题，等有人翻英文才发现某句是错的。
+{
+  const src = fs.readFileSync(path.join(ROOT, 'www/js/i18n.js'), 'utf8');
+  const lines = src.split('\n');
+  const dups = [];
+  // 按「顶层 const X = {」到「^};」切段。不用括号深度计数 ——
+  // 第一版就是栽在这上面：把整个文件算成一个对象，于是跨对象的同名 key 全报成重复。
+  let cur = null;
+  let startLine = 0;
+  let seen = null;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    if (!cur) {
+      const open = ln.match(/^const\s+([A-Za-z_$][\w$]*)\s*=\s*\{/);
+      if (open) { cur = open[1]; startLine = i + 1; seen = new Map(); }
+      continue;
+    }
+    if (/^\};/.test(ln)) { cur = null; continue; }         // 这一块结束
+    // 只认「缩进 + 引号 key + 冒号」这种行首键
+    const m = ln.match(/^\s*(['"])((?:\\.|(?!\1).)*)\1\s*:/);
+    if (!m) continue;
+    const k = m[2];
+    if (seen.has(k)) dups.push(cur + ' 里的「' + k + '」（第 ' + seen.get(k) + ' 行和第 ' + (i + 1) + ' 行）');
+    else seen.set(k, i + 1);
+  }
+  if (dups.length) {
+    console.log('   ✗ 有重复 key（后一条会静默覆盖前一条）：');
+    for (const d of dups.slice(0, 20)) console.log('     ' + d);
+    process.exit(1);
+  }
+  console.log('   ✓ 没有重复');
+}
+
 console.log('CI 静态检查通过');

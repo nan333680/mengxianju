@@ -481,3 +481,89 @@ export function provenanceFor(text, oldList) {
     legacy: picked.every(x => x.m.legacy === true),
   };
 }
+
+/**
+ * 整理之后，这条记忆的【人称画像】是不是翻了（v0.5.5.5）。
+ *
+ * 为什么需要它：整理是唯一一条「把整库读进去、重吐一遍、旧的逐条删掉」的路 ——
+ * 另外两条（滚动总结 / 归档总结）最多多写一条错的；整理反了是
+ * 【把本来对的那条也改坏】，而且新的直接以 active 落库、下一轮就注入。
+ *
+ * 为什么这里不用模型复核：reviewMemoryDirection 要的是「行首是说话人」的转录，
+ * 而整理手上只有旧记忆本身、没有对话 —— 拿记忆列表喂它，它判不出方向。
+ * 所以走一条纯本地的信号：旧条目和新条目的「我」有没有从无到有 / 从有到无。
+ *
+ * 判据（宁多看一眼，也不放过翻转）：
+ *   · 相似的旧条目【全都没有】「我」（纯关于他），新条目却冒出「我」→ 主人换了
+ *   · 相似的旧条目【全都有】「我」（她的经历），新条目一个「我」都没有 → 被写成他了
+ *
+ * ⚠️ 合并本来就会把多条揉成一条，所以：
+ *   ① 只跟【所有相似的旧条目】比，不跟最近那一条比 —— 只比最近那条会把
+ *      「关于他的 + 她的经历」这种正确合并误判成翻转；
+ *   ② 只判「有 / 没有」，不判个数增减 —— 个数变化是合并的正常结果。
+ * 误报的代价是用户在收件箱多看一条，漏报的代价是一条反了的记忆永久注入。
+ *
+ * @param {Array} oldList 参与整理的旧条目
+ * @param {string} newText 整理后的正文
+ * @returns {boolean} true = 可疑，别直接写进正式记忆
+ */
+export function memPronounFlip(oldList, newText) {
+  const n = String(newText || '');
+  if (!n.trim() || !Array.isArray(oldList) || !oldList.length) return false;
+  const nHasI = /我/.test(n);
+  // 跟 nearestOld 同一套二元组判据，但【全部返回】而不是取最高分那条。
+  const uniq = [...new Set((() => {
+    const a = [];
+    for (let i = 0; i + 1 < n.length; i++) a.push(n.slice(i, i + 2));
+    return a;
+  })())];
+  const cands = [];
+  for (const m of oldList) {
+    if (!m) continue;
+    const c = String(m.text || '');
+    if (!c.trim()) continue;
+    if (c.trim() === n.trim()) { cands.push(m); continue; }
+    if (uniq.length < 3) continue;
+    let hit = 0;
+    for (const g of uniq) if (c.includes(g)) hit++;
+    // ⚠️ 收紧到「高度相似」才进候选（一半以上二元组命中）。
+    // 原来跟 nearestOld 一样用 1/3，但那个阈值是给「找继承字段」用的 ——
+    // 拿来判翻转会误伤：app.js:9096 的【你那一笔】明确要求
+    // 「一条纯讲他的事实，要补上『我』的立场」，例如
+    //   旧「你怕黑」→ 新「你怕黑。我不怕，真到黑暗里的时候可以找我。」
+    // 这是照提示词改的、不是反的，1/3 阈值会把它判成翻转、关进收件箱。
+    // 提到一半之后，只有「同一句话被改写」才进候选 —— 那才是我们真正想抓的。
+    if (hit >= Math.max(3, Math.ceil(uniq.length * 0.5))) cands.push(m);
+  }
+  if (!cands.length) return false;
+  const anyOldHasI = cands.some(m => /我/.test(String(m.text || '')));
+  const allOldHaveI = cands.every(m => /我/.test(String(m.text || '')));
+  if (!anyOldHasI && nHasI) return true;
+  if (allOldHaveI && !nHasI) return true;
+  return false;
+}
+
+
+/**
+ * 整理后 subject 判不出来时的兜底：按正文里「我」和「你」谁多（v0.5.5.5）。
+ *
+ * 为什么需要它：整理这条路模型不回传 subject（输出白名单里没有这个字段），
+ * 原来只能从「最像的旧条目」继承。可整理提示词第二步是【合并压缩成大意】，
+ * 压得越到位、二元组重合度越低，nearestOld 越容易找不到 ——
+ * 实测：6 条压成 3 条（完全正常的整理），3 条全都对不上旧条目。
+ * 如果对不上就判"主人未知"，正常整理会大面积落 draft，那就等于整理一次记忆清空一次。
+ *
+ * 而记忆正文的称规是死的（「我」= 她自己，「你」= 他），所以按谁多判，
+ * 比"一律当成关于她自己"准得多。两个都没提到才返回空串（那种才真的判不出）。
+ *
+ * @param {string} text 记忆正文
+ * @returns {'char'|'user'|''} char = 关于她自己；user = 关于他；'' = 正文里两个都没提
+ */
+export function guessSubject(text) {
+  const t = String(text || '');
+  const nI = (t.match(/我/g) || []).length;
+  const nYou = (t.match(/你/g) || []).length;
+  if (!nI && !nYou) return '';
+  return nI >= nYou ? 'char' : 'user';
+}
+

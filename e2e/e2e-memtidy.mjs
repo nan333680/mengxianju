@@ -41,6 +41,22 @@ page.on('request', req => {
         // 刻意只合出一半以下（6 → 2）：专门喂给下面的抽风保护断言
         out = JSON.stringify([{text:'你有喝咖啡的习惯，最近改喝拿铁',kind:'fact',untilDay:null,freq:'often'},
                               {text:'你怕冷，过冬靠暖气',kind:'fact',untilDay:null,freq:'normal'}]);
+      } else if (mode === 'flip') {
+        // 4 条里只有第 1 条翻转（1/4 = 25%，低于总量闸的 1/3，所以会真写回）。
+        out = JSON.stringify([{text:'你住这屋子，那扇门是你的',kind:'fact',untilDay:null,freq:'normal'},
+                              {text:'我认识你，你不记得',kind:'fact',untilDay:null,freq:'normal'},
+                              {text:'你怕冷，冬天要开暖气',kind:'fact',untilDay:null,freq:'normal'},
+                              {text:'你家在八楼，电梯有两部',kind:'fact',untilDay:null,freq:'normal'}]);
+      } else if (mode === 'alldraft') {
+        // 4 条【全都】和旧条目对不上（4/4 = 100%，超过总量闸的 1/3）
+        // → 应该整批放弃、旧的留着，而不是把正式记忆清空
+        // ⚠️ 这 4 条必须【一个「我」「你」都不带】—— 带一个 guessSubject 就判出主人了，
+        //    闸根本不会触发。真实场景里这种"完全没有第二人称"的记忆很少，
+        //    所以这道闸正常情况下不响，它防的是模型整批胡写。
+        out = JSON.stringify([{text:'工具箱在储物间，扳手少了一把',kind:'fact',untilDay:null,freq:'normal'},
+                              {text:'早上先喝一杯温水',kind:'fact',untilDay:null,freq:'normal'},
+                              {text:'母亲住在别的城市',kind:'fact',untilDay:null,freq:'normal'},
+                              {text:'睡觉不打呼',kind:'fact',untilDay:null,freq:'normal'}]);
       } else { out = ''; }  // 空字符串 = 解析失败路径
     }
     req.respond({status:200,headers:{'Access-Control-Allow-Origin':'*'},contentType:'application/json',body:JSON.stringify({choices:[{message:{content:out}}]})});
@@ -76,6 +92,49 @@ await page.evaluate(() => {
   if (c) c.click();
 });
 await sleep(1200);
+
+console.log('=== 0. memPronounFlip 纯函数（v0.5.5.5）===');
+const PF = await page.evaluate(async () => {
+  const S = await import('./js/memory.js');
+  const o = (t) => ({ text: t });
+  return {
+    hasFn: typeof S.memPronounFlip === 'function',
+    gainI: S.memPronounFlip([o('你怕黑，晚上要留一盏灯')], '我怕黑，晚上要留一盏灯'),
+    loseI: S.memPronounFlip([o('我早就见过你，你不记得')], '你早就见过他，他不记得'),
+    mixedOK: S.memPronounFlip([o('你怕黑'), o('我不怕黑，真到暗处可以找我')], '你怕黑，我不怕，真到暗处可以找我'),
+    sameText: S.memPronounFlip([o('我住里面')], '我住里面'),
+    unrelated: S.memPronounFlip([o('你老家在成都，喜欢吃辣')], '我住里面'),
+    // 【你那一笔】（app.js:9096）：纯讲他的事实，提示词要求补上「我」的立场。
+    // 这是照提示词改的，不是反的 —— 1/3 阈值时代会被误判成翻转，所以这里钉死它。
+    stance: S.memPronounFlip([o('你怕黑')], '你怕黑。我不怕，真到黑暗里的时候可以找我'),
+    // 压缩：同一句话删枝叶、人称没动
+    compress: S.memPronounFlip([o('我说我一千年都在等这么一下，日子都一个样，头一回见面就凑得很近')], '我等他等了一千年，头回见面就凑得很近'),
+    // subject 兜底（guessSubject）
+    gsChar: S.guessSubject('我住里面'),
+    gsUser: S.guessSubject('你住八楼'),
+    gsMixed: S.guessSubject('你怕黑，我不怕'),
+    gsNone: S.guessSubject('工具箱在储物间'),
+    gsEmpty: S.guessSubject(''),
+    emptyNew: S.memPronounFlip([o('你怕黑')], ''),
+    emptyList: S.memPronounFlip([], '我怕黑'),
+    nullList: S.memPronounFlip(null, '我怕黑'),
+  };
+});
+t('memory.js 导出了 memPronounFlip', PF.hasFn === true);
+t('旧条目全无「我」、新的冒出「我」→ 判翻转', PF.gainI === true, String(PF.gainI));
+t('旧条目有「我」、新的没有 → 判翻转', PF.loseI === true, String(PF.loseI));
+t('正确合并（旧条目里两种都有）→ 不判翻转', PF.mixedOK === false, String(PF.mixedOK));
+t('原文没改动 → 不判翻转', PF.sameText === false, String(PF.sameText));
+t('没有相似的旧条目 → 不判翻转', PF.unrelated === false, String(PF.unrelated));
+t('★「你怕黑」补上「我不怕」→ 不判翻转（这是「你那一笔」，照提示词改的）', PF.stance === false, String(PF.stance));
+t('压缩掉枝叶、人称没动 → 不判翻转', PF.compress === false, String(PF.compress));
+t('guessSubject：「我」开头 → char', PF.gsChar === 'char', String(PF.gsChar));
+t('guessSubject：「你」开头 → user', PF.gsUser === 'user', String(PF.gsUser));
+t('guessSubject：平手算她自己', PF.gsMixed === 'char', String(PF.gsMixed));
+t('guessSubject：都没有人称 → 空（交给 draft）', PF.gsNone === '' && PF.gsEmpty === '',
+  JSON.stringify({ n: PF.gsNone, e: PF.gsEmpty }));
+t('空新文本 / 空列表 / null 都不判、不抛', PF.emptyNew === false && PF.emptyList === false && PF.nullList === false,
+  JSON.stringify({ e: PF.emptyNew, l: PF.emptyList, n: PF.nullList }));
 
 console.log('=== 1. 撤销按钮存在 ===');
 await page.evaluate(() => document.getElementById('btn-settings').click()); await sleep(800);
@@ -174,6 +233,61 @@ const bad = await page.evaluate(async (id) => {
 }, cid);
 console.log('   n=' + bad.n + ' | toast=' + bad.toast);
 t('模型没返回有效结果时，记忆保持原样（3 条）', bad.n === 3, 'n='+bad.n);
+
+console.log('=== 6. 整理把人称改反 / 对不上旧条目 → 落收件箱（v0.5.5.5）===');
+// 为什么这一节只管整理：另外两条路（滚动总结 / 归档总结）反了只多一条错的；
+// 整理反了是把本来对的那条也改坏 —— 而且新的直接以 active 落库、下一轮就注入。
+await page.evaluate(async (id) => {
+  const { mem, uid } = await import('./js/db.js');
+  const list = await mem.list(id);
+  for (const m of list) await mem.del(m.id);
+  for (const s of ['我住这屋子，那扇门是我的','我认识你，你不记得','你怕冷，冬天要开暖气','你家在八楼，电梯有两部']) {
+    await mem.add({ id: uid(), charId: id, text: s, kind:'fact', untilDay:null, freq:'normal', ts: Date.now(), subject: s.indexOf('我') === 0 ? 'char' : 'user' });
+  }
+}, cid);
+mode = 'flip';
+await page.evaluate(() => document.getElementById('btn-mem-tidy').click());
+for (let i=0;i<40;i++){ await sleep(400); const d=await page.$eval('#btn-mem-tidy',e=>e.disabled).catch(()=>false); if(!d) break; }
+await sleep(1500);
+const flip = await page.evaluate(async (id) => {
+  const { mem } = await import('./js/db.js');
+  const list = await mem.list(id);
+  return list.map(m => ({ t: m.text, s: m.status, why: m.memReviewWhy || '' }));
+}, cid);
+console.log('   ' + JSON.stringify(flip));
+const flipped = flip.find(m => m.t.indexOf('你住这屋子') >= 0);
+const kept = flip.find(m => m.t.indexOf('我认识你') >= 0);
+t('整理出来的条目落库了（4 条）', flip.length === 4, 'n='+flip.length);
+t('★ 人称被改反的那条 → draft（不进正式记忆）', !!flipped && flipped.s === 'draft', JSON.stringify(flipped));
+t('★ 并且写明原因「整理后主客可疑」', !!flipped && flipped.why === '整理后主客可疑', JSON.stringify(flipped));
+t('没被改动的条目 → active', !!kept && kept.s === 'active', JSON.stringify(kept));
+t('只有 1 条进收件箱（1/4，低于总量闸）', flip.filter(m => m.s === 'draft').length === 1,
+  JSON.stringify(flip.map(m => m.s)));
+
+console.log('=== 6b. 整批对不上旧条目 → 整批放弃，旧的原地不动（总量闸）===');
+// 为什么必须有这一节：整理的写回是「旧的全删、新的重写」，draft 不注入。
+// 没有这道闸的话，判据一失灵，用户点一次整理 = 她的正式记忆整体消失。
+// 从「反了但还在库里」变成「对的不见了」—— 比原来的故障更糟。
+mode = 'alldraft';
+await page.evaluate(() => document.getElementById('btn-mem-tidy').click());
+for (let i=0;i<40;i++){ await sleep(400); const d=await page.$eval('#btn-mem-tidy',e=>e.disabled).catch(()=>false); if(!d) break; }
+await sleep(1500);
+const gate = await page.evaluate(async (id) => {
+  const { mem } = await import('./js/db.js');
+  const list = await mem.list(id);
+  const el = document.getElementById('toast');
+  return {
+    n: list.length,
+    hasOld: list.some(m => String(m.text).indexOf('你住这屋子') >= 0),
+    hasNew: list.some(m => String(m.text).indexOf('修水管') >= 0),
+    toast: el && !el.classList.contains('hidden') ? el.textContent : ''
+  };
+}, cid);
+console.log('   n=' + gate.n + ' | toast=' + gate.toast);
+t('★ 整批放弃：旧的 4 条还在', gate.n === 4 && gate.hasOld, JSON.stringify({n:gate.n, old:gate.hasOld}));
+t('★ 新的那批一条都没写进去', gate.hasNew === false, String(gate.hasNew));
+t('如实说「整批放弃、原样没动」', /整批放弃/.test(gate.toast), gate.toast);
+t('不会误报成「没有需要合并的」', !/没有需要合并/.test(gate.toast), gate.toast);
 
 console.log('\nJS 错误: ' + (errs.length ? errs.join(' | ') : '无'));
 t('无 JS 报错', errs.length === 0, errs.join(' | '));

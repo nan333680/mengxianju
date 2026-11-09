@@ -59,7 +59,9 @@ import { proactiveAvailable, proactiveSetQueue, proactiveTakePending, proactiveS
 // 记忆时间锚（0.5.2）：把「明天/昨天」换算成绝对剧情天数，并保留来源消息。
 import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMemory, memoryDay, memoryGrams, hasRelativeDay, MEMORY_KEYS, activeOnly, MEMORY_STATUS,
   MEMORY_KINDS, MEMORY_KIND_NAME, MEMORY_SCOPES, MEMORY_SCOPE_NAME, MEMORY_STATUS_NAME, normalizeMemory,
-  memoryKey, keyWasDropped, MEMORY_SUBJECTS, shouldAutoCommit, isActiveMemory } from './memory.js';
+  memoryKey, keyWasDropped, MEMORY_SUBJECTS, shouldAutoCommit, isActiveMemory,
+  // v0.5.5.5：整理后人称翻转检测 + subject 兜底（纯本地判定，见 memory.js 里那两段长注释）
+  memPronounFlip, guessSubject } from './memory.js';
 // 记忆检索（记忆 OS）：active 过滤 / 分支 / 优先级 / 预算 / dropped 全在 mempick.js，
 // 这个文件只负责拿数据、按群聊视角过一遍、把结果存一份给「这一轮用了什么」。
 import { pickMemories, memoryBlockText, MEMORY_BUDGET_SHARE } from './mempick.js';
@@ -9911,9 +9913,24 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
           + `【规则】\n`
           // ⚠️ 整理也要把人称写死（2026-09-27 修）——它会把记忆重新吐一遍，
           // 人称飘了就等于把好的也改坏了。
-          + `  · 【人称 · 必须守住】「我」指你（${who}），「你」指他。\n`
+          // ⚠️ v0.5.5.5：原来这句是「「我」指你（${who}），「你」指他」——
+          //    同一句话里「你」有两个含义：前半句指角色本人、后半句指记忆正文里那个「你」。
+          //    模型完全可能读成「我」指的是"你"（=他），于是整库一起反。
+          //    改成「指你自己」，和 memPersonaHead 的措辞对齐，不留第二个读法。
+          + `  · 【人称 · 必须守住】记忆里的「我」指的是你自己（${who}），「你」指的是他。\n`
           + `    不许出现「${who}怎么怎么样」「她说……」这种第三人称写法。\n`
           + `    你自己说话时怎么自称（比如「妾身」）不影响这里，记忆里统一用「我」。\n`
+          // ⚠️ v0.5.5.5：原来只有上面两句规则、没有示范。而整理是【重写】，
+          //    最容易在合并压缩时把整句接反 —— 9920 那条警告说明知道风险，但警告压不住。
+          //    memPersonaHead 那边早就有三行对照示范，这条路一直缺。
+          + `  · 【照这个换 —— 合并前先确认每句原文是谁说的】\n`
+          + `      原文「对方：我把她送到门口了」 → 「你把我送到门口了」\n`
+          // ⚠️ 示范别用真实案子里的句子（原来写的是「我住里面」）——
+          //    那条正是用户手里争议最大的一条（旧备份里是「你住八楼」），
+          //    拿它当示范等于把一个还没定论的改法往模型身上推。换个跟真实数据无关的。
+          + `      原文「${who}：我把扇子收了」   → 「我把扇子收了」\n`
+          + `    ⚠️ 第二行是最容易错的一行：她说「我……」，记成「你……」就是把\n`
+          + `      说话的人当成对方了 —— 整条反了，而且从此每一轮都注入。\n`
           // ⚠️ 合并时主客对调（v0.5.3.7 用户实测）：整理会把每条重新吐一遍，
           //    方向句一旦在合并时整句接反，本来对的那条也被改坏 —— 二次污染。
           + `  · 【合并、压缩都不许动主客】原来写「我比你早到」的，合完还是「我比你早到」。\n`
@@ -10167,6 +10184,38 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
     }
     await kv.set(tfKey, 0);   // 这一轮没被拦（或已被放行）→ 重试计数清零
     if (items.length) {
+      // ⚠️ v0.5.5.5：先预演一遍，再决定要不要真写。
+      //
+      // 为什么必须有这道闸：整理的写回是【旧的全删、新的重写】，而这一版新加的
+      // memPronounFlip / subject 继承都会把没把握的条目放进 draft，draft 不注入
+      // （memory.js 的 activeOnly 只认 active）。于是判据一旦大面积不灵，
+      // 用户点一次「整理记忆」，她的正式记忆就整体消失、全跑到收件箱 ——
+      // 从「反了但还在库里」变成「对的不见了」，那比原来的故障更糟，而且看起来像丢数据。
+      //
+      // 判据：本批会被放进收件箱的超过 1/3，就整批放弃、旧的留着。
+      // 和上面 tooFew 同一个思路 —— 判据不灵时应该退化成「这次不整理」，不是「记忆消失」。
+      const _plan = items.map(it => {
+        const prov = provenanceFor(it.text, list);
+        const absText = absolutizeMemoryText(it.text, prov.day);
+        const near = nearestOld(it.text, list);
+        // 继承优先；继承不到就按正文里「我/你」谁多来判（见 memory.js 的 guessSubject）——
+        // 不能直接给 ''，也不能一律给 'char'。整理本来就要把句子压短，
+        // 「压短了就对不上旧条目」是常态，不是异常。
+        const subj = String((near && near.subject) || '').trim() || guessSubject(absText);
+        return { it, prov, absText, near, subj };
+      });
+      for (const x of _plan) x.flip = memPronounFlip(list, x.absText);
+      const _draftN = _plan.filter(x => !x.subj || x.flip).length;
+      if (_draftN > Math.floor(_plan.length / 3)) {
+        console.warn('[记忆整理] ' + _draftN + '/' + _plan.length
+                     + ' 条会进收件箱（超过 1/3），本次放弃重写、保留原样');
+        _lastDedupeStat.rawLen = parsed.length;
+        _lastDedupeStat.aborted = 'tooManyDraft';
+        // 和 tooFew 出口一致：队列裁剪 + 清标记，然后 return（不推进水位，下次还会试）
+        await pruneDeletedQueue(cidFor);
+        await clearNeedTidy(cidFor);
+        return 0;
+      }
       // ⚠️ 重写前【先备份】，但有条件（v1.21.27 修，复审 新3）。
       //
       // 上一版是无条件覆盖 —— 用户点了「立即整理记忆」留下撤销点后，
@@ -10215,21 +10264,22 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
         }
       } catch { /* 备份失败不该挡住整理本身 */ }
       // 先写新的再删旧的：中途出问题最多多点重复，不会把记忆清空
-      for (const it of items) {
-        // ⚠️ untilHour/untilMinute 不能丢（v1.21.25 修，复审 ★4）。
-        // 丢了的话「第 5 天 15:30 前有效」会退化成「第 5 天 23:59」——
-        // 到期时刻推迟 8 小时 29 分，她会在本该忘记之后还记得大半天。
-        // （上面那个备份特意带了这个字段，这里却漏了，属于同一处的疏忽。）
-        // 整理后模型不会带回 day/sourceMsgIds，用二元组相似度从旧条目里找回来源。
-        // 找不到就标 legacy，不伪造一个天数。
-        const prov = provenanceFor(it.text, list);
-        // 模型偶尔会把绝对天数改回「明天」；provenance 给了 day 就再兜一次。
-        const absText = absolutizeMemoryText(it.text, prov.day);
-        // 记忆 OS：槽位这些新字段从最像的旧条目继承（模型不回传，回了也不收）。
-        const near = nearestOld(it.text, list);
+      // ⚠️ untilHour/untilMinute 不能丢（v1.21.25 修，复审 ★4）。
+      // 丢了的话「第 5 天 15:30 前有效」会退化成「第 5 天 23:59」——
+      // 到期时刻推迟 8 小时 29 分，她会在本该忘记之后还记得大半天。
+      // （上面那个备份特意带了这个字段，这里却漏了，属于同一处的疏忽。）
+      // 上面的 _plan 已经把 prov / absText / near / subj / flip 都算过一遍（那是总量闸要用），
+      // 这里直接用，不重算 —— 同一个输入算两遍迟早会分叉。
+      for (const x of _plan) {
+        const { it, prov, absText, near, subj: _subj, flip: _flip } = x;
         await mem.add({ id: uid(), charId: cidFor, text: absText, kind: it.kind,
                         key: it.key || (near && near.key) || '',
-                        subject: (near && near.subject) || '',
+                        // 走到这里 _subj 为空 = 既对不上旧条目、正文里又「我」「你」都没提，
+                        // 是真的判不出。subject 这条字段没有"未知"这个值 ——
+                        // normalizeMemory 和下游共 11 处一律把空串兜成 'char'，
+                        // 写 '' 到不了用户眼前就已经变成 char 了。所以不假装能"留空"，
+                        // 靠下面 status=draft + memReviewWhy 告诉用户"这条说的是谁没定"。
+                        subject: _subj || 'char',
                         scope: (near && near.scope) || 'character',
                         quote: (near && near.quote) || '',
                         sourceKind: (near && near.sourceKind) || (prov.sourceMsgIds.length ? 'message' : 'summary'),
@@ -10239,7 +10289,13 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
                         untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
                         freq: it.freq, ts: Date.now(),
                         day: prov.day, sourceMsgIds: prov.sourceMsgIds,
-                        status: 'active', legacy: (near && near.legacy === true) || prov.legacy });
+                        // 两种情形都不进正式记忆：
+                        //   · 继承不到 subject = 没有旧条目可对，方向也没人核过
+                        //   · 人称翻转 = 大概率合并时把主客接反了
+                        // draft 不进注入（memory.js 的 activeOnly 只认 active），会摆在收件箱等人看一眼。
+                        status: (_subj && !_flip) ? 'active' : 'draft',
+                        memReviewWhy: _flip ? '整理后主客可疑' : (_subj ? '' : '整理后判不出说的是谁'),
+                        legacy: (near && near.legacy === true) || prov.legacy });
       }
       // 只删【参与了整理】的那些。受保护的自定义记忆压根没进 list，所以不会被动。
       for (const m of list) await mem.del(m.id);
@@ -12405,7 +12461,7 @@ function nearestOld(text, oldList) {
   return null;
 }
 
-/** 整理/查重时把老条目的 who 接过来（新写的条目模型不知道 who，丢了就再也回不来） */
+/** 整理/查重时把老条目的 who 接过来（新写的条目不知道 who，丢了就再也回不来） */
 function whoOfNearest(text, oldList) {
   const t = String(text || '').trim();
   if (!t || !Array.isArray(oldList) || !oldList.length) return '';
@@ -16986,6 +17042,13 @@ function bindSettings() {
           toast('整理没做成：模型这次只合出很少几条（' + (rawT === null ? '?' : rawT)
                 + ' 条），判定为抽风，已保留原样没动。可以再点一次；'
                 + '连续几次都这样，多半是模型或网络的问题。', 6000);
+        } else if (aborted === 'tooManyDraft') {
+          // ⚠️ v0.5.5.5：这一支不加的话会落到下面的 else，报「这次没有需要合并的」——
+          //    而真实原因是"整理后的句子主人对不上，怕把记忆清空所以整批放弃了"。
+          //    那是最坏的一种误导：用户以为没事，其实库里一条都没变。
+          toast('整理没做成：整理后的条目里有太多条对不上原来的，'
+                + '怕把她的记忆改坏，这次整批放弃、原样没动。'
+                + '可以再点一次；连续几次都这样，先把这条反馈出来。', 6000);
         } else {
         const raw = st ? st.rawLen : null;
         if (raw === 0) {
@@ -20803,7 +20866,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.5.4';
+const WEB_VERSION_FALLBACK = '0.5.5.5';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

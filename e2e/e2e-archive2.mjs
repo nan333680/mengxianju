@@ -144,7 +144,13 @@ await page.evaluate(() => document.getElementById('modal-ok').click());
 for (let i=0;i<60;i++){ await sleep(400); const d=await page.$eval('#btn-archive-now',e=>e.disabled).catch(()=>false); if(!d) break; }
 await sleep(1200);
 const st2 = await msgStat();
-console.log('   ' + JSON.stringify(st2));
+const toast2 = await page.evaluate(() => { const el=document.getElementById('toast'); return el && !el.classList.contains('hidden') ? el.textContent : '(无)'; });
+const mem2 = await page.evaluate(async (id) => {
+  const { mem } = await import('./js/db.js');
+  const l = await mem.list(id);
+  return { n: l.length, s: l.map(m => m.status || 'active').join(',') };
+}, cid);
+console.log('   ' + JSON.stringify(st2) + ' | mem=' + JSON.stringify(mem2) + ' | ' + toast2);
 t('能腾出位置时正常归档', st2.arch > 0, String(st2.arch));
 
 console.log('');

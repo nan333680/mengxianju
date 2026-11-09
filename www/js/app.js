@@ -10198,17 +10198,50 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
         const prov = provenanceFor(it.text, list);
         const absText = absolutizeMemoryText(it.text, prov.day);
         const near = nearestOld(it.text, list);
-        // 继承优先；继承不到就按正文里「我/你」谁多来判（见 memory.js 的 guessSubject）——
-        // 不能直接给 ''，也不能一律给 'char'。整理本来就要把句子压短，
-        // 「压短了就对不上旧条目」是常态，不是异常。
-        const subj = String((near && near.subject) || '').trim() || guessSubject(absText);
-        return { it, prov, absText, near, subj };
+        // ⚠️ v0.5.5.5：先按【这一版新写的正文】算，算不出来才继承旧条目。
+        //
+        // 反过来（继承优先）会让整理变成「旧错误的放大器」：一条标错的记忆，
+        // 整理一次就被重新确认一次，再原样传给下一条。正文是刚重写过的，
+        // subject 说的是「这条记忆讲的是谁」，就该由正文决定，不是由正文的前身决定。
+        //
+        // ⚠️ 但要知道这一步是【换判据】不是【修好】：拿 190 条存量记忆比，
+        //    按人称判和存量 subject 只有 57% 一致（49 条 user←char、26 条 char←user），
+        //    两套判据必有一套错，而我没有 ground truth。
+        //    能确定的是「只继承不重算就永远修不掉」，所以这里选重算。
+        const subj = guessSubject(absText) || String((near && near.subject) || '').trim();
+        // known = 这条的主人【判得出来】：要么按人称判出了，要么它确实对上了某条旧记忆。
+        // ⚠️ 后半句不能省：老数据和测试数据里 memory 记录可能根本没存 subject 字段，
+        //    near 存在但 near.subject 是 undefined —— 那不是「判不出说的是谁」，
+        //    是「旧条目没记这个字段」。把这种情况算成 draft 会让整批整理全进收件箱，
+        //    e2e-archive2 就是这么红的（20 条测试记忆都没有 subject）。
+        const known = !!subj || !!near;
+        return { it, prov, absText, near, subj, known };
       });
       for (const x of _plan) x.flip = memPronounFlip(list, x.absText);
-      const _draftN = _plan.filter(x => !x.subj || x.flip).length;
-      if (_draftN > Math.floor(_plan.length / 3)) {
+      const _draftN = _plan.filter(x => !x.known || x.flip).length;
+      // ⚠️ 归档那条前置路（makeRoom）【必须豁免】。
+      //    它是 summarizeChunk 记忆满了之后调过来「压出位置」的：这里一 return 0，
+      //    cur 不变、room 仍是 0，归档直接抛「记忆已满」停摆 ——
+      //    v1.21.28 修过的同一个坑（见上面 tooFew 的注释）。
+      //    而 makeRoom 的典型场景正是「20 条压成 1~3 条」，floor(1/3) = 0 ——
+      //    不加豁免，1 条 draft 就把这条路堵死。e2e-archive2 第 2 节就是这么红的。
+      //    代价：这条路上判据不准也得认。因为「记忆满了不压」比「押错一条」更糟 ——
+      //    归档会整个停下来，用户看到的是「记忆满了，之后的对话全不归档」。
+      // ⚠️ 判据只认 reason === 'makeRoom'，【不加 memFull】—— 照抄 tooFew 的写法会踩空。
+      //    tooFew 判的是"合得太少"，满额时那条下限才该放宽；
+      //    这道闸判的是"会不会把正式记忆清空"。而归档停摆的后果
+      //    （之后的对话全不归档）比"押错一条"重得多，所以只要走的是 archive 腾位置
+      //    这条路就一律放行，跟当下是不是刚好满额无关。
+      const _draftLimit = (reason === 'makeRoom') ? _plan.length : Math.floor(_plan.length / 3);
+      // 连续被拦几次就放行一次（和 tooFew 的 ZERO_RETRY_MAX 同一个道理）：
+      // 判据一直不灵的话，每一轮整理都白烧一次模型调用、记忆永远不更新。
+      const tdKey = 'memDedupeTooDraft:' + cidFor;
+      const tdN = Number(await kv.get(tdKey, 0)) || 0;
+      if (_draftN > _draftLimit && tdN < ZERO_RETRY_MAX) {
+        await kv.set(tdKey, tdN + 1);
         console.warn('[记忆整理] ' + _draftN + '/' + _plan.length
-                     + ' 条会进收件箱（超过 1/3），本次放弃重写、保留原样');
+                     + ' 条会进收件箱（阈值 ' + _draftLimit + '），本次放弃重写、保留原样'
+                     + '（第 ' + (tdN + 1) + '/' + ZERO_RETRY_MAX + ' 次）');
         _lastDedupeStat.rawLen = parsed.length;
         _lastDedupeStat.aborted = 'tooManyDraft';
         // 和 tooFew 出口一致：队列裁剪 + 清标记，然后 return（不推进水位，下次还会试）
@@ -10216,6 +10249,10 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
         await clearNeedTidy(cidFor);
         return 0;
       }
+      if (_draftN > _draftLimit) {
+        console.warn('[记忆整理] 连续 ' + ZERO_RETRY_MAX + ' 次被 draft 闸拦下，这次按模型说的收下');
+      }
+      await kv.set(tdKey, 0);   // 没被拦（或已放行）→ 重试计数清零
       // ⚠️ 重写前【先备份】，但有条件（v1.21.27 修，复审 新3）。
       //
       // 上一版是无条件覆盖 —— 用户点了「立即整理记忆」留下撤销点后，
@@ -10271,7 +10308,7 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
       // 上面的 _plan 已经把 prov / absText / near / subj / flip 都算过一遍（那是总量闸要用），
       // 这里直接用，不重算 —— 同一个输入算两遍迟早会分叉。
       for (const x of _plan) {
-        const { it, prov, absText, near, subj: _subj, flip: _flip } = x;
+        const { it, prov, absText, near, subj: _subj, known: _known, flip: _flip } = x;
         await mem.add({ id: uid(), charId: cidFor, text: absText, kind: it.kind,
                         key: it.key || (near && near.key) || '',
                         // 走到这里 _subj 为空 = 既对不上旧条目、正文里又「我」「你」都没提，
@@ -10293,8 +10330,8 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
                         //   · 继承不到 subject = 没有旧条目可对，方向也没人核过
                         //   · 人称翻转 = 大概率合并时把主客接反了
                         // draft 不进注入（memory.js 的 activeOnly 只认 active），会摆在收件箱等人看一眼。
-                        status: (_subj && !_flip) ? 'active' : 'draft',
-                        memReviewWhy: _flip ? '整理后主客可疑' : (_subj ? '' : '整理后判不出说的是谁'),
+                        status: (_known && !_flip) ? 'active' : 'draft',
+                        memReviewWhy: _flip ? '整理后主客可疑' : (_known ? '' : '整理后判不出说的是谁'),
                         legacy: (near && near.legacy === true) || prov.legacy });
       }
       // 只删【参与了整理】的那些。受保护的自定义记忆压根没进 list，所以不会被动。

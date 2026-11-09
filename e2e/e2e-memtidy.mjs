@@ -318,6 +318,7 @@ t('没有记录时导出文本是一句人话', /还没有记忆写入记录/.te
 console.log('=== 8. 验收判据：设置页能看见、能导出（不开角色对话）===');
 t('设置里有「记忆写入记录」按钮', !!(await page.$('#btn-mem-audit')));
 t('设置里有「导出记录」按钮', !!(await page.$('#btn-mem-audit-export')));
+t('设置里有「清空记录」按钮（和"清空聊天时跟着清"配套）', !!(await page.$('#btn-mem-audit-clear')));
 await page.evaluate(() => document.getElementById('btn-mem-audit').click());
 await sleep(700);
 const ui = await page.evaluate(() => {

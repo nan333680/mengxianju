@@ -17204,6 +17204,17 @@ function bindSettings() {
       $('modal-ok').onclick = null;
     };
   };
+  // 清空记录：和「清空聊天时跟着清」配套 —— 那个是自动的，这个是用户自己想起来要清。
+  // 不提供「关闭审计」的开关：开关等于大部分人不会打开，等于回到没记录。
+  $('btn-mem-audit-clear').onclick = async () => {
+    const cid = curCharId;
+    if (!cid) { toast('先选一个角色'); return; }
+    const ok = await confirmBox('清空记忆写入记录',
+      '只清这份记录。长期记忆一条都不动，备份也不动。', '清空');
+    if (!ok) return;
+    await auditClear(cid);
+    toast('记录已清空');
+  };
   $('btn-mem-audit-export').onclick = async () => {
     const cid = curCharId;
     if (!cid) { toast('先选一个角色'); return; }

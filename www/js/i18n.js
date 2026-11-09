@@ -520,8 +520,11 @@ const EXTRA_ZH = {
   // 不登记的话英文界面下这一段标题会漏成中文 —— i18n-report 扫不到动态拼接的串。
   '她本来在做': 'What she was doing',
   // v0.5.6 记忆写入记录（审计）
+  // ⚠️ '先选一个角色' 不用在这里登记 —— 底下的表里早就有了（同期撞了两次 key）。
   '记忆写入记录': 'Memory write log',
-  '先选一个角色': 'Pick a character first',
+  '清空记忆写入记录': 'Clear the memory write log',
+  '只清这份记录。长期记忆一条都不动，备份也不动。': 'This only clears the log. No memory entry and no backup is touched.',
+  '记录已清空': 'Log cleared',
   '她听到的是：': 'What she heard:',
   '这一轮她打算：': 'What she means to do:',
   '可以主动提起的旧事：': 'Old thread she may reopen:',

@@ -317,11 +317,20 @@ export function sameMemory(a, b) {
   const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, '');
   if (norm(a && a.text) !== norm(b && b.text)) return false;
   if (String((a && a.kind) || 'fact') !== String((b && b.kind) || 'fact')) return false;
-  // ⚠️ subject / scope / mine 也要一致（v0.5.2.2，外部评审 P1-5）。
-  // 原来只比正文 + kind + 失效日 → 同一句话出现在「他」和「她」两个 subject、
-  // 或 character / branch 两个 scope 时会被当成同一条：来源并进错的那条，
-  // 新记忆干脆不写（静默丢一条）。mine 不同同理：用户手写的和模型抽的不是一回事。
-  if (String((a && a.subject) || 'char') !== String((b && b.subject) || 'char')) return false;
+  // ⚠️ scope / mine 要一致（v0.5.2.2，外部评审 P1-5）：
+  //    原来只比正文 + kind + 失效日 → 同一句话处在 character / branch 两个 scope
+  //    时会被当成同一条：来源并进错的那条，新记忆干脆不写（静默丢一条）。
+  //    mine 不同同理：用户手写的和模型抽的不是一回事。
+  //
+  // ⚠️ v0.5.6：subject 这一条【摘了】。原来它排在 scope 上面，理由是"同一句话
+  //    出现在「他」和「她」两个 subject 时不该合并"。但这一行上面第 318 行
+  //    已经要求正文一字不差（只去空格）—— 正文相同就是同一件事，没有第二种解释：
+  //    记忆的称规是死的（「我」=她、「你」=他），同一句话不可能指两个人。
+  //    subject 不同只能是模型两次判得不一致，其中一个是错的；而合并保留的是第一条，
+  //    错的那条两种处理下都还在库里。所以留着这一行的净收益是 0，
+  //    代价是同一件事在记忆面板里出现两条一模一样的。
+  //    ⚠️ 实测（11-09 备份 190 条 / 23 个角色）：正文完全相同的配对 = 0 对，
+  //       也就是说这一行【从没被触发过】。摘掉不是为了修什么，是清掉一条死分支。
   if (String((a && a.scope) || 'character') !== String((b && b.scope) || 'character')) return false;
   if (((a && a.mine) === true) !== ((b && b.mine) === true)) return false;
   const da = a && a.untilDay != null ? Number(a.untilDay) : null;

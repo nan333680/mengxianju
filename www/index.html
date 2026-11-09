@@ -783,6 +783,13 @@
           <p class="hint-text" id="mem-overflow">—</p>
           <button class="ghost-btn" id="btn-mem-tidy" data-i18n-en="Tidy memories now">立即整理记忆</button>
           <button class="ghost-btn" id="btn-mem-undo" data-i18n-en="Undo last tidy">撤销上次整理</button>
+          <!-- v0.5.6 记忆写入记录（审计）：出了问题要能看出「哪条路把哪条记忆改成了什么」。
+               默认开、不给关 —— 给了开关就等于大部分人不会打开 = 回到没记录。
+               这两个按钮是它唯一能看见的地方，不能拆开做。 -->
+          <button class="ghost-btn" id="btn-mem-audit" data-i18n-en="Memory write log">记忆写入记录</button>
+          <button class="ghost-btn" id="btn-mem-audit-export" data-i18n-en="Export the log">导出记录</button>
+          <p class="hint-text" data-i18n-en-html="Every time long-term memory is written, a line is kept: <b>which path did it</b> (rolling summary / archive summary / tidy), and <b>what it changed into what</b>.<br> Only the first 40–80 characters are kept. Nothing leaves this phone unless you export it yourself.">每次往长期记忆里写东西，这里都会留一行：<b>哪条路干的</b>（滚动总结 / 归档总结 / 整理），
+            以及<b>把哪条改成了什么</b>。<br>只留前 40~80 字。除非你自己导出，否则它不会离开这台手机。</p>
           <p class="hint-text" data-i18n-en-html="Tidying merges similar entries and squeezes them into a one-line gist.<br> It saves <b>a copy of how things looked before</b>, so you can undo from above if it comes out wrong.">整理会把意思相近的条目合并、再压成一句话大意。<br>
             整理前会自动存一份<b data-i18n-en="Previous state">上次的样子</b>，压坏了可以点上面撤销。</p>
 

@@ -62,6 +62,9 @@ import { memoryLine, absolutizeMemoryText, memoryTimeRule, provenanceFor, sameMe
   memoryKey, keyWasDropped, MEMORY_SUBJECTS, shouldAutoCommit, isActiveMemory,
   // v0.5.5.5：整理后人称翻转检测 + subject 兜底（纯本地判定，见 memory.js 里那两段长注释）
   memPronounFlip, guessSubject } from './memory.js';
+// 记忆写入审计（v0.5.6）：把「哪条路把哪条记忆改成了什么」记下来。
+// 只在三条写入主路上挂，用户手动编辑不记（那是他自己干的）。见 memaudit.js 头上那段。
+import { auditStart, auditPush, auditCommit, auditList, auditClear, auditToText } from './memaudit.js';
 // 记忆检索（记忆 OS）：active 过滤 / 分支 / 优先级 / 预算 / dropped 全在 mempick.js，
 // 这个文件只负责拿数据、按群聊视角过一遍、把结果存一份给「这一轮用了什么」。
 import { pickMemories, memoryBlockText, MEMORY_BUDGET_SHARE } from './mempick.js';
@@ -9552,6 +9555,8 @@ async function summarizeIfNeeded(charId = null) {
     // 判出问题的条目会被打上 memReviewWhy，下面 memRecFromItem 据此落成 draft。
     await reviewMemoryDirection(items, txt, charT, who);
     const sourceIds = chunk.map(m => m.id).filter(Boolean);
+    // v0.5.6：这一批总结开一条审计（reason 空 —— 总结没有 makeRoom 那种细分来路）
+    const _aud = auditStart(cid0, 'summarize');
     for (const it of items) {
       // ⚠️ 用 cid0（本函数的形参 charId，没传就回落到当前角色）。
       // 这个函数 v1.21.25 起【有参数了】—— 下面这段历史说明保留，但结论已过时：
@@ -9608,7 +9613,9 @@ async function summarizeIfNeeded(charId = null) {
         continue;
       }
       await mem.add(probe);
+      auditPush(_aud, { op: 'add', now: probe.text, status: probe.status, why: probe.memReviewWhy || '' });
     }
+    await auditCommit(_aud);
     // ⚠️ 【单向门】还有第二处（v1.21.35 修）。
     //
     // 起因：报告只点了 runArchiveNow 那一处（P0-1），我按它修完之后写行为测试，
@@ -10211,6 +10218,9 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
       return 0;
     }
     await kv.set(tfKey, 0);   // 这一轮没被拦（或已被放行）→ 重试计数清零
+    // v0.5.6：这一批整理开一条审计。reason 要分开记 —— manual / auto / makeRoom
+    // 是三种完全不同的场景，第三种（归档催着腾位置）最容易出冤案。
+    const _aud = auditStart(cidFor, 'dedupe', reason || 'manual');
     if (items.length) {
       // ⚠️ v0.5.5.5：先预演一遍，再决定要不要真写。
       //
@@ -10272,6 +10282,9 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
                      + '（第 ' + (tdN + 1) + '/' + ZERO_RETRY_MAX + ' 次）');
         _lastDedupeStat.rawLen = parsed.length;
         _lastDedupeStat.aborted = 'tooManyDraft';
+        // 整批放弃也要留痕：否则事后只看到"记忆没变"，不知道是模型没产出还是被闸拦了
+        auditPush(_aud, { op: 'abort', now: _draftN + '/' + _plan.length + ' 条会进收件箱，整批放弃' });
+        await auditCommit(_aud);
         // 和 tooFew 出口一致：队列裁剪 + 清标记，然后 return（不推进水位，下次还会试）
         await pruneDeletedQueue(cidFor);
         await clearNeedTidy(cidFor);
@@ -10367,9 +10380,17 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
                         status: (_known && !_flip) ? 'active' : 'draft',
                         memReviewWhy: _flip ? '整理后主客可疑' : (_known ? '' : '整理后判不出说的是谁'),
                         legacy: (near && near.legacy === true) || prov.legacy });
+        // 审计：这一条从哪条改成了什么。old 取「最像的那条」的原文（前 40 字够认出）。
+        auditPush(_aud, { op: 'add', old: (near && near.text) || '', now: absText,
+                          status: (_known && !_flip) ? 'active' : 'draft',
+                          why: _flip ? '整理后主客可疑' : (_known ? '' : '整理后判不出说的是谁') });
       }
       // 只删【参与了整理】的那些。受保护的自定义记忆压根没进 list，所以不会被动。
-      for (const m of list) await mem.del(m.id);
+      for (const m of list) {
+        auditPush(_aud, { op: 'del', old: m.text });   // 删掉的也要记，否则看不出"什么没了"
+        await mem.del(m.id);
+      }
+      await auditCommit(_aud);
       // 只有真的核对过（拿到非空结果）才把"被删对话"清单清掉。
       // 以前这行在 if 外面：模型没返回可解析 JSON 时清单被白清，
       // 「删了她还记得」就会反复出现。
@@ -10702,6 +10723,8 @@ async function summarizeChunk(charId, chunk) {
   // v0.5.4.4：同实时总结路，写入前做一次方向复核（这条是最常走的写回路径）。
   await reviewMemoryDirection(items, txt, char, who);
   const sourceIds = chunk.map(m => m.id).filter(Boolean);
+  // v0.5.6：这一批归档总结开一条审计（reason 空 —— 归档不是整理，没有 makeRoom 那种细分）
+  const _aud = auditStart(charId, 'chunk');
   for (const it of items) {
     // ⚠️ 同上（v1.21.25 修）——这是【最常走】的一条写回路径。
     const absText = absolutizeMemoryText(it.text, day);
@@ -10728,10 +10751,15 @@ async function summarizeChunk(charId, chunk) {
         if (g2.ok) merged.status = MEMORY_STATUS.ACTIVE;
       }
       await mem.add(merged);
+      // 合并到已有那条：审计记的是"这次想写什么 + 并进了哪条"
+      auditPush(_aud, { op: 'add', old: dup.text, now: merged.text, status: merged.status,
+                        why: merged.memReviewWhy || '' });
       continue;
     }
     await mem.add(probe);
+    auditPush(_aud, { op: 'add', now: probe.text, status: probe.status, why: probe.memReviewWhy || '' });
   }
+  await auditCommit(_aud);
   return items.length;
 }
 
@@ -13641,6 +13669,10 @@ async function purgeCharEverywhere(id) {
     }
   } catch (e) { /* 场景处理失败不该挡住删角色本身 */ }
   try { await wb.purgeChar(id); } catch { /* 清不掉也不影响删除本身 */ }
+  // v0.5.6：审计属于这个角色，角色没了它就没意义。
+  // 下面那段"任何以 ':<id>结尾' 的键都清掉"够不到 memAudit:<charId> ——
+  // 它是以 charId 结尾没错，但那一段是按 kv 全表扫，多一条显式的更稳。
+  try { await auditClear(id); } catch { /* 清不掉不影响删除本身 */ }
   await chars.del(id);
   // ⚠️ 不再靠人工维护前缀表：任何以 ':<id>结尾' 的键都清掉。
   //    角色 id 是 uid() 生成的、永不复用，所以不会误删别的角色的键。
@@ -17152,6 +17184,55 @@ function bindSettings() {
 
   // 【优化 C】撤销上次整理：把备份写回去。
   // 只在有备份时可用；整理完条数/字数没变化的话也允许撤（等于回到备份的原样）。
+  // v0.5.6 记忆写入记录：摊开 + 导出。
+  // 为什么两个按钮而不是一个：看和导出是两件事，塞进一个弹窗里要么多一层菜单，
+  // 要么"点一下就下载"（用户还没看清东西就先落了个文件）。
+  $('btn-mem-audit').onclick = async () => {
+    const cid = curCharId;
+    if (!cid) { toast('先选一个角色'); return; }
+    const c = allChars.find(x => x.id === cid);
+    const txt = auditToText(cid, await auditList(cid), (c && c.name) || '');
+    const box = $('modal');
+    $('modal-title').textContent = tt('记忆写入记录');
+    $('modal-text').innerHTML = '<pre class="mem-audit-pre">' + esc(txt) + '</pre>';
+    $('modal-ok').textContent = tt('知道了');
+    $('modal-cancel').classList.add('hidden');
+    box.classList.remove('hidden');
+    $('modal-ok').onclick = () => {
+      box.classList.add('hidden');
+      $('modal-cancel').classList.remove('hidden');
+      $('modal-ok').onclick = null;
+    };
+  };
+  $('btn-mem-audit-export').onclick = async () => {
+    const cid = curCharId;
+    if (!cid) { toast('先选一个角色'); return; }
+    const c = allChars.find(x => x.id === cid);
+    const txt = auditToText(cid, await auditList(cid), (c && c.name) || '');
+    const name = '记忆写入记录-' + new Date().toISOString().slice(0, 10) + '.txt';
+    // 安卓上 <a download> 等于静默存进下载目录（看不见、也找不着），
+    // 所以先走原生分享；电脑上再落回浏览器下载。和 exportData 一个口径。
+    const FS2 = capPlugin('Filesystem');
+    const SH2 = capPlugin('Share');
+    if (isNative() && FS2 && SH2) {
+      try {
+        const res = await FS2.writeFile({ path: name, data: txt, directory: 'CACHE', encoding: 'utf8' });
+        await SH2.share({ url: res.uri, dialogTitle: '保存到哪，或发给谁' });
+        return;
+      } catch (err) {
+        toast('这台设备不支持原生导出，改用浏览器方式', 4000);
+      }
+    }
+    try {
+      const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+      toast('已导出');
+    } catch (e) { toast('导出失败：' + ((e && e.message) || e)); }
+  };
+
   $('btn-mem-undo').onclick = async () => {
     const btn = $('btn-mem-undo');
     if (btn.disabled || !curCharId) return;
@@ -20773,6 +20854,10 @@ $('btn-new-char').onclick = () => openPresetPicker();
     for (const m of await mem.list(id)) {
       try { await mem.del(m.id); } catch { /* 单条删不掉不该挡住整个清空 */ }
     }
+    // v0.5.6：审计也跟着清。它不是隐私洁癖 —— 审计属于那个角色，
+    // 角色回到第一天、记忆全没了，留着一堆"哪条被改成了什么"只会让下次翻的人
+    // 以为还有数据。
+    try { await auditClear(id); } catch { /* 清不掉不影响清空本身 */ }
     // 剧情天数也回第一天。clock: 不在下面那串键里 —— 漏了它的话，
     // 清空后她还停在"第 300 天"，跟空白的聊天记录完全对不上。
     try { await kv.del('clock:' + id); } catch { /* 同上 */ }
@@ -20937,7 +21022,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.5.5';
+const WEB_VERSION_FALLBACK = '0.5.6';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

@@ -289,6 +289,32 @@ t('★ 新的那批一条都没写进去', gate.hasNew === false, String(gate.ha
 t('如实说「整批放弃、原样没动」', /整批放弃/.test(gate.toast), gate.toast);
 t('不会误报成「没有需要合并的」', !/没有需要合并/.test(gate.toast), gate.toast);
 
+console.log('=== 7. 记忆写入记录（v0.5.6 审计）===');
+// 这一节测的是「下次出事能不能翻到过程」—— 前三次排查拿到的都只有最终状态。
+const aud = await page.evaluate(async (id) => {
+  const M = await import('./js/memaudit.js');
+  const list = await M.auditList(id);
+  const empty = M.auditToText(id, [], '');
+  return {
+    n: list.length,
+    from: list.map(b => b.from),
+    reason: list.map(b => b.reason),
+    items: list.map(b => (b.items || []).length),
+    ops: list.map(b => (b.items || []).map(x => x.op).join(',')),
+    text: M.auditToText(id, list, '测试角色'),
+    empty,
+  };
+}, cid);
+console.log('   ' + JSON.stringify({ n: aud.n, from: aud.from, reason: aud.reason, items: aud.items }));
+t('整理跑过之后留下了审计（前面 6/6b 各一批）', aud.n >= 2, 'n=' + aud.n);
+t('记了是哪条路（dedupe）', aud.from.indexOf('dedupe') >= 0, JSON.stringify(aud.from));
+t('记了来路（manual / auto / makeRoom 之一，不是空）',
+  aud.reason.every(r => ['manual', 'auto', 'makeRoom'].indexOf(r) >= 0), JSON.stringify(aud.reason));
+t('一批里既有「写」也有「删」', aud.ops.some(o => o.indexOf('add') >= 0 && o.indexOf('del') >= 0), JSON.stringify(aud.ops));
+t('整批放弃那批留了 abort 痕迹', aud.ops.some(o => o.indexOf('abort') >= 0), JSON.stringify(aud.ops));
+t('导出文本里有人能读的批次头和原文', /■/.test(aud.text) && /原:/.test(aud.text), aud.text.slice(0, 200));
+t('没有记录时导出文本是一句人话', /还没有记忆写入记录/.test(aud.empty), aud.empty);
+
 console.log('\nJS 错误: ' + (errs.length ? errs.join(' | ') : '无'));
 t('无 JS 报错', errs.length === 0, errs.join(' | '));
 console.log('\n结果: pass='+pass+' fail='+fail);

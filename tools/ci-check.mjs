@@ -48,7 +48,10 @@ if (other > BASELINE) {
 console.log('== 2. www 里的 js 都得在（app 少一个文件就整个白屏）==');
 const need = ['app.js', 'api.js', 'db.js', 'persona.js', 'presets.js', 'charcard.js', 'ccv3.js',
   'stchat.js', 'stregex.js', 'autobackup.js', 'exportmd.js', 'i18n.js', 'storyarc.js', 'memory.js',
-  'cliche.js', 'deflavor.js', 'psyche.js', 'director.js'];
+  'cliche.js', 'deflavor.js', 'psyche.js', 'director.js',
+  // ⚠️ 新模块必须进这个清单（v0.5.6）：少了它 ci-check 不会报，
+  //    App 白屏了才知道 —— 这份列表是硬编码的，加文件的人得自己记得补。
+  'memaudit.js', 'mempick.js', 'innerthought.js', 'cadence.js', 'scenectx.js', 'reflect.js'];
 const miss = need.filter(f => !fs.existsSync(path.join(ROOT, 'www/js', f)));
 if (miss.length) { console.log('   ✗ 少了：' + miss.join(', ')); process.exit(1); }
 console.log('   ✓ ' + need.length + ' 个都在');

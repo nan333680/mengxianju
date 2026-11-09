@@ -2279,3 +2279,15 @@ input[type="range"] { touch-action: pan-y; }
   font-family:inherit; font-size:13.5px; padding:8px 10px; border-radius:9px;
   background:var(--bg3); color:var(--fg); border:1px solid var(--line); outline:none; }
 .beat-row .bi:focus{ border-color:var(--pri); }
+
+/* v0.5.6 记忆写入记录：纯文本摊在弹层里，保留换行、能滚动 */
+.mem-audit-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 60vh;
+  overflow: auto;
+}
+

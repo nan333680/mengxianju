@@ -36,7 +36,13 @@ page.on('request', req => {
     // ② 用「整理 + JSON 数组」，但录入记忆的提示里也有这两个词 → 两条路径都走整理分支。
     // 现在用查重提示独有的「第一步：合并同主题」当特征。
     const items = sys.includes('第一步：合并同主题')
-      ? (Array.isArray(input)?input:[]).map((x,i)=>({ text:'改写'+i, kind:'fact', untilDay:null, freq:'normal' }))
+      // ⚠️ v0.5.5.5：原来返回的是「改写0」「改写1」——和旧记忆毫无关系的文本。
+      //    真实模型整理时不会把「她的长期事实」改成「改写0」，它会改写/压缩。
+      //    而这一版加了「整理后判不出主人就落 draft + 总量闸」，那种完全无关的输出
+      //    会被正确判成"对不上旧条目"，于是整批进收件箱、这次整理被闸拦下 ——
+      //    测试期望的"整理生效"自然就不发生了。这里换成「原文 + 后缀」，
+      //    和真实整理的行为一致（保留主干、改措辞），闸才有意义。
+      ? (Array.isArray(input)?input:[]).map((x,i)=>({ text:(x.text||('改写'+i)) + '（整理后）', kind:'fact', untilDay:null, freq:'normal' }))
       : [{ text:'她新记的', kind:'fact', untilDay:null, freq:'normal' }];
     req.respond({ status:200, headers:{'Access-Control-Allow-Origin':'*'}, contentType:'application/json', body: JSON.stringify({choices:[{message:{content:JSON.stringify(items)}}]}) });
     return;
@@ -180,7 +186,7 @@ const l3 = await memList();
 console.log('   ' + JSON.stringify(l3.map(m => ({ t:m.text.slice(0,10), mine:m.mine }))));
 const kept = l3.find(m => m.mine);
 t('自定义那条没被改写', kept && kept.text === '你必须记住我喜欢辣', JSON.stringify(kept));
-t('她的那些被改写了（正常参与整理）', l3.some(m => !m.mine && m.text.startsWith('改写')), JSON.stringify(l3.map(m=>m.text.slice(0,6))));
+t('她的那些被改写了（正常参与整理）', l3.some(m => !m.mine && m.text.endsWith('（整理后）')), JSON.stringify(l3.map(m=>m.text.slice(0,8))));
 
 console.log('');
 console.log('=== 4. 开关打开 → 允许一起整理 ===');

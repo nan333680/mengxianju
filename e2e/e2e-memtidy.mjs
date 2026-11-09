@@ -315,6 +315,31 @@ t('整批放弃那批留了 abort 痕迹', aud.ops.some(o => o.indexOf('abort') 
 t('导出文本里有人能读的批次头和原文', /■/.test(aud.text) && /原:/.test(aud.text), aud.text.slice(0, 200));
 t('没有记录时导出文本是一句人话', /还没有记忆写入记录/.test(aud.empty), aud.empty);
 
+console.log('=== 8. 验收判据：设置页能看见、能导出（不开角色对话）===');
+t('设置里有「记忆写入记录」按钮', !!(await page.$('#btn-mem-audit')));
+t('设置里有「导出记录」按钮', !!(await page.$('#btn-mem-audit-export')));
+await page.evaluate(() => document.getElementById('btn-mem-audit').click());
+await sleep(700);
+const ui = await page.evaluate(() => {
+  const box = document.getElementById('modal');
+  const txt = document.getElementById('modal-text');
+  return {
+    open: !box.classList.contains('hidden'),
+    title: (document.getElementById('modal-title').textContent || '').trim(),
+    hasPre: !!txt.querySelector('.mem-audit-pre'),
+    hasBatch: /■/.test(txt.textContent || ''),
+    len: (txt.textContent || '').length,
+  };
+});
+console.log('   ' + JSON.stringify(ui));
+t('点开弹出记录', ui.open === true, JSON.stringify(ui));
+t('标题是「记忆写入记录」', ui.title.indexOf('记忆写入记录') >= 0, ui.title);
+t('弹层里摊出了批次（不是空壳）', ui.hasPre && ui.hasBatch && ui.len > 40, JSON.stringify(ui));
+await page.evaluate(() => document.getElementById('modal-ok').click());
+await sleep(400);
+const closed = await page.evaluate(() => document.getElementById('modal').classList.contains('hidden'));
+t('点「知道了」能关掉', closed === true, String(closed));
+
 console.log('\nJS 错误: ' + (errs.length ? errs.join(' | ') : '无'));
 t('无 JS 报错', errs.length === 0, errs.join(' | '));
 console.log('\n结果: pass='+pass+' fail='+fail);

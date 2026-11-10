@@ -1370,6 +1370,15 @@
         <span class="wb-entry-s" id="wb-solo-sub" data-i18n-en="Write lore for one specific character">给某一个角色单独写设定</span>
         <i class="fold-arrow">›</i>
       </button>
+      <!-- 全库搜设定（v0.5.6.3）：1996 条分成 4 组 + 33 份单独设定，
+           列表顺序只是导入顺序 —— 找一条设定只能一条条翻。这里是查库的入口。
+           ⚠️ 副标题【不带 data-i18n-en】：它是实际数字，被语言模板覆盖就成了
+              「英文界面里丢数字」。数字那几句靠 i18n.js 的 BY_PATTERN 正则翻。 -->
+      <button class="wb-entry" id="btn-wb-search">
+        <span class="wb-entry-t" data-i18n-en="Search entries">搜索设定条目</span>
+        <span class="wb-entry-s" id="wb-search-sub">共 0 条</span>
+        <i class="fold-arrow">›</i>
+      </button>
     </section>
 
     <section class="group">
@@ -1380,6 +1389,31 @@
       <button class="ghost-btn" id="btn-wb-export" data-i18n-en="Export world book">导出世界书</button>
       <input id="wb-import-file" type="file" accept=".json,application/json" hidden>
     </section>
+  </main>
+</div>
+
+<!-- ============ 世界书 · 搜索（v0.5.6.3）============ -->
+<!-- ⚠️ 位置很讲究：必须排在 #view-worldbook 之后、#view-wbglobal 之前。
+     所有 .view 的 z-index 都是 2，谁盖谁完全由 DOM 顺序决定（见 style.css 的说明）；
+     搜索页是从世界书主页压进去的，再往下才是 #view-wbentries / #view-wbsolo ——
+     它们本来就排在后面，所以只有这一格能放。 -->
+<div id="view-wbsearch" class="view" data-i18n-nodes>
+  <header class="topbar">
+    <button class="icon-btn" id="btn-wbs2-back">←</button>
+    <div class="title"><span data-i18n-en="Search entries">搜索设定</span></div>
+    <div style="width:40px"></div>
+  </header>
+  <main class="scroll">
+    <input id="wbs2-input" class="wbs-input" type="search" autocomplete="off" autocorrect="off"
+           spellcheck="false"
+           data-i18n-en-ph="Search titles, triggers, and content"
+           placeholder="搜标题 / 触发词 / 正文">
+    <!-- ⚠️ class 必须独立：蹭 .wb-review-bar 的样式会让别人的
+         querySelector('.wb-review-bar') 先抓到这一个空元素（v0.5.6.3 踩过） -->
+    <div id="wbs2-warn" class="wbs-warn" style="display:none"></div>
+    <div id="wbs2-meta" class="wbs-meta"></div>
+    <div id="wbs2-results" class="wbs-results"></div>
+    <div class="gap"></div>
   </main>
 </div>
 

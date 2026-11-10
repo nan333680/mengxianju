@@ -1498,7 +1498,19 @@ function resetTo(name) {
 function goBack() {
   if (_stack.length <= 1) return false;
   _stack.pop();
-  _renderView(_stack[_stack.length - 1]);
+  const next = _stack[_stack.length - 1];
+  _renderView(next);
+  // 世界书搜索页（v0.5.6.3）：_renderView 只切 class，【不重渲染业务内容】——
+  // 这正是"返回后输入框和结果都还在"免费成立的原因，代价是数据会旧：
+  // 从条目页删掉一条、或者改了正文，返回时列表上还写着老样子。
+  // 所以每次回到搜索页都重跑一次；缓存一起清掉（条目刚被改过）。
+  // 输入框内容不动，用户回来还是那个词。
+  // ⚠️ 这里【不能 await】：goBack 的返回值被安卓返回键和 4 个返回按钮消费，
+  //    必须同步给出。重跑走旁路，失败也不许影响返回。
+  if (next === 'wbsearch') {
+    _wbSrc = null;
+    Promise.resolve().then(() => wbSearchRender()).catch(() => {});
+  }
   return true;
 }
 
@@ -5264,6 +5276,20 @@ async function renderWorldbook() {
     const ss = await wb.soloAll();
     const s2 = $('wb-solo-sub');
     if (s2) s2.textContent = ss.length ? (ss.length + ' 个角色有单独设定') : '给某一个角色单独写设定';
+    // 搜索入口的副标题（v0.5.6.3）：全库条目总数。这两个 getAll 上面的副标题本来就要，
+    // 顺手累加，不额外读一次库。
+    // ⚠️ solo 要按 charId 去重 —— 搜索是按 charId 只认第一条的，
+    //    两边算法不一致的话这里报的数会大于实际能搜到的条数，用户会以为丢了东西。
+    let n = 0;
+    for (const g of gs) n += (g.entries || []).length;
+    const seenChar = new Set();
+    for (const s of ss) {
+      if (seenChar.has(s.charId)) continue;
+      seenChar.add(s.charId);
+      n += (s.entries || []).length;
+    }
+    const s3 = $('wb-search-sub');
+    if (s3) s3.textContent = n ? ('共 ' + n + ' 条') : '搜标题 / 触发词 / 正文';
   } catch (e) { /* 读不到不影响打开页面 */ }
 }
 
@@ -5594,6 +5620,285 @@ async function wbSaveEntries(ctx, entries) {
     const s = await wb.solo(ctx.id);
     await wb.putSolo({ id: s ? s.id : uid(), charId: ctx.id, entries });
   }
+}
+
+// ================= 世界书 · 全库搜设定条目（v0.5.6.3）=================
+//
+// 为什么要有：1996 条分散在 4 个角色组 + 33 份单独设定里，列表顺序只是导入顺序，
+// 想找一条设定只能一条条翻。⚠️ 这是【查库】，不是查 DOM —— 和聊天搜索同一条规矩
+// （见 runChatSearch 上面那段注释）：世界书列表没有分页也没有虚拟化，DOM 过滤走不通。
+//
+// 三个字段一起搜：title / keys / content。
+// 只搜标题会漏 —— 用户记不住 15 字的标题，记得的是「隙间」这个触发词；
+// 只搜正文也会漏 —— 触发词写了、正文没提的条目（实测「隙间」11 条里有 5 条是这种）。
+//
+// 范围是【全库】，不是当前打开的那一份：
+// ST / NovelAI 的世界书搜索都只在当前那一本里（ST 切库还会清空搜索框），
+// 因为它们一次只用一本。这份数据不一样 —— 同一个角色的设定可能在「组」和「单独」两处
+// （实测「西行寺幽幽子」这个名字下有 196 条和 35 条两份），按册搜必然漏。
+let _wbSrc = null;           // 全库缓存。进搜索页读一次；返回搜索页时清掉重读
+let _wbLast = null;          // 上一轮结果（展开按钮要用）
+let _wbExpanded = new Set(); // 已展开的份（_wbLast.groups 的下标）
+let _wbSeq = 0;              // 竞态闸：打字快过查询时只认最后一次
+let _wbSearchTimer = 0;
+const WB_GATE_LINES = 300;   // 首屏行数闸
+const WB_PER_GROUP = 30;     // 每份首屏条数
+
+/** 读出全库。一次 getAll 拿整条记录，entries 是内嵌的 —— 读全库和读一份的序列化量一样。 */
+async function wbSearchUnits() {
+  if (_wbSrc) return _wbSrc;
+  let gs = [], ss = [];
+  try { gs = await wb.groups(); } catch (e) { gs = []; }
+  try { ss = await wb.soloAll(); } catch (e) { ss = []; }
+  const units = [];
+  for (const g of gs) {
+    units.push({ kind: 'group', oid: g.id, name: g.name || '未命名',
+                 total: (g.entries || []).length, entries: g.entries || [] });
+  }
+  // 一个角色【可能有多条】solo 记录（历史原因，见 db.js 的 solo()）。
+  // openWbSolo 走的是 solo() = 只认第一条，所以这里也必须只认第一条 ——
+  // 否则会搜到一份点进去根本不存在的条目。
+  const seen = new Set();
+  for (const s of ss) {
+    if (seen.has(s.charId)) continue;
+    seen.add(s.charId);
+    const c = allChars.find(x => x.id === s.charId);
+    units.push({ kind: 'solo', oid: s.charId, name: c ? c.name : '已删除的角色',
+                 total: (s.entries || []).length, entries: s.entries || [] });
+  }
+  _wbSrc = units;
+  return units;
+}
+
+/** 一条条目命中哪儿了。返回 null = 没命中。
+ *  段位 1=标题 2=触发词 3=只有正文。它同时决定【排序】和【这一行显示什么】。 */
+function wbHitInfo(e, ql) {
+  const title = String(e.title || '');
+  const content = String(e.content || '');
+  const keys = (Array.isArray(e.keys) ? e.keys : []).map(k => String(k));
+  const tHit = title.toLowerCase().includes(ql);
+  const kHit = keys.filter(k => k.toLowerCase().includes(ql));
+  const cHit = content.toLowerCase().includes(ql);
+  if (!tHit && !kHit.length && !cHit) return null;
+  return { seg: tHit ? 1 : (kHit.length ? 2 : 3), tHit: tHit, kHit: kHit, cHit: cHit };
+}
+
+/** 片段：前后各留 20 字，换行压成空格。
+ *  ⚠️ 不能直接复用 searchSnippet —— 它用大小写敏感的 indexOf，而这里判命中用的是
+ *     toLowerCase。两边不一致就会出现「判了命中、片段却是空」的空白行。
+ *     全库有 8 条的 keys 带拉丁字母，大小写差一个就中招。 */
+function wbSnippet(text, q) {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  const i = flat.toLowerCase().indexOf(String(q).toLowerCase());
+  if (i < 0) return flat.slice(0, 60);   // 兜底：不该走到，但绝不给空行
+  const a = Math.max(0, i - 20), b = Math.min(flat.length, i + q.length + 20);
+  return (a > 0 ? '…' : '') + flat.slice(a, b) + (b < flat.length ? '…' : '');
+}
+
+/** 高亮。和 searchHl 只差一点：大小写不敏感（配 wbSnippet）。
+ *  故意手写循环而不是拿 q 拼正则 —— 用户输入里的 . * ( ) 都是正则元字符，
+ *  拼进去要么炸要么误配，转义函数又会多一个要维护的正则。 */
+function wbHl(text, q) {
+  const s = esc(text);
+  const e = esc(q);
+  if (!e) return s;
+  const ls = s.toLowerCase(), le = e.toLowerCase();
+  let out = '', i = 0;
+  for (;;) {
+    const k = ls.indexOf(le, i);
+    if (k < 0) { out += s.slice(i); break; }
+    out += s.slice(i, k) + '<mark>' + s.slice(k, k + e.length) + '</mark>';
+    i = k + e.length;
+  }
+  return out;
+}
+
+/** 跑一轮搜索。返回 { q, groups, total }。
+ *  groups 的顺序是写死的：最高段位 → 命中数降序 → oid 升序。
+ *  最后一级只为了让「同样的输入永远得到同样的顺序」—— 没有它，同段位同命中数的两份
+ *  谁在前取决于引擎，验收就没法判。 */
+async function wbSearchRun(q) {
+  const ql = String(q).toLowerCase();
+  const units = await wbSearchUnits();
+  const groups = [];
+  let total = 0;
+  for (const u of units) {
+    const rows = [];
+    for (let i = 0; i < u.entries.length; i++) {
+      const info = wbHitInfo(u.entries[i], ql);
+      if (!info) continue;
+      rows.push({ e: u.entries[i], idx: i, seg: info.seg, tHit: info.tHit, kHit: info.kHit });
+    }
+    if (!rows.length) continue;
+    total += rows.length;
+    let best = 3;
+    for (const r of rows) if (r.seg < best) best = r.seg;
+    groups.push({ u: u, rows: rows, best: best });
+  }
+  groups.sort((a, b) => a.best - b.best
+                        || b.rows.length - a.rows.length
+                        || (a.u.oid < b.u.oid ? -1 : a.u.oid > b.u.oid ? 1 : 0));
+  // 组内：段位 → 保持 hits 原顺序（Array.sort 是稳定的，不额外加键）
+  for (const g of groups) g.rows.sort((a, b) => a.seg - b.seg);
+  return { q: String(q), groups: groups, total: total };
+}
+
+/** 一行结果。三段都不许空白 —— 实测过：「隙间」11 条里有 5 条的正文根本不含这个词
+ *  （只命中触发词），「灵梦」那 11 条空白则全部来自标题命中。照搬 searchSnippet 就是空行。 */
+function wbRowHtml(r, q, gi) {
+  let body;
+  if (r.seg === 1) {
+    body = wbHl(r.e.title, q);                       // 标题最长 15 字，整个显示，不截
+  } else if (r.seg === 2) {
+    // 只列【命中的那几个】触发词。全库最多的那条有 34 个 key，全列就是一堵墙。
+    body = r.kHit.map(k => wbHl(k, q)).join(' · ');
+  } else {
+    body = wbHl(wbSnippet(r.e.content, q), q);
+  }
+  const off = r.e.on === false;
+  const rev = r.e.needsReview === true;
+  const tag = (rev ? '<span class="wbs-tag rev">待确认</span>' : '')
+            + (off ? '<span class="wbs-tag">已关闭</span>' : '');
+  return '<div class="wbs-row" data-g="' + gi + '" data-id="' + esc(r.e.id || '')
+       + '" data-idx="' + r.idx + '">' + tag + body + '</div>';
+}
+
+/** 渲染一屏结果。 */
+function wbRender(res) {
+  const box = $('wbs2-results');
+  const meta = $('wbs2-meta');
+  if (!box) return;
+  _wbLast = res;
+  if (!res.total) {
+    if (meta) meta.textContent = '';
+    box.innerHTML = '<div class="sys-line">没搜到「' + esc(res.q) + '」</div>';
+    return;
+  }
+  if (meta) meta.textContent = '共 ' + res.total + ' 条 / ' + res.groups.length + ' 份';
+  // 首屏：按份累计 min(30, 该份命中数)，放不下就【停】—— 不跳过、不切半份。
+  // 为什么不跳过：用户看到的应该是「最相关的前 N 份」，连续可读；
+  // 跳过会让相关度更低的份插进来，页面上的份序变得不可预期。
+  let lines = 0, shown = 0;
+  for (const g of res.groups) {
+    const take = Math.min(WB_PER_GROUP, g.rows.length);
+    if (lines + take > WB_GATE_LINES) break;
+    lines += take; shown++;
+  }
+  const truncated = shown < res.groups.length;
+  const scroller = box.closest('main');
+  const keepTop = scroller ? scroller.scrollTop : 0;
+  let html = '';
+  for (let gi = 0; gi < shown; gi++) {
+    const g = res.groups[gi];
+    const rows = _wbExpanded.has(gi) ? g.rows : g.rows.slice(0, WB_PER_GROUP);
+    // 组头必须带「共 M 条」：全库有三对同名设定（小恶魔 / 射命丸文 / 西行寺幽幽子
+    // 各有两份），只写名字会让人以为列表出错、或者以为点进去能看全。
+    html += '<div class="wbs-group">'
+      + '<div class="wbs-head">'
+      +   '<span class="wbs-name">' + esc(g.u.name) + '</span>'
+      +   '<span class="wbs-kind"> · ' + (g.u.kind === 'group' ? '角色组' : '单独设定') + '</span>'
+      +   '<span class="wbs-count">命中 ' + g.rows.length + ' 条 / 共 ' + g.u.total + ' 条</span>'
+      + '</div>'
+      + rows.map(r => wbRowHtml(r, res.q, gi)).join('');
+    const rest = g.rows.length - rows.length;
+    // ⚠️ 触发闸时【一律不给展开】：点一下就从 30 条变整份，闸等于没设。
+    //    这时候用户要的是「换个词」，不是「把这一份翻开」。
+    if (rest > 0 && !truncated) {
+      html += '<button class="wbs-more" data-g="' + gi + '">还有 ' + rest + ' 条 · 展开</button>';
+    }
+    html += '</div>';
+  }
+  if (truncated) {
+    html += '<div class="wbs-foot">只列了最相关的前 ' + shown + ' 份 —— 加个字会更快</div>';
+  }
+  box.innerHTML = html;
+  if (scroller && keepTop) scroller.scrollTop = keepTop;
+  // 行点击 = 跳过去看 + 高亮，不直接开编辑弹窗
+  box.querySelectorAll('.wbs-row').forEach(el => {
+    el.onclick = () => {
+      const g = _wbLast && _wbLast.groups[Number(el.dataset.g)];
+      if (!g) return;
+      const id = el.dataset.id || '';
+      const idx = Number(el.dataset.idx);
+      if (g.u.kind === 'group') openWbEntries(g.u.oid, id || null, idx);
+      else openWbSolo(g.u.oid, id || null, idx);
+    };
+  });
+  box.querySelectorAll('.wbs-more').forEach(b => {
+    b.onclick = () => {
+      _wbExpanded.add(Number(b.dataset.g));
+      if (_wbLast) wbRender(_wbLast);
+    };
+  });
+}
+
+/** 总开关关着的时候，搜到的每一条都不生效 —— 主页有提示，这一页也得有。 */
+function wbSearchWarn() {
+  const w = $('wbs2-warn');
+  if (!w) return;
+  if (S.worldbookOn === false) {
+    w.style.display = '';
+    w.innerHTML = '世界书总开关<b>关着</b> —— 下面搜到的条目一条都不会注入。要用就回上一层把开关打开。';
+  } else {
+    w.style.display = 'none';
+    w.innerHTML = '';
+  }
+}
+
+/** 读输入框 → 跑 → 渲染。 */
+async function wbSearchRender() {
+  const box = $('wbs2-results');
+  const inp = $('wbs2-input');
+  if (!box) return;
+  wbSearchWarn();
+  const q = String(inp ? inp.value : '').trim();
+  if (q.length < SEARCH_MIN) {
+    _wbLast = null; _wbExpanded = new Set();
+    const meta = $('wbs2-meta');
+    if (meta) meta.textContent = '';
+    box.innerHTML = '<div class="sys-line">输入至少 ' + SEARCH_MIN + ' 个字</div>';
+    return;
+  }
+  const my = ++_wbSeq;
+  let res;
+  try { res = await wbSearchRun(q); } catch (e) { return; }
+  if (my !== _wbSeq) return;                 // 输入已经变了，这一轮作废
+  if (!_wbLast || _wbLast.q !== q) _wbExpanded = new Set();
+  wbRender(res);
+}
+
+/** 从世界书主页进来：全新一页（输入框清空、缓存重读）。 */
+async function openWbSearch() {
+  _wbSrc = null;
+  _wbExpanded = new Set();
+  _wbLast = null;
+  const inp = $('wbs2-input');
+  if (inp) inp.value = '';
+  await wbSearchRender();
+  showView('wbsearch');
+}
+
+/** 从搜索结果跳到某一条：等过渡动画走完再滚。
+ *  ⚠️ 必须在 showView 之后调用，且自己等 150ms —— 在 transform 动画中途
+ *  scrollIntoView 会算错位置（表现是「有时候准、有时候差半屏」）。
+ *  先例就是 jumpToChatMsg 里那句一模一样的 setTimeout(150)。 */
+async function wbJumpInto(target, entryId, entryIdx) {
+  if (!target) return;
+  let el = null;
+  if (entryId) {
+    const hit = Array.from(target.querySelectorAll('[data-wb-id]'))
+      .find(x => x.dataset.wbId === entryId);
+    if (hit) el = hit;
+  }
+  if (!el && Number.isInteger(entryIdx) && entryIdx >= 0) {
+    el = target.querySelector('[data-wb-e="' + entryIdx + '"]');
+  }
+  if (!el) return;                           // 找不到就不定位、不报错
+  await new Promise(r => setTimeout(r, 150));
+  el.scrollIntoView({ block: 'center' });
+  el.classList.add('wb-flash');
+  setTimeout(() => el.classList.remove('wb-flash'), 1200);
 }
 
 /**
@@ -5933,16 +6238,20 @@ function fromSillyTavern(entriesObj) {
   // 落库前补 id 和兜底标题（extractEntries 是给卡片用的，不带 id）
   return conv.map((e, i) => ({ id: uid(), title: e.title || ('条目 ' + (i + 1)), ...e }));
 }
-async function openWbEntries(gid) {
+/** entryId / entryIdx 是【从搜索结果跳过来】才带的（v0.5.6.3），平时为空。
+ *  ⚠️ 定位只做一次、只在跳转时做 —— 不能存成一个"待办状态"，否则在条目页
+ *     删掉一条触发重渲染时，会莫名其妙再滚一次。 */
+async function openWbEntries(gid, entryId, entryIdx) {
   _wbCtx = { kind: 'group', id: gid };
   const g = await wb.group(gid);
   const ti = $('wbe-title');
   if (g && ti) ti.textContent = g.name || '条目';
   await renderWbEntries();
   showView('wbentries');
+  if (entryId || Number.isInteger(entryIdx)) wbJumpInto($('wbe-list'), entryId, entryIdx);
 }
 
-async function openWbSolo(charId) {
+async function openWbSolo(charId, entryId, entryIdx) {
   _wbCtx = { kind: 'solo', id: charId };
   const c = allChars.find(x => x.id === charId);
   // ⚠️ 单独角色页的标题是 wbs-title，不是条目页的 wbe-title —— 写错会静默不改标题
@@ -5950,6 +6259,7 @@ async function openWbSolo(charId) {
   if (ti) ti.textContent = c ? (c.name + ' 的设定') : '单独设定';
   await renderWbEntries();
   showView('wbsolo');
+  if (entryId || Number.isInteger(entryIdx)) wbJumpInto($('wbs-list'), entryId, entryIdx);
 }
 
 async function renderWbEntries() {
@@ -5972,7 +6282,10 @@ async function renderWbEntries() {
   target.innerHTML = bar + entries.map((e, i) => {
     const keys = (e.keys || []).map(k => '<span class="wi-key">' + esc(k) + '</span>').join('');
     const rev = e.needsReview === true;
-    return '<div class="wb-item' + (rev ? ' wb-need-review' : '') + '" data-wb-e="' + i + '">'
+    // data-wb-id 是给「从搜索结果跳过来」定位用的（v0.5.6.3）：
+    // 传 id 而不是下标 —— 搜索结果里的下标是命中的下标，和这里整份列表的下标不是一回事。
+    return '<div class="wb-item' + (rev ? ' wb-need-review' : '') + '" data-wb-e="' + i
+      + '" data-wb-id="' + esc(e.id || '') + '">'
       + '<div class="wi-head">'
       +   '<span class="wi-title">' + esc(e.title || ('条目 ' + (i + 1))) + '</span>'
       +   (rev ? '<span class="wi-review">待确认</span>' : '')
@@ -6316,6 +6629,28 @@ function bindWorldbook() {
   if (backE) backE.onclick = () => goBack();
   const backS = $('btn-wbs-back');
   if (backS) backS.onclick = () => goBack();
+  const backS2 = $('btn-wbs2-back');
+  if (backS2) backS2.onclick = () => goBack();
+
+  // 世界书搜索（v0.5.6.3）
+  const toSearch = $('btn-wb-search');
+  if (toSearch) toSearch.onclick = () => { openWbSearch(); };
+  const s2inp = $('wbs2-input');
+  if (s2inp) {
+    // 防抖 250ms：扫全库是两次 getAll（24 万字反序列化），每按一个键都扫是浪费。
+    // 先例就是聊天搜索的 _searchTimer，只是那边读的是消息表、这边读的是世界书。
+    s2inp.oninput = () => {
+      clearTimeout(_wbSearchTimer);
+      _wbSearchTimer = setTimeout(() => { wbSearchRender().catch(() => {}); }, 250);
+    };
+    // 回车立刻搜，别让人等防抖
+    s2inp.onkeydown = (ev) => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      clearTimeout(_wbSearchTimer);
+      wbSearchRender().catch(() => {});
+    };
+  }
 
   const newG = $('btn-wb-newgroup');
   if (newG) newG.onclick = () => openGroupCreator();
@@ -21099,7 +21434,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.6.2';
+const WEB_VERSION_FALLBACK = '0.5.6.3';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

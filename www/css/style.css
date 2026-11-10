@@ -1250,12 +1250,14 @@ input + .hint-text{ margin-top:8px; }
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
 }
 /* 「待确认」条目（v0.3.1）：从酒馆导进来、但触发条件没读懂 —— 落库、不注入、等用户过一眼 */
-.wb-review-bar{
+.wb-review-bar,
+.wbs-warn{
   font-size:12.5px; line-height:1.65; color:var(--fg2);
   background:var(--bg2); border:1px solid var(--line); border-radius:10px;
   padding:9px 11px; margin-bottom:10px;
 }
-.wb-review-bar b{ color:#e0a33a; }
+.wb-review-bar b,
+.wbs-warn b{ color:#e0a33a; }
 .wb-item.wb-need-review{ border-color:rgba(224,163,58,.45); }
 .wb-item .wi-review{
   font-size:10.5px; padding:1px 6px; border-radius:5px; white-space:nowrap;
@@ -1268,6 +1270,56 @@ input + .hint-text{ margin-top:8px; }
   background:var(--bg2); border:1px solid var(--line); color:var(--fg);
 }
 .wb-item .wi-review-act button:active{ opacity:.6; }
+
+/* ===== 世界书 · 搜索结果（v0.5.6.3）=====
+   行比列表行轻得多：列表行装的是 content 全文（中位 83 字、最长 2296 字），
+   这里只有一段 ±20 字的片段。所以 300 行的搜索结果表明明比 196 条的列表还轻。 */
+.wbs-input{
+  width:100%; box-sizing:border-box; font-size:14px;
+  padding:10px 12px; border-radius:10px;
+  background:var(--bg3); color:var(--fg);
+  border:1px solid var(--line); margin-bottom:10px;
+  -webkit-appearance:none; appearance:none;
+}
+.wbs-input:focus{ outline:none; border-color:var(--acc); }
+.wbs-meta{ font-size:12px; color:var(--fg3); margin-bottom:8px; }
+.wbs-meta:empty{ display:none; }
+.wbs-results{ display:flex; flex-direction:column; gap:14px; }
+.wbs-group{ display:flex; flex-direction:column; gap:6px; }
+/* 组头：归属 + 命中数 + 那份一共有多少条。
+   ⚠️ 后面那截「共 M 条」不是装饰 —— 全库有三对同名（小恶魔 / 射命丸文 /
+      西行寺幽幽子各有两份设定），没有它会让人以为列表出错了。 */
+.wbs-head{
+  display:flex; align-items:baseline; gap:4px; flex-wrap:wrap;
+  font-size:12.5px; opacity:.75; padding:1px 0;
+}
+.wbs-head .wbs-name{ font-weight:600; }
+.wbs-head .wbs-count{ margin-left:auto; font-size:11.5px; opacity:.85; white-space:nowrap; }
+.wbs-row{
+  padding:10px 12px; border-radius:10px; background:var(--bg3);
+  border:1px solid var(--line); cursor:pointer;
+  font-size:12.5px; line-height:1.55; color:var(--fg2);
+  word-break:break-word;
+}
+.wbs-row:active{ background:var(--bg2); }
+.wbs-row mark{ background:transparent; color:var(--acc); font-weight:600; }
+.wbs-tag{
+  display:inline-block; font-size:10.5px; padding:0 5px; margin-right:5px;
+  border:1px solid var(--line); border-radius:5px; opacity:.7; vertical-align:1px;
+}
+.wbs-tag.rev{ color:#e0a33a; border-color:rgba(224,163,58,.4); }
+.wbs-more{
+  align-self:flex-start; font-size:12px; padding:6px 12px; border-radius:8px;
+  background:var(--bg2); border:1px solid var(--line); color:var(--pri2);
+}
+.wbs-more:active{ opacity:.6; }
+.wbs-foot{
+  font-size:12px; color:var(--fg3); line-height:1.6;
+  text-align:center; padding:8px 0 2px;
+}
+/* 搜到之后滚过去，那一闪让人知道「就是这条」——和 .msg-flash 同一个动画 */
+.wb-flash{ animation:msgFlash 1.2s ease-out; }
+
 /* 酒馆预设（v0.3.1）：只展示，不执行 */
 .stp-head{ font-size:14px; font-weight:600; margin-bottom:6px; }
 .stp-row{ font-size:12.5px; color:var(--fg2); margin-bottom:8px; }

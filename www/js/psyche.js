@@ -493,7 +493,12 @@ export function psychePrompt(raw, opts = {}) {
   // 被踩了还替对方圆场 —— 那是最典型的 AI 式懂事。
   const bd = p.boundaries.filter(x => x && !x.dead).map(x => x && x.t).filter(Boolean);
   if (bd.length) L.push('· 你的底线：' + bd.join('；') + '。踩到你会真的不高兴，不需要假装没事');
-  const wd = p.withheld.filter(x => x && x.t && !x.dead).map(x => x.t + ageNote(x.at, now)).filter(Boolean);
+  // ⚠️ opts.omitWithheld（v0.5.6.2）：判断那趟不读这一行。
+  //    起因：判断层每轮都要再输出一遍 withhold，而这一行刚好就是它上一轮写的 ——
+  //    等于把答案摆在它面前让它抄。实测见 director.js 调用处的数据。
+  const wd = opts.omitWithheld
+    ? []
+    : p.withheld.filter(x => x && x.t && !x.dead).map(x => x.t + ageNote(x.at, now)).filter(Boolean);
   if (wd.length) L.push('· 上一轮你咽回去了：' + wd.join('；'));
 
   if (!L.length) return '';

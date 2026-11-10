@@ -500,7 +500,11 @@ const p2 = promptOf(h2.stream);
 t('第二轮也跑了判断', h2.ndir === 2, JSON.stringify({ dir: h2.ndir, once: h2.n0 }));
 t('★ 第二轮出现「你这会儿的状态」', p2.includes('# 你这会儿的状态'), '');
 t('★ 火气衰减后仍过线 → 提示「还没消气」', p2.includes('还没消气'), '');
-t('上一轮咽回去的那句还在状态里', p2.includes('上一轮你咽回去了'), '');
+t('上一轮咽回去的那句还在状态里（正文那趟照旧）', p2.includes('上一轮你咽回去了'), '');
+// v0.5.6.2：判断那趟【不】给这一行 —— 给了它就照抄（实测 6/6 逐字复读）。
+const p2dir = promptOf(h2.dir);
+t('★ 判断那趟不带「上一轮你咽回去了」（防照抄复读）', !p2dir.includes('上一轮你咽回去了'), p2dir.length);
+t('判断那趟仍然带着状态块（情绪惯性没丢）', p2dir.includes('# 你这会儿的状态') && p2dir.includes('不耐'), '');
 t('判断用的状态是【没叠这一轮】的那份（情绪惯性）', p2.includes('不耐'), '');
 const psy2 = await kvGet('psyche:' + C1);
 t('第二轮状态被更新（时间戳变新）', !!psy2 && psy2.updatedAt > (psy1 && psy1.updatedAt || 0),

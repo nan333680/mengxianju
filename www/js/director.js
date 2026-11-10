@@ -382,7 +382,15 @@ export async function runDirector(o) {
   }
   if (userText && String(userText).trim()) msgs.push({ role: 'user', content: String(userText).trim() });
   // 状态块放在指令前面：先让她知道自己现在什么状态，再问"你怎么理解他这句"。
-  const psyBlock = psychePrompt(psyche);
+  //
+  // ⚠️ omitWithheld（v0.5.6.2）：判断层不读「上一轮你咽回去了」那一行。
+  //    实测（tmp/_exp-ring2.mjs，deepseek-chat 0.3，同一轮真实输入各跑 6 次）：
+  //      · 带这一行（原措辞）      → withhold 6/6 逐字复读同一句
+  //      · 只把措辞改成「已经过去了」→ 3/6 复读（减半，治不了）
+  //      · 整行不给                → 0/6
+  //    原因是这一行紧接着就要它再输出一遍 withhold —— 把答案摆在它面前，它就抄。
+  //    状态的其它部分（情绪/关系/想要的/瞒着的）照旧带上，惯性没丢，丢的只是抄。
+  const psyBlock = psychePrompt(psyche, { omitWithheld: true });
   // 群聊：明确"这一轮是谁在回"。没有这一句，判断会写成"几个人一起的反应"，
   // 而 move/mood 只能作用在一个人身上。
   let whoBlock = '';

@@ -11754,7 +11754,7 @@ async function showInj(inj) {
   const psy = inj.psy;
   if (psy && (psy.rd || (psy.wd && psy.wd.length))) {
     const rows = [];
-    if (psy.rd) rows.push('<div class="inj-row">' + esc(tt('她听到的是：')) + esc(psy.rd) + '</div>');
+    if (psy.rd) rows.push('<div class="inj-row">' + esc(tt('她从这一下里读到的：')) + esc(psy.rd) + '</div>');
     if (psy.mv) rows.push('<div class="inj-row">' + esc(tt('这一轮她打算：')) + esc(tt(MOVE_NAME[psy.mv] || psy.mv)) + '</div>');
     if (psy.cb) rows.push('<div class="inj-row">' + esc(tt('可以主动提起的旧事：')) + esc(psy.cb) + '</div>');
     secs.push('<h4 class="inj-h">' + esc(tt('这一轮她心里')) + '</h4>' + rows.join(''));
@@ -21434,7 +21434,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.6.3';
+const WEB_VERSION_FALLBACK = '0.5.6.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

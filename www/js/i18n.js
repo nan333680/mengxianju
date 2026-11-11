@@ -533,7 +533,7 @@ const EXTRA_ZH = {
   // 不登记的话英文界面下这段话会漏成中文（i18n-report 扫不到代码里的拼串）。
   '这一版没有写入记录 —— 它是在「每个版本各记一份」之前生成的。切回最新那一版还能看到。':
     'No record was written for this version — it predates per-version records. Switch back to the latest version to see it.',
-  '她听到的是：': 'What she heard:',
+  '她从这一下里读到的：': 'What she read from it:',
   '这一轮她打算：': 'What she means to do:',
   '可以主动提起的旧事：': 'Old thread she may reopen:',
   // v0.5.3.7 绝对指令（附加功能里那条比软件规则还高的死命令）

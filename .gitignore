@@ -30,6 +30,10 @@ dist/
 #  _recovered/ 是从回收站捞回来的，未审计，可能含旧 Key。
 releases/
 _baseline/
+#  _yuy_ref/ 是三份参考素材（亡灵 / 幽灵 / soga），不入库。
+#  ⚠️ v0.5.7 才补这一条 —— 在那之前它只靠「记得别 add」，
+#     git add -A / add . / 任何 IDE 提交都会把它们拉进去。
+_yuy_ref/
 
 # ---- 本机构建路径（换机器自己填一份）----
 tools/local.env

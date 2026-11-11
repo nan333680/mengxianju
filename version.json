@@ -1,0 +1,14 @@
+{
+    "versionCode":  192,
+    "versionName":  "0.5.7",
+    "date":  "2026-11-11",
+    "notes":  "- **新增：关于页可以「检查更新」** —— 查到新版给你一个下载链接，不会自己下载、不会自己安装\n- **修正许可措辞** —— README 里「商业用途也在许可范围内」容易被读成作者背书，改成 AGPL 的原话：可以用，但分发就得开源\n- **修 L2 视角** —— 定了自称的 L2 角色，括号里的动作描写会跟着漂",
+    "apk":  {
+                "size":  53991314,
+                "sha256":  "97703B7FF12DDB7988F9B7C61B6ED9E4F8FF85884171A82849B7F247443B744F",
+                "url":  "https://github.com/nan333680/mengxianju/releases/download/v0.5.7/mengxianju-v0.5.7.apk",
+                "mirrors":  [
+
+                            ]
+            }
+}

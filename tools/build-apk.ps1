@@ -121,6 +121,60 @@ Write-Host ("   " + $apk)
 Write-Host ("   大小   : " + [math]::Round($f.Length/1MB, 2) + " MB (" + $f.Length + " 字节)")
 Write-Host ("   SHA256 : " + $sha)
 
+# ── 检查更新用的 version.json（v0.5.7）────────────────────────────────
+# 必须自动生成。手写一定会忘，而忘了的表现是「发了版但 App 查不到新版」——
+# 这个功能坏掉时界面和正常时一模一样，靠肉眼发现不了。
+#
+# 两个数据源：GitHub Release（主，实时）+ 仓库根这份 JSON（备，经 jsDelivr）。
+# ⚠️ 必须用 .NET 写成【无 BOM】的 UTF-8：Set-Content -Encoding UTF8 在
+#    Windows PowerShell 5.1 下会带 BOM，而 JSON.parse 碰到 BOM 直接抛错，
+#    整个备用源就永远拿到 null，且失败是静默的。
+# 更新说明只取「给用户看的那一小段」，不是整节 CHANGELOG。
+# ⚠️ 整节 CHANGELOG 里混着内部笔记（根因分析、TODO、实测数字），
+#    App 里 notes 截断到 800 字，用户看到的会是半截技术细节。
+#    所以约定：每节开头写
+#        <!-- release-notes -->
+#        一行给用户看的
+#        <!-- /release-notes -->
+#    只抓这一段；没有标记才退回抓标题行括号里的描述（老条目兼容）。
+$notes = ''
+$changelog = Join-Path $root "CHANGELOG.md"
+if (Test-Path $changelog) {
+  $cl = [System.IO.File]::ReadAllText($changelog, [System.Text.Encoding]::UTF8)
+  # ⚠️ 必须先从标题定位到【这一版】，再往后找标记 —— 全局找标记会永远抓到
+  #    文件最上面那一节（这一版还没写 CHANGELOG 时，会抓成上一版的说明）。
+  $head = [regex]::Match($cl, '###\s*' + [regex]::Escape($vn) + '\s*（')
+  if ($head.Success) {
+    $rest = $cl.Substring($head.Index)
+    $rn = [regex]::Match($rest, '<!--\s*release-notes\s*-->\s*([\s\S]*?)\s*<!--\s*/release-notes\s*-->')
+    $hm = [regex]::Match($cl, '###\s*' + [regex]::Escape($vn) + '\s*（([^）]*)）')
+    if ($rn.Success) {
+      # 块内的 HTML 注释是写给人看的，不能跟着进 notes
+      $notes = ($rn.Groups[1].Value -replace '<!--[\s\S]*?-->', '').Trim()
+    } elseif ($hm.Success) {
+      $notes = ($hm.Groups[1].Value -replace '^versionCode\s+\d+\s*·\s*', '').Trim()
+    }
+  }
+}
+$assetName = "mengxianju-v" + $vn + ".apk"
+$verObj = [ordered]@{
+  versionCode = [int]$vc
+  versionName = $vn
+  date        = (Get-Date).ToString('yyyy-MM-dd')
+  notes       = $notes
+  apk         = [ordered]@{
+    size    = [int]$f.Length
+    sha256  = $sha
+    url     = ("https://github.com/nan333680/mengxianju/releases/download/v" + $vn + "/" + $assetName)
+    mirrors = @()
+  }
+}
+$verPath = Join-Path $root "version.json"
+$verJson = $verObj | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText($verPath, $verJson, (New-Object System.Text.UTF8Encoding($false)))
+Write-Host ("   version.json: " + $verPath + "  (v" + $vn + " / " + $vc + ")")
+if ($notes) { Write-Host ("   更新说明     : " + $notes) } else { Write-Host "   ⚠️ CHANGELOG 里没找到这一版的标题行，version.json 的 notes 是空的" -ForegroundColor Yellow }
+
 # 签名指纹：覆盖安装能不能保住数据，就看它和上一版是否一致
 $signer = Join-Path $env:ANDROID_HOME "build-tools\36.0.0\apksigner.bat"
 if (Test-Path $signer) {
@@ -179,6 +233,13 @@ if ($CleanOld) {
 Move-Item -LiteralPath $tmpDest -Destination $dest -Force
 Write-Host ""
 Write-Host ("已放到：" + $dest) -ForegroundColor Green
+
+# 发版用的 ASCII 副本（v0.5.7）：GitHub Release 的资产名不能带中文 ——
+# URL 里会被百分号编码，写进 version.json 以后只要哪个环节没解码就是 404。
+# 和中文名那份是同一个文件，只是名字不同；上传 Release 时用这个。
+$assetDest = Join-Path $outDir $assetName
+Copy-Item $dest $assetDest -Force
+Write-Host ("   ASCII 副本  : " + $assetDest + "   <- 发 GitHub Release 时传这个")
 
 # 顺带归档一份完整快照（脚本自己会拒绝覆盖已存在的版本目录）
 & (Join-Path $PSScriptRoot "archive-release.ps1") -Version $vn -Apk $dest

@@ -51,6 +51,20 @@ t('禁止替对方写心理', /不要替对方写/.test(onP));
 // v0.5.6.4 起：自称不再写死「一律用我」，改成「按人设里定的来，没定才用我」
 // —— 人设写了自称吾辈/妾身的角色，独白层原来会被这一句压回「我」。
 t('强制第一人称（不许用第三人称）', /指你自己：不许用第三人称/.test(onP) && /不许用你的名字/.test(onP));
+t('L1 带 ✓/✗ 示范行', /✓「（我把手里的东西放下）」/.test(onP));
+
+console.log('');
+console.log('=== 2b. L2 与 L1 同口径（v0.5.7：L2 原来缺示范行）===');
+const l2P = await page.evaluate(async () => {
+  const { buildStablePrompt } = await import('/js/persona.js');
+  return buildStablePrompt({ persona: '你是阿灵。' }, { verbosity:'medium', descLevel:'mid', splitMessages:false, povStyle:'L2' });
+});
+t('L2 有视角段', l2P.includes('# 视角'));
+t('L2 放开了场面描写', /你可以写客观的场面/.test(l2P));
+t('L2 也按人设自称', /说话、以及心里那几句，用你人设里定下的自称/.test(l2P));
+t('L2 没有「一律用我」', !/一律用「我」/.test(l2P), (l2P.match(/一律用「我」.{0,20}/) || [''])[0]);
+t('L2 带 ✓/✗ 示范行', /✓「（我把手里的东西放下）」/.test(l2P));
+t('L2 不许第三人称', /指你自己：不许用第三人称/.test(l2P));
 
 console.log('');
 console.log('=== 3. 视角段排在最后（权重最高）===');

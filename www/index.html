@@ -1251,6 +1251,15 @@
       <button class="ghost-btn" id="btn-about-copy" data-i18n-en="Copy address">复制地址</button>
     </section>
 
+    <!-- 检查更新（v0.5.7）——只查、只给链接，不做应用内下载。
+         放关于页而不是设置页：版本号本来就显示在这里（#about-ver），
+         要查版本的人眼睛就在这一页。 -->
+    <section class="group">
+      <h3 data-i18n-en="Updates">更新</h3>
+      <p class="hint-text" data-i18n-en-html="Checks whether a newer version is out. It only checks and hands you a link — <b>it never downloads or installs anything by itself</b>.">看看有没有新版本。这里只查、只给你链接 —— <b data-i18n-en="It never downloads or installs anything by itself">它不会自己下载，也不会自己安装</b>。</p>
+      <button class="ghost-btn" id="btn-about-check" data-i18n-en="Check for updates">检查更新</button>
+    </section>
+
     <!-- 换手机 / 重装（0.5.3.5，方向文档 P0-4 ⑤）——
          数据全在这台手机里，App 没有服务器也没有账号，所以「换机」这件事
          唯一的解法就是那个 JSON 文件。写在这里是因为出事时人才会翻关于页。 -->

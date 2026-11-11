@@ -543,6 +543,20 @@ const EXTRA_ZH = {
   '这一条是在你挂的绝对指令下写的': 'Written under your absolute command',
   '括号里写多长（上限）': 'Parentheses length (cap)',
   '描写详细程度（镜头推到多近）': 'Description detail (how close the lens gets)',
+  // v0.5.7 检查更新（关于页）。这几条都是代码里 t() 出来的，
+  // 不登记英文界面下会漏成中文 —— 静态的标题和说明在 index.html 上用 data-i18n-en。
+  '检查更新': 'Check for updates',
+  '正在查…': 'Checking…',
+  '连不上，稍后再试': 'Could not connect. Try again later.',
+  '已经是最新版了': 'You are on the latest version.',
+  '发现新版本': 'New version found',
+  '分享链接': 'Share the link',
+  '点「分享链接」可以把它发到浏览器或聊天软件里下载。':
+    'Use "Share the link" to send it to a browser or a chat app, then download it there.',
+  '这一版没有给下载链接': 'This release has no download link.',
+  '用浏览器打开或发给自己': 'Open in a browser, or send it to yourself',
+  '已取消': 'Cancelled',
+  '链接已复制，用浏览器打开就能下': 'Link copied — open it in a browser to download.',
 };
 /**
  * 动态文本的翻译表：**直接用中文原文当 key**。

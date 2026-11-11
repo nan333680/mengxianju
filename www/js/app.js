@@ -41,6 +41,8 @@ import { normalizePsyche, emptyPsyche, decayPsyche, applyPsycheDelta, psycheActi
 //    （app.js 的 inj 面板）。上一版按「评审撤了它就没用了」删过一次，tsc 当场报
 //    TS2304 Cannot find name 'MOVE_NAME' —— 那是条会真炸的 ReferenceError，不是类型噪音。
 import { runDirector, directorDelta, normalizeDirector, MOVE_NAME } from './director.js';
+// 检查更新（v0.5.7）：多源竞速 + 取最大版本 + 失败静默，纯逻辑全在 updater.js 里。
+import { checkUpdate, markChecked } from './updater.js';
 // 活人感 v2（0.5.3.6）：独白 / 拟真节奏。
 // v0.5.5.3：三条候选和评审撤了（理由见下面生成那段的注释），独白仍是独立一次请求。
 // 失败一律退回老路径 —— 这一步坏掉不能挡住聊天（文档 §3 第 2 条）。
@@ -21434,7 +21436,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.6.4';
+const WEB_VERSION_FALLBACK = '0.5.7';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
@@ -21611,6 +21613,86 @@ function refreshDiagHint() {
 function renderAbout() {
   const el = document.getElementById('about-repo');
   if (el) el.textContent = REPO_URL;
+  bindCheckUpdate();
+}
+
+// ── 检查更新（v0.5.7）──────────────────────────────────────────────
+// 只查、只给链接。核心（多源竞速 / 8 秒收齐 / 取最大版本 / 失败静默）全在
+// js/updater.js 里，这里只负责「拿当前版本 → 弹窗 → 分享」。
+//
+// 当前版本一律走 App.getInfo()，拿不到才落 WEB_VERSION_FALLBACK ——
+// 这样原生端永远是真版本号，不会因为漏改常量而误报「有新版本」。
+async function currentAppVersion() {
+  const App = capPlugin('App');
+  if (App && App.getInfo) {
+    try {
+      const info = await App.getInfo();
+      const v = String((info && info.version) || '');
+      if (v) return v;
+    } catch { /* 浏览器 / e2e 上必抛，落到下面的常量 */ }
+  }
+  return WEB_VERSION_FALLBACK;
+}
+
+function bindCheckUpdate() {
+  const btn = $('btn-about-check');
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = '1';
+  btn.onclick = async () => {
+    if (btn.disabled) return;
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = t('正在查…');
+    try {
+      const current = await currentAppVersion();
+      const r = await checkUpdate({ currentVersion: current });
+      if (!r.ok) { toast(t('连不上，稍后再试')); return; }
+      markChecked();
+      if (!r.hasUpdate) { toast(t('已经是最新版了')); return; }
+      const L = r.latest || {};
+      const sizeTxt = L.size ? ' · ' + (L.size / 1048576).toFixed(1) + ' MB' : '';
+      const meta = 'v' + String(L.version || '') + (L.date ? ' · ' + L.date : '') + sizeTxt;
+      const notes = String(L.notes || '').trim();
+      const html = '<p><b>' + esc(meta) + '</b></p>'
+        + (notes ? '<p class="upd-notes">' + esc(notes.slice(0, 800)) + (notes.length > 800 ? '…' : '') + '</p>' : '')
+        + '<p class="hint-text">' + esc(t('点「分享链接」可以把它发到浏览器或聊天软件里下载。')) + '</p>';
+      const go = await confirmBox(t('发现新版本') + ' v' + String(L.version || ''), html, t('分享链接'));
+      if (go) await shareUpdateLink(L);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  };
+}
+
+/** 分享下载链接。原生走系统分享面板；浏览器/分享失败就退回剪贴板。 */
+async function shareUpdateLink(L) {
+  const v = String((L && L.version) || '');
+  const urls = [L && L.url].concat((L && Array.isArray(L.mirrors)) ? L.mirrors : []).filter(Boolean);
+  const url = urls[0] || '';
+  if (!url) { toast(t('这一版没有给下载链接')); return; }
+  const SH = capPlugin('Share');
+  if (isNative() && SH) {
+    try {
+      await SH.share({
+        title: '梦弦居 v' + v,
+        text: '梦弦居 v' + v + ' 下载地址',
+        url,
+        dialogTitle: t('用浏览器打开或发给自己'),
+      });
+      return;
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      if (/cancel|取消/i.test(msg)) { toast(t('已取消')); return; }
+      // 分享面板拉不起来就继续往下走剪贴板，不要在这里就放弃
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast(t('链接已复制，用浏览器打开就能下'));
+  } catch {
+    toast(url, 6000);
+  }
 }
 
 async function renderAppVersion() {

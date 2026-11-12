@@ -535,6 +535,9 @@ const EXTRA_ZH = {
     'No record was written for this version — it predates per-version records. Switch back to the latest version to see it.',
   '她从这一下里读到的：': 'What she read from it:',
   '这一轮她打算：': 'What she means to do:',
+  '这一轮她想：': 'What she wants this turn:',
+  '（很急）': ' (urgent)',
+  '但 ': ' — but ',
   '可以主动提起的旧事：': 'Old thread she may reopen:',
   // v0.5.3.7 绝对指令（附加功能里那条比软件规则还高的死命令）
   '绝对指令': 'Absolute command',

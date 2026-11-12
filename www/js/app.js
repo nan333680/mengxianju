@@ -8129,7 +8129,12 @@ let namedInText = false;
           signal: abortCtl && abortCtl.signal,
           // 群聊：谁在场、这一轮该谁说话。单人传空，director 那边那一段就不出现。
           roster: isGroup(myChar) ? groupMembers(myChar).map(m => m.name).filter(Boolean) : null,
-          target: (isGroup(myChar) && speaker) ? speaker.name : ''
+          target: (isGroup(myChar) && speaker) ? speaker.name : '',
+          // 「剧情方向」（v0.5.7.1）：这一轮的局面。
+          // 之前它只传给 buildTurnNote，也就是【只进正文那一趟】—— 判断层看不见，
+          // 于是判断层只能从 recent 里找线索，而 recent 里全是她自己在问。
+          // 方向是动作就照做，方向是心理就被 reading 吃掉（见 director.js 那段注释）。
+          plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg)
         }).catch(err => { console.warn('[director] 外层兜底：' + ((err && err.message) || err)); return null; })
       ]);
       innerText = String(innerGot || '');
@@ -8274,7 +8279,13 @@ let namedInText = false;
         mv: psyDir.move || '',
         cb: _cut(psyDir.callback, 60),
         wd: (psyDir.withhold || []).slice(0, 3).map(x => _cut(x, 60)),
-        beats: (psyDir.beats || []).slice(0, 3).map(x => _cut(x, 60))
+        beats: (psyDir.beats || []).slice(0, 3).map(x => _cut(x, 60)),
+        // v0.5.7.1：这一轮她想干什么 / 多急 / 卡在哪。
+        // 这三样一直在 psyDir 里算着，却从来没进过 inj —— 「她为什么一直问同一件事」
+        // 这个问题查了很久都没落点，就是因为翻「这一轮用了什么」看不到她要什么。
+        gl: _cut(psyDir.goal, 60),
+        ur: Number(psyDir.urgency) || 0,
+        by: _cut(psyDir.blockedBy, 40)
       } : null,
       // 活人感 v2（0.5.3.6）：她这一轮没说出口的那一层原文。
       // 它不进聊天记录、不进历史 —— 只留在这里给「这一轮她心里」那一段展开看，
@@ -11754,9 +11765,20 @@ async function showInj(inj) {
   // 放在最前面：用户点进来最想知道的通常是「她怎么想的那句」，而不是「注入了哪条记忆」。
   // 这里显示的是【这一轮没写出来】的内容 —— 它不是聊天记录的一部分，只是判断的痕迹。
   const psy = inj.psy;
-  if (psy && (psy.rd || (psy.wd && psy.wd.length))) {
+  // ⚠️ 外层条件里必须有 psy.gl。
+  //    判断层给了 goal 却没给 reading（很正常：她这一轮没读懂，但知道自己要干什么），
+  //    只判 rd 的话整块都不显示 —— 用户翻「这一轮用了什么」正好什么都看不到。
+  if (psy && (psy.rd || psy.gl || (psy.wd && psy.wd.length))) {
     const rows = [];
     if (psy.rd) rows.push('<div class="inj-row">' + esc(tt('她从这一下里读到的：')) + esc(psy.rd) + '</div>');
+    // 这一轮她想干什么 / 多急 / 卡在哪（v0.5.7.1）。
+    // 这三样从 0.5.3.6 起就一直在算，但从来没进过 inj，所以「她为什么一直问同一件事」
+    // 查了很久都没有落点 —— 翻面板只能看见「她怎么读的」和「她打算怎么做」，看不见「她想要什么」。
+    if (psy.gl) {
+      rows.push('<div class="inj-row">' + esc(tt('这一轮她想：')) + esc(psy.gl)
+        + (Number(psy.ur) >= 0.6 ? esc(tt('（很急）')) : '')
+        + (psy.by ? ' —— ' + esc(tt('但 ')) + esc(psy.by) : '') + '</div>');
+    }
     if (psy.mv) rows.push('<div class="inj-row">' + esc(tt('这一轮她打算：')) + esc(tt(MOVE_NAME[psy.mv] || psy.mv)) + '</div>');
     if (psy.cb) rows.push('<div class="inj-row">' + esc(tt('可以主动提起的旧事：')) + esc(psy.cb) + '</div>');
     secs.push('<h4 class="inj-h">' + esc(tt('这一轮她心里')) + '</h4>' + rows.join(''));
@@ -21436,7 +21458,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.7';
+const WEB_VERSION_FALLBACK = '0.5.7.1';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

@@ -24,19 +24,23 @@
 //   群聊继续走原来的机制，等单聊这一层稳定了再按成员各跑一次。
 
 import { onceChat } from './api.js';
-import { psychePrompt } from './psyche.js';
+import { psychePrompt, MOVE_CN } from './psyche.js';
 
-/** 这一轮的动作类型。它不是给用户看的标签，是给她自己定的调子。 */
-export const MOVES = ['answer', 'deflect', 'tease', 'ask_back', 'act', 'silence', 'leave'];
-export const MOVE_NAME = {
-  answer: '直接答',
-  deflect: '绕开',
-  tease: '调侃',
-  ask_back: '反问',
-  act: '只做动作',
-  silence: '几乎不接',
-  leave: '走开'
-};
+/**
+ * 这一轮的动作类型。它不是给用户看的标签，是给她自己定的调子。
+ *
+ * v0.5.7.1 加了 push / do 两档。之前七档里要算「主动推进」的只有 act 一个，
+ * 其余六个全是应答或往回收（answer/deflect/tease/ask_back/silence/leave）。
+ * 而 act 在实测里被用成了「照顾」专用 —— 布都 #42–#49 八连 act 全是扶、按、探鼻息。
+ * 于是她能走的只剩「继续问」和「更用力地扶住他」两条路。用户说的「底线太高」，
+ * 有一部分不是她不想，是表里没有那一档。
+ *
+ * ⚠️ hurt（伤他）/ quit（撒手不管）这一版没加。那两档会绕开人设，需要绑角色开关，
+ *    而这版还没有观测能力证明开关不误伤 —— 先有数据，再加闸。
+ */
+export const MOVES = ['answer', 'deflect', 'tease', 'ask_back', 'act', 'silence', 'leave', 'push', 'do'];
+/** 中英对照只有一份（在 psyche.js）：psychePrompt 也要用它渲染「前几轮你是怎么接的」。 */
+export const MOVE_NAME = MOVE_CN;
 
 /** 这一轮的体积。不是档位 —— 档位是用户设的上限，这个是这一轮实际用多少。 */
 export const LENGTHS = ['short', 'normal', 'long'];
@@ -80,7 +84,7 @@ const ASK = [
   '  "selfEvent": ["你自己这两天的事，跟对方没关系（最多两条）；没有就空数组"],',
   '  "boundary": ["你这一轮明确不接受的那一套（最多一条）；没有就空数组"],',
   '  "revealSecret": ["这一轮被问住了、你决定说破的那一件（最多一条）；没有就空数组"],',
-  '  "move": "answer / deflect / tease / ask_back / act / silence / leave 里挑一个",',
+  '  "move": "answer / deflect / tease / ask_back / act / silence / leave / push / do 里挑一个",',
   '  "beats": ["这一轮的表达节拍，2~3 条；写怎么演，不要写台词"],',
   '  "callback": "历史里可以主动提起来的一件旧事；没有就空串",',
   '  "length": "short / normal / long 里挑一个（这一轮用多少体积）",',
@@ -89,9 +93,12 @@ const ASK = [
   '',
   '几条要求：',
   '- reading 允许是错的。人不总是听懂了才反应 —— 拿不准就把 confidence 写低一点，别硬编成"对方很关心我"。',
+  '- 拿不准的时候，别总挑最伤自己的那个解读，也别总挑最好的。先写你到底看见/听见了什么，再写你从这个东西上读出什么 —— 两个都写，别只写结论。',
   '- withhold 是你这一轮【故意不说的】。一条都想不出来，说明你想得太正面了。',
   '- beats 写你这一轮怎么演（先做什么、卡在哪、尾巴怎么收），不是剧情大纲，也不是台词。',
   '- mood.intensity 是 0~5；stance 四个数是【这一轮的变化量】，-5~5，没变就写 0。',
+  '- do 是「不等他答，你自己把这件事办了」。只有你想做、却被什么绊住的时候才用；用了必须在 beats 里写清做了什么、造成了什么后果 —— 不写后果，它就只是又一个 act。',
+  '- push 是「问到给答案为止」，比 ask_back 硬。但一样不该连着用三轮以上。',
   '- length 只影响这一条多大：short = 一两个词或者一句；normal = 平时那样；long = 这一轮值得写开。',
   '- secret 是【你明知、但没告诉对方】的具体一件事 —— 这是信息差，不是悬念。selfEvent 是你自己生活里的事：跟对方无关，也不是"你们之间"的事。',
   '- boundary 是你这一轮不吃的那一套（比如"别拿这种玩笑试探我""别替我安排"）。踩上去你会真的不高兴，不用哄好。',
@@ -366,10 +373,11 @@ export function shouldDirect(o) {
  * @param {AbortSignal} [o.signal]
  * @param {Array<string>} [o.roster] v2：在场的人名（群聊点名用）
  * @param {string} [o.target]      v2：这一轮该谁说话（群聊里 move/mood 只作用在他身上）
+ * @param {Array<string>} [o.plot] v0.5.7.1：用户给的「剧情方向」，这一轮的局面已经定好的部分
  * @returns {Promise<object|null>} 归一后的判断结果；失败/被中断一律 null
  */
 export async function runDirector(o) {
-  const { stable, recent, userText, psyche, api, signal, roster, target } = o || {};
+  const { stable, recent, userText, psyche, api, signal, roster, target, plot } = o || {};
   if (!api || !api.apiKey) return null;
   if (signal && signal.aborted) return null;
 
@@ -401,7 +409,34 @@ export async function runDirector(o) {
       + '在场：' + rl.join('、') + '。\n'
       + '（下面的 move 和 mood 只作用在 ' + (target || '这个人') + ' 身上 —— 其他人这一轮只是旁听。）\n\n';
   }
-  msgs.push({ role: 'system', content: (psyBlock ? psyBlock + '\n\n' : '') + whoBlock + ASK });
+  // 「剧情方向」（v0.5.7.1）：用户点 🧭 给的那一句。
+  //
+  // 在这之前它只进 buildTurnNote，也就是【只进正文那一趟】—— 判断层根本看不见。
+  // 而判断层先定 reading / goal / move / beats，正文只能在那个框架里填字，
+  // 于是「方向是动作就照做，方向是心理就当场被吃掉」：
+  //   #18 方向「给他看身子」   → rd 读成「是嫌吾头发滴水」        → 没做
+  //   #40 方向「她不明白」     → rd 读成「他拿这副样子堵吾的嘴」  → 接着问
+  // 方向一旦冲突，reading 赢 —— 它排在 goal 和 beats 前面，还是以
+  // 「你从他样子上读到的」这种确定口气写进去的。
+  //
+  // ⚠️ 措辞用「已经成立的事实」，不用「作者给的走向」（会让她意识到自己在被写），
+  //    也不用「这一轮会这样走」（会被当成预告，等它发生）。
+  //    plot 里两类内容都有：「她不明白为什么…」（她现在的心境）和「他晕过去了」
+  //    （已经发生的事）——「已经成立的事实」两类都装得下。
+  // ⚠️ 不动 stable：判断调用与生成调用的人设前缀必须逐字相同，否则缓存全废。
+  let plotBlock = '';
+  const pl = (Array.isArray(plot) ? plot : []).map(x => String(x == null ? '' : x).trim()).filter(Boolean);
+  if (pl.length) {
+    plotBlock = '# 这一轮的局面\n'
+      + pl.join('；') + '\n'
+      + '（这不是台词，是这一轮已经成立的事实。你的 reading 必须从这里读，'
+      + '不许换成别的理解；你想干什么、这一轮怎么接，都往这个方向走。）\n\n';
+  }
+  // 顺序：局面 → 状态 → 谁在回 → 指令。
+  // 先把「这一轮是什么」定死，再给「我此刻是什么状态」，最后才问「你怎么读」。
+  // 反过来（状态在前）等于先塞一个待完成的目标、再告诉她局面变了 ——
+  // 模型容易读成「我想问明白，可局面是她开始怀疑自己」，两个意图互相拉扯。
+  msgs.push({ role: 'system', content: plotBlock + (psyBlock ? psyBlock + '\n\n' : '') + whoBlock + ASK });
 
   let out = '';
   try {

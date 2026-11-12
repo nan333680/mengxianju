@@ -2129,7 +2129,9 @@ export function buildTurnNote(char, s, ctx = {}) {
   // 同一条「他上次敷衍我」两边都可能有，但语义不同 —— 故意不写同一份。
   // 放在剧情卡之前：先说她现在是什么状态，再给她这一章往哪走。
   {
-    const body = psychePrompt(psyche);
+    // ⚠️ 正文层不渲染 moves（判断层照旧）：正文能看见那几轮原文，
+    //    多一句「前几轮你是这么接的」可能让它为了不复读而打断正在推进的节奏。
+    const body = psychePrompt(psyche, { omitMoves: true });
     if (body) parts.push(body);
   }
 

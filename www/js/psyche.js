@@ -72,10 +72,78 @@ export const MOOD_LABELS = ['平静', '愉快', '不耐', '难受', '生气', '�
 /** 关系读数四个轴的中文名（提示词和 UI 共用一份，别各写一遍）。 */
 export const STANCE_NAME = { warmth: '温度', trust: '信任', irritation: '火气', playfulness: '好玩' };
 
+/**
+ * 动作类型的中文名。判断层（director.js）和状态提示词（本文件 psychePrompt）共用一份。
+ * ⚠️ 单一来源：director.js 的 MOVE_NAME 直接指向这个对象。
+ *    两边各写一份的后果是加了新档以后 psychePrompt 那边只会显示英文原文 ——
+ *    而这一行恰恰是用来让她看见「自己前几轮在重复」的，显示成 ask_back 就没用了。
+ */
+export const MOVE_CN = {
+  answer: '直接答',
+  deflect: '绕开',
+  tease: '调侃',
+  ask_back: '反问',
+  act: '只做动作',
+  silence: '几乎不接',
+  leave: '走开',
+  push: '逼到底',
+  do: '自己把事办了'
+};
+
 /** 截断 + 压空白。模型给的文本可以直接用，但长度必须由我们定。 */
 function cut(v, n = TEXT_MAX) {
   const s = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n) : s;
+}
+
+/**
+ * 两条短句的字符 bigram 重合度（Dice 系数），0~1。
+ *
+ * 用来认「同一件事换个说法」。secrets / grudges / boundaries 这三个列表按字面
+ * 去重抓不到它们，而 embedding 是 async 且要过原生桥 —— applyPsycheDelta 是同步
+ * 纯函数（app.js 直接调），不能改成异步。
+ *
+ * 实测（布都那份 50 轮备份）：
+ *   「…没核实过。」/「…没核实过」               = 1.000
+ *   「他拿难受当回答…」/「他这副样子…」         = 0.625  ← 0.6 抓得到
+ *   「别拿抱小孩那套…」/「别拿看小孩的…」       = 0.333  ← 0.6 不误伤
+ *   两条不同含义的 reading                        = 0.333
+ */
+export function diceBigram(a, b) {
+  const norm = (s) => String(s == null ? '' : s).replace(/[\s，。、；：！？…—"“”'‘’（）()【】\[\]]/g, '');
+  const A = norm(a), B = norm(b);
+  if (!A || !B) return 0;
+  const ma = new Map(), mb = new Map();
+  for (let i = 0; i < A.length - 1; i++) { const g = A.slice(i, i + 2); ma.set(g, (ma.get(g) || 0) + 1); }
+  for (let i = 0; i < B.length - 1; i++) { const g = B.slice(i, i + 2); mb.set(g, (mb.get(g) || 0) + 1); }
+  let inter = 0, tot = 0;
+  for (const [g, n] of ma) { tot += n; if (mb.has(g)) inter += Math.min(n, mb.get(g)); }
+  for (const [, n] of mb) tot += n;
+  return tot ? (2 * inter) / tot : 0;
+}
+
+/**
+ * 两条记录是不是「同一件事」。三层判据，缺一层就会漏：
+ *
+ *   ① 一模一样               → 字面相等
+ *   ② 一句是另一句的子串     → includes（「…没核实过。」/「…没核实过」）
+ *   ③ 换个说法但说的是同一件 → dice > 0.6
+ *      grudges 那对就在这一层：「他拿难受当回答，吾再问一句就成了欺负他。」
+ *      和「他这副样子，吾再问一句就成了欺负他。」—— 前半不同、后半相同，
+ *      includes 两头都不成立（实测 dice 0.625）。
+ *
+ * 0.6 这条线是实测卡出来的：同一件事 0.625~1.000，不同的事 0.308~0.444。
+ *
+ * ⚠️ ② 必须带长度下限。列表里可能有「血」「累」这种一两个字的条目，
+ *    不加下限的话「血」会吞掉「手上的血还没干」—— 那不是去重，是删信息。
+ */
+export function sameThing(a, b) {
+  const x = String(a == null ? '' : a), y = String(b == null ? '' : b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (y.length >= 4 && x.includes(y)) return true;
+  if (x.length >= 4 && y.includes(x)) return true;
+  return diceBigram(x, y) > 0.6;
 }
 
 /** 夹到区间里。range 用 number[] 而不是元组：CLAMP 里的两项是普通数组字面量。
@@ -96,7 +164,38 @@ function strList(v, cap) {
   for (const x of v) {
     const s = cut(typeof x === 'string' ? x : (x && (x.t || x.text)));
     if (!s) continue;
-    if (out.some(y => y.t === s)) continue;   // 同一句只说一次，重复的没有信息量
+    // ⚠️ 这里必须是 sameThing，不能只是精确相等。
+    //    strList 是【读路径】：normalizePsyche 用它把库里的数据归一化。
+    //    只做精确相等的话，老角色升级以后那几条近似条目会原样留着
+    //    （「…没核实过。」和「…没核实过」不等），psychePrompt 每轮把几条
+    //    同一件事全塞进提示词 —— 要等下次重新提到这件事、触发 pushCapped 才会并掉，
+    //    如果她再也不提，就一直挂着。用 sameThing 就是「一读进来就自愈」。
+    const hit = out.findIndex(y => sameThing(y.t, s));
+    if (hit >= 0) {
+      // 和 pushCapped 同一条规则：留信息量大的那句（不是「先到的」），at 取新的。
+      // 只做 `continue` 会丢两样东西：
+      //   ① 后来的说法更长更具体（「…没核实过，也没问那人到底骂没骂」）时，长句被丢；
+      //   ② 后来的条目带着更新的 at，被丢掉以后 grudges 的 14 天 TTL 会提前到期 ——
+      //      她最近还在提这件事，档案里却显示它快过期了。
+      const cur = out[hit];
+      const fresh = makeItem(x, s);
+      // ⚠️ 必须从 cur 继承，不能直接把 makeItem 的新对象放回去。
+      //    makeItem 只从【新条目】读 at/conf/dead/reveal，而模型每轮通常只给 t ——
+      //    直接 out[hit] = fresh 会把旧条目的元数据全冲掉：
+      //      · secrets 的 reveal 丢了 → psychePrompt 那句「（除非对方先问起X，否则别主动说）」
+      //        整句消失，她会主动把瞒着的事讲出来；
+      //      · beliefs 的 conf 丢了 → 原本「（你比较确信）」变成「（你自己也没底）」。
+      //    升级时最明显：老角色那份 psyche 一读进来就合并，带 reveal 的秘密全部丢提示。
+      //    pushCapped 那边是 { ...list[base], ...item }，本来就不会丢 —— 两条路径必须一致。
+      const nx = { ...cur };
+      if (fresh.at) nx.at = Math.max(Number(cur.at) || 0, Number(fresh.at));
+      if (fresh.conf != null) nx.conf = fresh.conf;
+      if (fresh.reveal) nx.reveal = fresh.reveal;
+      if (!fresh.dead) { delete nx.dead; delete nx.deadAt; }   // 复活：她还在提这件事
+      if (s.length >= String(cur.t).length) nx.t = s;          // 留信息量大的那句
+      out[hit] = nx;
+      continue;
+    }
     out.push(makeItem(x, s));
     if (out.length >= cap) break;
   }
@@ -289,6 +388,17 @@ export function decayPsyche(raw, now = Date.now(), stepMs = 30 * 60 * 1000) {
     // 火气也降，但降得比情绪慢一点（气比心情更黏）。
     p.stance.irritation = Math.round(p.stance.irritation * 0.9 * 10) / 10;
     if (Math.abs(p.stance.irritation) < 0.3) p.stance.irritation = 0;
+    // 其余三个轴同样要往 0 回（v0.5.7.1）。
+    // 在 0.5.7.1 之前它们只累加、永不回归：applyPsycheDelta 是加法，
+    // 而 ASK 里写的是「这一轮的变化量」—— 语义是增量，实现却是存量，
+    // 推到 CLAMP 边界（[-5,5]）就永久卡死。布都那份 50 轮里 warmth=5、
+    // trust=-5、playfulness=-5 三个轴全顶在边界上，她再也回不来。
+    // ⚠️ 0.97/步只治「冷却」，治不了那 50 轮 —— 她是连续 40 轮往负向推
+    //    才到底的。真正的问题在「什么让她一直读不出正面」，那是注入层的事。
+    for (const k of ['warmth', 'trust', 'playfulness']) {
+      p.stance[k] = Math.round(p.stance[k] * 0.97 * 10) / 10;
+      if (Math.abs(p.stance[k]) < 0.3) p.stance[k] = 0;
+    }
   }
   // 清单一的过期（见上面 TTL）：跨过一段真实时间再回来，她不该还停在三天前那口气上。
   pruneByAge(p, now);
@@ -306,17 +416,41 @@ function findItem(list, text) {
 
 function pushCapped(list, item, cap) {
   if (!item || !item.t) return;
-  const i = findItem(list, item.t);
-  if (i >= 0) {
+  const it = cut(item.t);
+  if (!it) return;
+  // ⚠️ 这里不能直接用 findItem：它是 `findIndex`，只返回【第一条】命中的。
+  //    「…没核实过。」和「…没核实过」并存时，写入后者会精确命中自己那条就返回，
+  //    前者永远没人处理 —— 两条近似条目从此长在列表里，且 normalizePsyche 的
+  //    strList 只做精确相等去重（那句带句号，不等），于是【永不自愈】。
+  //    实测（真实 4 条 secrets 再写一次同一条）：4 条一字未变。
+  //    更糟的是每次重复都在刷新自己那条的 at，让它看起来永远新鲜。
+  // 所以：找出整组近似的，留信息量最大的那条当基底，其余一起清掉。
+  let base = -1;
+  for (let k = 0; k < list.length; k++) {
+    const o = list[k];
+    if (!o || !o.t) continue;
+    if (sameThing(o.t, it)) {
+      if (base < 0 || String(o.t).length > String(list[base].t).length) base = k;
+    }
+  }
+  if (base >= 0) {
     // 同一件事不叠加，只更新。原来是【封存】的那条也要复活 ——
     // 她隔了一周又提起同一件事，这就不是过期条目，是这件事还活着。
-    const merged = { ...list[i], ...item };
+    const old = String(list[base].t);
+    const merged = { ...list[base], ...item, t: old.length > it.length ? old : it };
     if (!item.dead) { delete merged.dead; delete merged.deadAt; }
     if (item.at) merged.at = item.at;
-    list[i] = merged;
+    list[base] = merged;
+    // 从后往前删，不影响 base 之前的下标，也不用重算 base。
+    for (let k = list.length - 1; k >= 0; k--) {
+      if (k === base) continue;
+      const o = list[k];
+      if (!o || !o.t) continue;
+      if (sameThing(o.t, merged.t)) list.splice(k, 1);
+    }
     return;
   }
-  list.push(item);
+  list.push({ ...item, t: it });
   while (list.length > cap) list.shift();
 }
 
@@ -473,6 +607,24 @@ export function psychePrompt(raw, opts = {}) {
     L.push('· 你这会儿想要的：' + p.want.goal
       + (p.want.urgency >= 0.6 ? '（很急）' : '')
       + (p.want.blockedBy ? ' —— 但 ' + p.want.blockedBy : ''));
+  }
+  // 前几轮她实际是怎么接的（v0.5.7.1）。
+  //
+  // moves 一直在写（:402），但从来没有任何一段提示词读过它 —— 判断层每轮都是
+  // 从零开始「我这一轮想干什么」，它不知道同一个动作已经连着用了四遍。
+  // 布都那份 50 轮里 #30–#36 四连 ask_back，每轮的 beats 还都是「问完就停」——
+  // 不是模型想复读，是它看不到自己在复读。
+  //
+  // ⚠️ 只摆事实，不加「该换了」的暗示：#42–#49 那八轮全 act 是在推进
+  //    （接住 → 扶上床 → 没扶稳 → 探鼻息），带了引导她反而会打断那一段。
+  // ⚠️ 至少两条才显示：只做过一个动作的一轮，这句没有信息量，还占提示词。
+  // ⚠️ opts.omitMoves（v0.5.7.1）：正文那一趟不渲染这一行。
+  //    正文层已经能看见那几轮的原文，再给一句概括，它可能为了「不复读」而
+  //    打断自己的节奏 —— #42–#49 那八轮 act 正在推进时最怕这个。
+  //    判断层照旧渲染：它看不到具体历史里的重复，只有这一行能让它看见。
+  const mvs = opts.omitMoves ? [] : (Array.isArray(p.moves) ? p.moves : []).filter(Boolean).slice(-5);
+  if (mvs.length >= 2) {
+    L.push('· 前几轮你是这么接的：' + mvs.map(m => MOVE_CN[m] || m).join(' → '));
   }
   const gr = p.grudges.filter(g => g && !g.dead && g.t).map(g => g.t + ageNote(g.at, now));
   if (gr.length) L.push('· 还没消的：' + gr.join('；'));

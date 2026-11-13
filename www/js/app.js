@@ -2552,7 +2552,8 @@ function msgHtml(m, depth = 0) {
       + '</details>';
   }
   // 版本切换（v0.4.0）：有两个以上版本时，气泡下面出现 ‹ 2/3 ›
-  const vsN = Array.isArray(m.variants) ? m.variants.filter(Boolean).length : 0;
+  // 走 variantsOf 而不是直接数 m.variants：它会把「几版正文一模一样」归一成一版。
+  const vsN = variantsOf(m).length;
   if (vsN > 1) {
     const vi = Math.max(0, Math.min(vsN - 1, Number(m.vIdx) || 0));
     inner += '<div class="swipe">'
@@ -3187,7 +3188,12 @@ async function rotateGreeting(id) {
   const idx = list.indexOf(now);
   const next = list[(idx + 1) % list.length];
   if (next === now) { toast('只有这一条备选开场白'); return; }
-  await msgs.add({ ...cur, content: next });   // id 不变 = 覆盖那一条
+  const nextMsg = { ...cur, content: next };   // id 不变 = 覆盖那一条
+  // 开场白换了，原来那几个「版本」记的是上一条开场白的几份写法，留着只会
+  // 让人翻到旧内容（v0.5.7.1）。
+  delete nextMsg.variants;
+  delete nextMsg.vIdx;
+  await msgs.add(nextMsg);
   await renderMessages();
   toast('换了一个开场白（' + (((idx + 1) % list.length) + 1) + '/' + list.length + '）');
 }
@@ -3289,7 +3295,9 @@ async function showMsgMenu(el) {
     }
     // 换一个版本（v0.4.0）：不删旧的，再要一版并排存着。
     // 和「重新生成」的区别就是【旧的那版还在】—— 想对比、想切回去都行。
-    if (!isMe && isLast && !locked) acts.push({ k: 'variant', t: '换一个版本' });
+    // 开场白不给这一项（v0.5.7.1）：它来自卡片，点了只会得到一句拒绝。
+    // 用「是不是可见首条」做便宜预筛，真正兜底在 regenAsVariant 里那一道。
+    if (!isMe && isLast && !locked && !(all[0] && all[0].id === m.id)) acts.push({ k: 'variant', t: '换一个版本' });
     // 「从这段起重写」（v0.5.4.6）：只重写后半段，前面几段原样锁死。
     // 只有 1 段的消息【不给】这个入口 —— 没有"部分"可保留，那种情况该用「换一个版本」。
     if (!isMe && isLast && !locked && splitParas(m.content).length >= 2) {
@@ -3767,7 +3775,16 @@ async function retrySend(msgId) {
 function variantsOf(m) {
   const vs = Array.isArray(m && m.variants) ? m.variants.filter(Boolean) : [];
   if (!vs.length) return [{ text: (m && m.content) || '' }];
-  return vs.map(v => (typeof v === 'string' ? { text: v } : v));
+  const list = vs.map(v => (typeof v === 'string' ? { text: v } : v));
+  // ⚠️ 全是同一份正文 → 当成只有一版（v0.5.7.1）。
+  //    起因：对【开场白】点「换一个版本」时，regenerate() 因为「没有用户消息」直接返回，
+  //    而 regenAsVariant 在这之后仍然把开场白原文又并进版本表一次 —— 每点一次 +1 版，
+  //    内容全都一样。用户看到的正是「1/3 和 3/3 是同一段」。
+  //    这里做读时归一：已经坏掉的数据不用他去改，气泡下面的 ‹ 1/3 › 直接消失。
+  if (list.length > 1 && list.every(v => String(v && v.text) === String(list[0] && list[0].text))) {
+    return [list[0]];
+  }
+  return list;
 }
 
 /**
@@ -3832,6 +3849,14 @@ async function regenAsVariant(m, keepPrefix) {
     toast('开着「分段发送」时一轮回复是好几条，暂时换不了版本 —— 到角色设置里关掉它再试', 6400);
     return;
   }
+  // ⚠️ 开场白没有「再要一版」这回事（v0.5.7.1）。
+  //    它来自卡片；regenerate() 找不到可重发的东西会直接返回，
+  //    而下面的合并逻辑照样把原文再并进版本表 —— 每点一次就多一个一模一样的版本。
+  //    实测症状：气泡下面出现 ‹ 1/3 ›，翻到第 3 页还是同一段。
+  if (await isGreetingMsg(m.id)) {
+    toast('开场白来自卡片，没有「再要一版」这回事 —— 想换开场白请用「换一个开场白」', 5600);
+    return;
+  }
   const vs = variantsOf(m);
   const idx = Math.max(0, Math.min(vs.length - 1, Number(m.vIdx) || 0));
   // v0.5.6.1：inj 也跟着存一份。不存的话两个版本共用消息上那一份，
@@ -3848,6 +3873,13 @@ async function regenAsVariant(m, keepPrefix) {
     tail2.unshift(now[i]);
   }
   if (!tail2.length) { toast('这次没生成出内容，版本没换成'); return; }
+  // ⚠️ 没有【新】消息 = 这次什么都没生成（regenerate 中途失败或直接返回了）。
+  //    这时候如果继续往下合并，就会把原来那条内容再抄一份进版本表，
+  //    得到两个一模一样的版本 —— 这正是「1/3 和 3/3 是同一段」的成因。
+  if (tail2.length === 1 && tail2[0].id === m.id) {
+    toast('这次没有生成出新内容，版本没变');
+    return;
+  }
   // 同理（v0.5.6.1）：新生成的那几版各自带着自己的 inj，一起进版本表。
   const merged = vs.concat(tail2.map(x => ({ text: x.content, story: x.story, speakerId: x.speakerId, inj: x.inj })));
   const first = tail2[0];

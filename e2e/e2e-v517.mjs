@@ -330,8 +330,28 @@ for (let i = 0; i < 60; i++) {
 }
 const _diag = await page.evaluate(() => window.__reqAll.map(b => (b.messages || []).length + ':' + String(((b.messages || []).slice(-1)[0] || {}).content || '').slice(0, 24)));
 console.log('   请求序列: ' + JSON.stringify(_diag));
-t('★ 对照组：不管它，它真的会自己接着往下写（至少 2 次请求）', hits >= 2, '请求数 ' + hits);
-t('对照组：连续写到了第 3 段就停（epicChain=3）', hits === 3, '请求数 ' + hits);
+// ⚠️ 不能用 hits === 3 当「停在第 3 段」的判据了（0.5.7.2 改）。
+//
+// 这条断言原来能过，是因为它【建立在残缺历史之上】：续写消息的 parentId 被写成空串，
+// 第 2、3 段读到的 pastRaw 只剩一条 assistant，于是 app.js 里
+//     innerSeen = _aiHist.length < 2 ? true : ...
+// 恒为 true —— 「缺一句心里话就补写一次」的重写回路永远不触发。
+// parentId 修好之后历史完整，innerSeen 变 false，每段补写一次
+// （innerMiss 上限 2 次），请求数就从 3 变成 5。
+//
+// 那 2 次补写是【正确行为】。真正要验的是「续写到第 3 段就停」，
+// 所以改成数【续写请求】（末句是「继续往下写」的那些），补写请求不算。
+const contLens = await page.evaluate(() => window.__reqAll
+  .filter(b => String(((b.messages || []).slice(-1)[0] || {}).content || '').indexOf('继续往下写') >= 0)
+  .map(b => (b.messages || []).length));
+t('★ 对照组：不管它，它真的会自己接着往下写（至少 2 段）', contLens.length >= 2, '续写段数 ' + contLens.length);
+t('对照组：连续写到了第 3 段就停（epicChain=3）', contLens.length === 3,
+  '续写段数 ' + contLens.length + ' / 总请求 ' + hits);
+t('对照组：没有无限往下写（总请求数有上界）', hits <= 5, '总请求 ' + hits);
+// 这一条是 0.5.7.2 那个 parentId 修复的直接证据：第 2 段发出去的上下文里
+// 必须已经含第 1 段（messages 更长）。断链时第 2 段反而更短 —— 实测 5: 之后是 4:。
+t('★ 第 2 段发出去的上下文里能看见第 1 段（续写历史没断）',
+  contLens.length >= 2 && contLens[1] > contLens[0], 'messages 长度 ' + JSON.stringify(contLens));
 
 // 实验组：重来一次，第一段一结束就拉抽屉
 // 先等对照组那一段真的收尾（canChain 的判定在收尾之后），再清计数 ——

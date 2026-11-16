@@ -1,6 +1,14 @@
 <#
   跑全部 e2e 套件，串行。
 
+  ⚠️ 必须在 pwsh 7+ 下跑：pwsh -NoProfile -File tools\run-regression.ps1
+     本文件【没有 BOM】，而通篇是中文注释。Windows PowerShell 5.1 会按 ANSI（GBK）
+     去解码这些字节，把注释里的引号和括号吃掉，然后在第 57 行附近报
+     「Unexpected token '$('  in expression or statement」—— 一套都跑不起来，
+     而且报错行号和真实内容对不上，很容易以为是文件坏了。
+     （和 build-apk.ps1 正好相反：那个必须带 BOM。两个脚本对编码的要求不同，
+      这一点最容易记混，所以各写在自己文件里。）
+
   ⚠️ 必须串行：每套自己起一个 http server 并驱动一个 Chrome 实例，
      并发跑会互相抢 Chrome，报 "Navigating frame was detached" /
      "LifecycleWatcher terminated"，结果是随机的假失败。

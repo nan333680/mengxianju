@@ -90,6 +90,7 @@ if (-not $Url) {
 #    只读它会永远抓到空 notes，然后弹窗里一片空白 —— 而且脚本还会「成功」写出去。
 # ⚠️ 下面这段提取逻辑和 build-apk.ps1 里那段同源（那边只打印，不落盘）。
 $notes = ''
+$notesSrc = ''
 $clCands = @(
   (Join-Path $root 'CHANGELOG.md'),
   (Join-Path $root ('releases\v' + $Version + '\CHANGELOG.md'))
@@ -107,7 +108,7 @@ foreach ($clPath in $clCands) {
   } elseif ($hm.Success) {
     $notes = ($hm.Groups[1].Value -replace '^versionCode\s+\d+\s*·\s*', '').Trim()
   }
-  if ($notes) { break }
+  if ($notes) { $notesSrc = $clPath; break }
 }
 if (-not $notes) {
   Write-Host ("   ⚠️ 没抓到 v" + $Version + " 的更新说明（CHANGELOG 里没这一节，也没有 release-notes 标记）") -ForegroundColor Yellow
@@ -182,6 +183,12 @@ Write-Host ("   after : " + $Version + " / " + $Code)
 Write-Host ("   包    : " + $apkPath)
 Write-Host ("   大小  : " + $f.Length + " 字节")
 Write-Host ("   SHA256: " + $sha)
+# 防御性输出（0.5.7.2）：把 notes 到底取自哪份文件打出来。
+# 归档目录里的 CHANGELOG.md 是 archive-release.ps1 建的 53 字节占位模板，
+# 万一哪天真文件抓不到、退到了占位那份，这里一眼就能看出来取错了。
+# 现在的正则已经挡得住（占位是「# v<版本>」，匹配不上「### <版本>（」），
+# 但下一个改这段的人不该只靠正则兜着。
+if ($notesSrc) { Write-Host ("   说明来源: " + $notesSrc) } else { Write-Host "   说明来源: （没抓到）" -ForegroundColor Yellow }
 Write-Host ("   说明  : " + $notes)
 Write-Host ""
 

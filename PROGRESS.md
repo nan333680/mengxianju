@@ -294,7 +294,7 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | # | 坑 | 后果 | 教训 |
 | --- | --- | --- | --- |
 | P1 | `git add -u` 漏新文件 | 差点漏掉 `www/js/updater.js`（`app.js` 硬依赖，漏了白屏） | 改 `git add -A`，但先补 `.gitignore` + `--dry-run` 逐行看 |
-| P2 | `build-apk.ps1` 的 BOM 被 edit 删掉 | 中文乱码风险 | 用 `UTF8Encoding($true)` 恢复；必须用 `powershell` 5.1 构建 |
+| P2 | `.ps1` 的 BOM 被 edit 删掉 | 中文乱码风险 | 用 `UTF8Encoding($true)` 恢复；必须用 `powershell` 5.1 构建。**0.5.7.2 又踩了一次**，而且不只是改老文件 —— 新建的 `publish-version.ps1` 用 `write` 写出来也是无 BOM。以后凡是动 `.ps1`，收尾一律查首字节是不是 `EF BB BF` |
 | P3 | 早退条件漏 `r &&` | api 源 403 时仍触发 2 秒早退，备用源全被切断 | `if (r && src.id === 'api' && !settled)` |
 | P4 | `notes` 写 Markdown | 弹窗露出 `**` 和 `-`，换行折叠 | 标记块只写一段纯文本 |
 | P5 | 只改 CHANGELOG 想更新 `notes` | gradle `UP-TO-DATE` → 构建脚本报「产物比本次构建还旧」 | 直接改 `version.json` 的 `notes`，别 `touch` mtime |
@@ -305,6 +305,9 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | P16 | `run_code` 长超时 + `job_output(wait)` | 反复 abort（`code run failed (abort)`），前端被占 | 改后台 job + 读日志文件 |
 | P17 | 回归期间改 `www/` | 结果作废 | 严格禁改 |
 | P18 | e2e 抢在 app 前面 `open('ai-companion')` | 创建了没有 store 的空库，app 不再建表 | 用固定等待，或走真实导入路径 |
+| P19 | `build-apk.ps1` 顺手改仓库根的 `version.json` | 指向一个还没建的 Release；`git add -A` 推上去 = 所有用户点「检查更新」404，而 url 是拼出来的字符串、本地看完全正常 | 0.5.7.2 已拆掉：构建只打印不落盘，发版走 `tools/publish-version.ps1`（五道关卡，资产地址必须真返回 200） |
+| P20 | `archive-release.ps1` 建的是**占位** `CHANGELOG.md`（53 字节） | 写 publish 时想「读归档快照更准」，结果永远抓到空 notes，而且脚本会「成功」写出去 | 两个来源都试、取第一个非空；别假设归档里的文件是真的 |
+| P21 | 在 `applyPsycheDelta` 里加了个 `unbelieve` 分支就收手 | `director.js` 三处没接，全仓只有一处引用 = 死代码；而 CHANGELOG 里写着「判断层自己也能撤回」 | 加一个 delta 键时，追一遍「谁产出它」：`ASK` 模板 → `normalizeDirector` 白名单 → `directorDelta`。单元测试测不出断链，要串起来测 |
 
 ### 9.2 逻辑坑
 
@@ -376,3 +379,4 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | 2026-11-16 16:4x | 版本号升到 `0.5.7.2 / 194`（四方一致，`version.json` **没动**） | `node tools/bump-version.mjs 0.5.7.2 194` + `ci-check` → web/android/package 全 0.5.7.2 |
 | 2026-11-16 16:5x | **修一个自己造的洞**：上一版 `unbelieve` 是死代码 —— 只在 `applyPsycheDelta` 里写了分支，`director.js` 三处（`ASK` 模板 / `normalizeDirector` 的**字段白名单** / `directorDelta`）一处都没接，全仓再无第二个引用。**是用户核代码时发现的**（我 CHANGELOG 里却写着「判断层自己也能撤回」）。接通三处 + 匹配改精确 `===` + 比较前剥 `psychePrompt` 的尾注 | 反向验证：去掉 `out` 里的 `unbelieve` → `e2e-psyche` 报 **5 项失败**（`6d` 4 条 + `12c` 1 条），加回去 **141/0** |
 | 2026-11-16 16:5x | 构建 `0.5.7.2` APK（194）。**注意：构建脚本会改写 `version.json`**，构建完必须 `git checkout -- version.json` 还原（N4：那个文件要等 Release 建好、APK 传完、`curl` 验到 200 之后才推） | `apksigner` 退出码 0；还原后 `version.json` 仍是 `versionCode 192 / "0.5.7"`（线上版） |
+| 2026-11-16 17:0x | **把「构建」和「发版」拆开**（用户提的，P19）：`build-apk.ps1` 不再写 `version.json`，只打印 notes 和待发命令；新增 `tools/publish-version.ps1`，五道关卡（versionName 对齐 / versionCode 不许回退 / 包存在并算 sha256 / 资产地址必须 200 / content-length 与本地一致），任一不过即中止、一个字节都不写 | 实测：`-Version 0.5.7.1` 被第一关拦住；不加 `-SkipUrlCheck` 时 v0.5.7.2 的资产地址返回 **404** 被拦住 —— 正好是这个脚本要防的事故现场；`-DryRun` 输出 before 0.5.7/192 → after 0.5.7.2/194，notes 抓到了 |

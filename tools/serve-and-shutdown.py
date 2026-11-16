@@ -54,6 +54,11 @@ def keep_awake():
 
 def do_shutdown(reason):
     try:
+        # ⚠️ 先撤销可能已经挂着的关机（比如睡前设的 1 小时兜底）。
+        #    Windows 同时只允许一个挂起安排，不撤销的话 shutdown 会以
+        #    1190「A system shutdown has already been scheduled」拒绝，
+        #    下载完成那 60 秒就永远不生效，得干等满 1 小时。
+        subprocess.run(['shutdown', '/a'], check=False, capture_output=True)
         subprocess.run(['shutdown', '/s', '/t', str(GRACE), '/c', reason],
                        check=False, capture_output=True)
         log('已安排关机：%d 秒后（shutdown /a 可撤销）' % GRACE)

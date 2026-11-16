@@ -1633,7 +1633,7 @@ input[type="range"] { touch-action: pan-y; }
 .setup-banner{
   display:flex; align-items:center; gap:10px;
   margin:8px 12px 0; padding:10px 14px;
-  background:linear-gradient(90deg, rgba(139,124,246,.20), rgba(139,124,246,.06));
+  background:linear-gradient(90deg, color-mix(in srgb, var(--pri) 20%, transparent), color-mix(in srgb, var(--pri) 6%, transparent));
   border:1px solid var(--pri); border-radius:12px;
   color:var(--fg); font-family:inherit; font-size:calc(var(--fs) - 1px);
   line-height:1.45; text-align:left; cursor:pointer;
@@ -1668,7 +1668,7 @@ input[type="range"] { touch-action: pan-y; }
 .srx-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:7px; }
 .srx-tag{
   font-size:10.5px; padding:1px 6px; border-radius:5px; white-space:nowrap;
-  background:rgba(139,124,246,.14); color:var(--pri2); border:1px solid rgba(139,124,246,.35);
+  background:color-mix(in srgb, var(--pri) 14%, transparent); color:var(--pri2); border:1px solid color-mix(in srgb, var(--pri) 35%, transparent);
 }
 .srx-src{ font-size:10.5px; color:var(--fg3); align-self:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:52%; }
 .srx-rule{ font-size:11.5px; margin-top:8px; line-height:1.7; word-break:break-all; }
@@ -1711,9 +1711,9 @@ input[type="range"] { touch-action: pan-y; }
 /* ===== 群聊（v0.4.0）===== */
 .tag-grp{
   font-size:10.5px; font-weight:400; margin-left:6px; padding:1px 6px; border-radius:5px;
-  background:rgba(139,124,246,.16); color:var(--pri2); border:1px solid rgba(139,124,246,.35);
+  background:color-mix(in srgb, var(--pri) 16%, transparent); color:var(--pri2); border:1px solid color-mix(in srgb, var(--pri) 35%, transparent);
 }
-.char-card.grp .avatar-lg{ background:rgba(139,124,246,.12); }
+.char-card.grp .avatar-lg{ background:color-mix(in srgb, var(--pri) 12%, transparent); }
 .group-roster{
   display:flex; align-items:center; gap:6px; flex-wrap:nowrap; overflow-x:auto;
   padding:6px 12px 8px; font-size:12px;
@@ -1725,7 +1725,7 @@ input[type="range"] { touch-action: pan-y; }
   background:var(--bg3); border:1px solid var(--line); color:var(--fg2); white-space:nowrap;
 }
 .group-roster .gr-chip.on{
-  background:rgba(139,124,246,.18); border-color:var(--pri); color:var(--pri2); font-weight:600;
+  background:color-mix(in srgb, var(--pri) 18%, transparent); border-color:var(--pri); color:var(--pri2); font-weight:600;
 }
 /* 群聊气泡上的说话人名字 */
 .msg .who{ font-size:11px; color:var(--fg3); margin-bottom:3px; }
@@ -2230,7 +2230,7 @@ input[type="range"] { touch-action: pan-y; }
 .si-top b{ flex:1 1 auto; min-width:0; font-size:15px; font-weight:600;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .si-badge{ flex:0 0 auto; font-size:11px; padding:1px 6px; border-radius:6px;
-  background:rgba(139,124,246,.16); color:var(--pri2); }
+  background:color-mix(in srgb, var(--pri) 16%, transparent); color:var(--pri2); }
 .si-pre{ font-size:13px; line-height:1.6; color:var(--fg3);
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .si-meta{ margin-top:7px; font-size:11.5px; color:var(--fg3); }

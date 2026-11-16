@@ -337,13 +337,13 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | --- | --- |
 | 线上最新公开版 | **0.5.7 / versionCode 192**（Release `v0.5.7`，asset `739203945`，53,991,314 字节，sha256 `97703B7F…`） |
 | 本地工作版本 | **0.5.7.2 / versionCode 194**（测试版，未上传；0.5.7.1 的改动全在里面） |
-| 最后一次全量回归 | `badd98e` 那版：**170 套 / 4523 项 / 0 失败 / 61.7 分钟**（一次全绿） |
+| 最后一次全量回归 | **0.5.7.2 这版（`53aa6e7`）：172 套 / 4573 项 / 0 失败 / 63.1 分钟** ← 全绿，R7 满足<br>上一版是 `badd98e`：170 套 / 4523 项 / 0 失败 / 61.7 分钟 |
 | 之后新增/修改 | 0.5.7.1：`www/js/app.js` 6 处（开场白修复）+ `e2e/e2e-greetswipe.mjs`（17 项）<br>0.5.7.2：`app.js` 4 处、`psyche.js` 2 处、`director.js` 5 处、`style.css` 1 处 + `e2e/e2e-autochain.mjs`（新建，10 项）+ `e2e-psyche` 加 4 节（21 项） |
-| 本版跑过的 e2e | `check-continue` ✅、`e2e-branch` 21/0 ✅、`e2e-psyche` **141/0** ✅、`e2e-plotjudge` 58/0 ✅、`e2e-autochain` 10/0 ✅（**未跑 62 分钟全量**） |
-| e2e 总套数 | 174（`e2e-greetswipe`、`e2e-autochain` 都没进过全量） |
+| 本版跑过的 e2e | **全量 172 套 / 4573 项 / 0 失败** ✅（63.1 分钟，2026-11-16 19:20）。<br>第一轮全量是 171/172：`e2e-v517` 第 3 节断言 `hits === 3` 挂了（实际 5），查下来那条断言**建立在 parentId 的 bug 之上**（孤儿让历史永远只有 1 条 assistant → `innerSeen` 恒 true → 补写回路被永久关掉），改成数续写请求后整跑一遍全绿 |
+| e2e 总套数 | 172 套进了全量（`e2e-greetswipe`、`e2e-autochain` 这次是第一次进全量，都绿；`e2e-helper.mjs` / `e2e-src.mjs` 不算套件） |
 | 最新 APK | `桌面\mxj\梦弦居-v0.5.7.2.apk`（ASCII 副本 `mengxianju-v0.5.7.2.apk` 才是上传用的），54,003,078 字节，sha256 `E9F618C4627B1B274F21AED089CE0E8B097FCA9E013ACA779F5DAB89B52B6599`，2026-11-16 16:5x，签名验证通过（apksigner 退出码 0）；归档在 `releases/v0.5.7.2`（**不含回归日志**，脚本自己检测到 `_regress.log` 比 `app.js` 旧） |
 | `version.json` | **已还原成线上 0.5.7 / 192**（未提交改动里没有它） |
-| git | HEAD = `83ecb68`；工作区干净 |
+| git | HEAD = `53aa6e7`；工作区只剩 `e2e/e2e-v517.mjs`（回归期间放宽了上界，待提交） |
 | 远端 | `origin/main` 停在 `2ef331a`（**落后四个提交**，都因为代理 7897 没开没推上去） |
 | 被忽略的人设素材 | `_yuy_ref/`、`_yukari/`、`_suwako/`、`人设卡写作规格.md`、`八云紫-写卡提示词.md` |
 
@@ -379,4 +379,6 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | 2026-11-16 16:4x | 版本号升到 `0.5.7.2 / 194`（四方一致，`version.json` **没动**） | `node tools/bump-version.mjs 0.5.7.2 194` + `ci-check` → web/android/package 全 0.5.7.2 |
 | 2026-11-16 16:5x | **修一个自己造的洞**：上一版 `unbelieve` 是死代码 —— 只在 `applyPsycheDelta` 里写了分支，`director.js` 三处（`ASK` 模板 / `normalizeDirector` 的**字段白名单** / `directorDelta`）一处都没接，全仓再无第二个引用。**是用户核代码时发现的**（我 CHANGELOG 里却写着「判断层自己也能撤回」）。接通三处 + 匹配改精确 `===` + 比较前剥 `psychePrompt` 的尾注 | 反向验证：去掉 `out` 里的 `unbelieve` → `e2e-psyche` 报 **5 项失败**（`6d` 4 条 + `12c` 1 条），加回去 **141/0** |
 | 2026-11-16 16:5x | 构建 `0.5.7.2` APK（194）。**注意：构建脚本会改写 `version.json`**，构建完必须 `git checkout -- version.json` 还原（N4：那个文件要等 Release 建好、APK 传完、`curl` 验到 200 之后才推） | `apksigner` 退出码 0；还原后 `version.json` 仍是 `versionCode 192 / "0.5.7"`（线上版） |
+| 2026-11-16 19:20 | **全量回归第一次不是全绿**：171/172，`e2e-v517` 第 3 节 `hits === 3` 挂了（实际 5）。分拣结论：**那条断言建立在 `parentId` 的 bug 之上** —— 孤儿让第 2、3 段的 `pastRaw` 永远只有 1 条 assistant，`innerSeen = _aiHist.length < 2 ? true : ...` 恒真，于是「缺一句心里话就补写一次」的重写回路被永久门在外面，请求数才恰好是 3。链修好后历史完整，mock 回复没有星号内心层，每段补写一次（`innerMiss` 上限 2）→ 5 次。**那条断言过去一直绿，是因为缺陷刚好把被测行为关掉了** | 反向验证：撤掉 `_parent0` 修复 → `5:,4:,4:`（第 2/3 段 messages 反而更短）+ 34/0；恢复 → `5:,6:,8:,7:,9:` + 33/1。改断言后单套 36/0、全量 172/0 |
+| 2026-11-16 19:20 | 全量回归**第二次整跑全绿**：**172 套 / 4573 项 / 0 失败 / 63.1 分钟**（R7 满足）。中途用户切过一次网络，没造成失败 | `_regress.log` 末尾 `汇总: 通过 4573 / 失败 0 / 共 172 套 / 耗时 63.1 分钟` + `DONE`；`e2e-v517.mjs 通过 36 项，失败 0 项 [44.1s]` |
 | 2026-11-16 17:0x | **把「构建」和「发版」拆开**（用户提的，P19）：`build-apk.ps1` 不再写 `version.json`，只打印 notes 和待发命令；新增 `tools/publish-version.ps1`，五道关卡（versionName 对齐 / versionCode 不许回退 / 包存在并算 sha256 / 资产地址必须 200 / content-length 与本地一致），任一不过即中止、一个字节都不写 | 实测：`-Version 0.5.7.1` 被第一关拦住；不加 `-SkipUrlCheck` 时 v0.5.7.2 的资产地址返回 **404** 被拦住 —— 正好是这个脚本要防的事故现场；`-DryRun` 输出 before 0.5.7/192 → after 0.5.7.2/194，notes 抓到了 |

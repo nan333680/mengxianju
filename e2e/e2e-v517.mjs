@@ -347,9 +347,16 @@ const contLens = await page.evaluate(() => window.__reqAll
 t('★ 对照组：不管它，它真的会自己接着往下写（至少 2 段）', contLens.length >= 2, '续写段数 ' + contLens.length);
 t('对照组：连续写到了第 3 段就停（epicChain=3）', contLens.length === 3,
   '续写段数 ' + contLens.length + ' / 总请求 ' + hits);
-t('对照组：没有无限往下写（总请求数有上界）', hits <= 5, '总请求 ' + hits);
+// 上界给宽一点（8 而不是 3+innerMiss(2)=5）：这一条要拦的是「失控」，不是精确计数。
+// 卡在 5 的话，将来 innerMiss 的上限从 2 调到 3，这条会挂，而它挂起来
+// 长得跟「无限往下写」一模一样，排查会先走错方向。
+t('对照组：没有无限往下写（总请求数有上界）', hits <= 8, '总请求 ' + hits);
 // 这一条是 0.5.7.2 那个 parentId 修复的直接证据：第 2 段发出去的上下文里
-// 必须已经含第 1 段（messages 更长）。断链时第 2 段反而更短 —— 实测 5: 之后是 4:。
+// 必须已经含第 1 段（messages 更长）。断链时第 2 段反而更短 —— 实测 [5,4,4]。
+//
+// ⚠️ contLens 装的是【所有】续写请求，含第 1 段（它由 btn-continue 触发，
+//    autoRun=0，走的还是 cont 分支，末句一样是「继续往下写」）。
+//    所以 contLens[0] = 第 1 段、contLens[1] = 第 2 段，比的是「第 2 段 > 第 1 段」。
 t('★ 第 2 段发出去的上下文里能看见第 1 段（续写历史没断）',
   contLens.length >= 2 && contLens[1] > contLens[0], 'messages 长度 ' + JSON.stringify(contLens));
 

@@ -43,12 +43,13 @@ export function maxTokensFor(targetChars) {
  *   directive —— 导演模式：导演指令（不进正文）
  *   context   —— 开戏时的底色快照（她是谁 / 世界 / 已发生过什么），v0.5.2.4
  *   log       —— 前面几拍的场记（多拍接力用），v0.5.2.4
+ *   prevCtx   —— 前面几场发生过什么（跨场接力），v0.5.7.3
  */
 export async function genProse(o) {
   const { scene, cfg, beatIdx = 0, prevText = '', userLine = '', directive = '',
-    context = '', log = null, signal, onDelta } = o || {};
+    context = '', prevCtx = '', log = null, signal, onDelta } = o || {};
   const prompt = sceneProsePrompt(scene, {
-    beatIdx, prevText, userLine, directive, context, log,
+    beatIdx, prevText, userLine, directive, context, prevCtx, log,
     fixup: (o && o.fixup) || ''
   });
   // 多拍时按【一拍】的额度要 token（v0.5.3.1）：整场 8000 字一次要一万八千 token，
@@ -98,12 +99,14 @@ export async function genBeatPlan(o) {
   return { ok: arr.length > 0, beats: arr, raw };
 }
 
-/** 场记（§9.2）：正文写完之后单独一次请求，产出 {events, cast, change, openThreads, keyLines} */
+/** 场记（§9.2）：正文写完之后单独一次请求，产出 {events, cast, change, openThreads, closedThreads, keyLines} */
 export async function genLog(o) {
-  const { text, cfg } = o || {};
+  // openThreads（v0.5.7.3）：以前悬着、还没了结的事（台账里 done === false 的那批）。
+  // 必须由调用方传进来 —— 这个文件故意不碰 db，台账在 app.js 那边读。
+  const { text, cfg, openThreads = [] } = o || {};
   const raw = await onceChat({
     ...baseOf(cfg),
-    messages: [{ role: 'system', content: sceneLogPrompt(text) }],
+    messages: [{ role: 'system', content: sceneLogPrompt(text, openThreads) }],
     temperature: 0.3,
     maxTokens: 900,
     noThink: true,
@@ -119,6 +122,9 @@ export async function genLog(o) {
       cast: arr(j.cast),
       change: String(j.change || '').trim(),
       openThreads: arr(j.openThreads),
+      // v0.5.7.3：这一场了结了以前的哪几条（台账的回收侧）。
+      // 漏掉这一行 = 提示词要了、模型给了、然后被丢掉 —— 台账只增不减。
+      closedThreads: arr(j.closedThreads).slice(0, 5),
       keyLines: arr(j.keyLines).slice(0, 3),
       // v0.5.3：这一场新确立的设定。不写进这里 = 提示词要了、模型给了、然后被丢掉。
       newSettings: arr(j.newSettings).map(x => x.slice(0, 40)).slice(0, 3)

@@ -35,6 +35,14 @@ export const SCENE_VER = 2;
 export const SCENE_CONTEXT_MAX = 11000;
 
 /**
+ * 跨场接力快照的上限（v0.5.7.3）。
+ *
+ * 和第 0 拍提示词里那一段共用同一个数 —— 存得比用得多只会让人以为还有更多。
+ * 1200 字大概是 3 场的「发生 / 变成 / 还悬着」加一份台账，再多会顶掉正文的注意力。
+ */
+export const PREV_CTX_MAX = 1200;
+
+/**
  * 四档长度：字数 = 上限，不是任务（§3）。
  *
  * v0.5.3.1 补 long / chapter 两档。原来只有 300–600 和 600–1200，「从聊天写小说」
@@ -95,6 +103,9 @@ export function emptyScene(charId = '') {
     status: 'draft',
     canon: false,
     context: '',
+    // v0.5.7.3：开这一场时「前面几场发生过什么」的快照（跨场接力）。
+    // 和 context 同一个原则：开戏那一刻拍下来，之后这一场不再回读别的场次。
+    prevCtx: '',
     // v0.5.3：开戏装配时哪几块装不下被整条丢了（'world' / 'mem' / 'self'）。
     // 存进卡里而不是只打 console —— 结束页要明说"这次丢了什么"，不能让用户猜。
     ctxDropped: [],
@@ -196,6 +207,11 @@ export function normalizeScene(raw) {
   // 聊天被改了、分支切了、记忆被整理掉了，这场戏读到的还是当初那一份 ——
   // 和 source.excerpt 的快照隔离是同一个原则。
   out.context = S(a.context, SCENE_CONTEXT_MAX);
+  // v0.5.7.3：跨场接力快照。补这一行不是为了「读回来」——
+  // scenes.get 是原样读、sceneProsePrompt 也不从卡里取它（走 opts.prevCtx）。
+  // 补它是因为删拍（app.js 的 deleteBeatAt）和撤销都过一遍 normalizeScene，
+  // 字段不在白名单里就会被静默清空，那两张卡从此接不上前情。
+  out.prevCtx = S(a.prevCtx, PREV_CTX_MAX);
   out.ctxDropped = (Array.isArray(a.ctxDropped) ? a.ctxDropped : [])
     .map(x => String(x || '').trim()).filter(Boolean).slice(0, 8);
   out.status = SCENE_STATUS.includes(a.status) ? a.status : 'draft';
@@ -255,6 +271,10 @@ function normalizeLog(raw) {
     cast: LINES(o.cast, 40, TEMP_CAST_MAX + 2),
     change: S(o.change, 300),
     openThreads: LINES(o.openThreads, 200, 20),
+    // v0.5.7.3：以前悬着、这一场确实解决了的那几条（台账的「回收」侧）。
+    // 存在 log 里而不是直接写台账 —— 场记的产物仍然只是一张卡上的记录，
+    // 台账由 app.js 的 mergeThreads 按它更新，纯函数这边不碰 kv。
+    closedThreads: LINES(o.closedThreads, 200, 5),
     keyLines: LINES(o.keyLines, 200, 3),
     // v0.5.3：这一场【新确立的设定】（她左手有旧伤 / 码头归黑帮管 / 她开始怕水）。
     // 和 events 的区别：events 是"发生过什么"，newSettings 是"从现在起什么为真"。
@@ -502,6 +522,16 @@ export function sceneProsePrompt(scene, opts = {}) {
   p.push(L.beats > 1 ? '这一拍自然停下就停，后面还有几拍，不要替它们把事做完。' : '写到这一场自然结束，但不超过上限。');
   p.push('接近上限时，停在完整句子，不要半句截断。');
   p.push('');
+  // 跨场接力（v0.5.7.3）：前面几场发生过什么。原来只在【本场多拍之间】用 log 接力，
+  // 一场演完下一场就是断的 —— 新的一场读不到上一场的任何东西。
+  // 只给第 0 拍、且这一场还没写过正文：后面几拍有 log 接得住，重复注入等于白花钱；
+  // 已经写过正文时再灌前情会把模型拽回开头重铺一遍。
+  if (bi === 0 && opts.prevCtx && !(a.blocks || []).length) {
+    p.push('【前面几场发生过什么（同一部戏，接着往下写）】');
+    p.push(String(opts.prevCtx).slice(0, PREV_CTX_MAX));
+    p.push('这一场接着它们往下走，不要重演已经发生过的事。');
+    p.push('');
+  }
   if (opts.prevText) {
     p.push('【前面已经写到这里，接住它，不要复述】');
     // 2400 字（v0.5.2.4）：原来只给最后 600 字，中场写第 2 拍时第 1 拍的
@@ -574,9 +604,26 @@ export function sceneBeatPlanPrompt(scene) {
   return p.join('\n');
 }
 
-/** 场记提示词（§9.2） */
-export function sceneLogPrompt(text) {
-  return [
+/**
+ * 场记提示词（§9.2）。
+ *
+ * openThreads（v0.5.7.3）：以前就悬着、到现在还没了结的事，编号成 A1/A2……递进去。
+ *
+ * 为什么要给：closedThreads 要判「这一场把以前的哪条了结了」，而【了结】在正文里
+ * 通常表现为「不再提」—— 没有文本依据。不给清单，模型只能靠编。
+ *
+ * 为什么要编号：让它只能选、不能写。自由生成的话它会顺手编一条"看起来被解决了"的，
+ * 而台账上 done 一旦标上就不再进 prevCtx —— 误标一次就是永久丢一条伏笔，且无人察觉。
+ *
+ * 为什么要明说「大部分场次一条都不会解决」：这个字段的正确输出绝大多数时候是 []。
+ * 不写这句，它会为了填字段硬找，把"只是提到"或"往前推了一点"记成"解决了"。
+ */
+export function sceneLogPrompt(text, openThreads = []) {
+  // 每条 60 字、最多 12 条（v0.5.7.3）：整章档场记会跑 5 次，
+  // 20 条 × 200 字 × 5 次 = 一万字白烧，而真正会解决的通常是最新那几条。
+  const ths = (Array.isArray(openThreads) ? openThreads : [])
+    .map(x => S(x, 60)).filter(Boolean).slice(0, 12);
+  const p = [
     '读下面的正文，输出 JSON：',
     '',
     '{',
@@ -584,19 +631,33 @@ export function sceneLogPrompt(text) {
     '  "cast": ["实际开口或被写到的人"],',
     '  "change": "这一场结束时，什么和开始时不一样",',
     '  "openThreads": ["没解决的事"],',
+    '  "closedThreads": ["以前悬着、这一场确实解决了的那几条，写编号（如 A1）或原话；没有就 []"],',
     '  "keyLines": ["最多 3 句关键台词"],',
     '  "newSettings": ["这一场新确立的设定，最多 3 条，每条不超过 40 字；没有就 []"]',
     '}',
     '',
     '不要编造正文里没有的事。',
     'newSettings 只收【这一场之后一直成立】的事实（她左手有旧伤 / 码头归黑帮管 / 她开始怕水），',
-    '不收"这一场发生了什么"（那是 events）。没有新设定就给空数组。',
-    '不要写评价。',
-    '只输出 JSON。',
-    '',
-    '【正文】',
-    String(text || '').slice(0, 8000)
-  ].join('\n');
+    '不收"这一场发生了什么"（那是 events）。没有新设定就给空数组。'
+  ];
+  if (ths.length) {
+    p.push('');
+    p.push('【以前悬着、到现在还没了结的事】');
+    for (let i = 0; i < ths.length; i++) p.push('A' + (i + 1) + '. ' + ths[i]);
+    p.push('');
+    p.push('closedThreads 只收【上面这几条里、这一场确实解决了】的。');
+    p.push('大部分场次一条都不会解决，返回 [] 很正常 —— 不要为了填这个字段硬找。');
+    p.push('只是提到它、或者只往前推了一点，都不算解决；要的是这件事在这一场里被了结了。');
+  } else {
+    p.push('');
+    p.push('closedThreads 一律给 []（这一场之前没有悬着的事）。');
+  }
+  p.push('不要写评价。');
+  p.push('只输出 JSON。');
+  p.push('');
+  p.push('【正文】');
+  p.push(String(text || '').slice(0, 8000));
+  return p.join('\n');
 }
 
 /**

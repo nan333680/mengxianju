@@ -77,7 +77,7 @@ import { parseStRegexList, applyStRegex, previewOne } from './stregex.js';
 import { parseStChat, toMessages } from './stchat.js';
 // 小说层（v0.5.2）：场景卡的数据形状与纯逻辑全在 scene.js，
 // 出正文 / 出分镜 / 出场记在 scenegen.js，两边都不碰 DOM 也不碰数据库。
-import { SCENE_LENGTHS, USER_MODES, USER_MODE_NAME, SCENE_STATUS, GUARDRAILS_MAX, TEMP_CAST_MAX, TRASH_DAYS, emptyScene, emptyBeat, beatCountFor, clampBeats, normalizeScene, sceneNames, countChars, checkQuality, sceneWordCount, sceneFilled, textToBlocks, dialogueToNarration, newSceneId } from './scene.js';
+import { SCENE_LENGTHS, USER_MODES, USER_MODE_NAME, SCENE_STATUS, GUARDRAILS_MAX, TEMP_CAST_MAX, TRASH_DAYS, PREV_CTX_MAX, emptyScene, emptyBeat, beatCountFor, clampBeats, normalizeScene, sceneNames, countChars, checkQuality, sceneWordCount, sceneFilled, textToBlocks, dialogueToNarration, newSceneId } from './scene.js';
 import { genProse, genBeatPlan, genLog, genTempCast } from './scenegen.js';
 
 // 语义复读判定线（0.5.3.6）：bge-small 余弦 >= 0.92 基本等于「同一件事又说一遍」。
@@ -15237,6 +15237,184 @@ async function scChatSnapshot(charId, range) {
  * @param {Object} [scene] 场景卡本身 —— 用它写的标题/地点/时间/天气/每一拍/前情摘录去匹配世界书
  * @returns {Promise<{text: string, dropped: string[]}>} text 是快照正文，dropped 是装不下被丢掉的块 key
  */
+// ---------------- 跨场接力 / 伏笔台账（v0.5.7.3）----------------
+//
+// 起因：一场演完，下一场读不到上一场。scene.js 的 log 只在【本场多拍之间】接力
+// （sceneProsePrompt 的「前面几拍已经发生的事」），跨场是断的。
+//
+// 两个东西一起做，因为它们解决的是同一件事的两面：
+//   prevCtx —— 上一场/前几场「发生 / 变成 / 还悬着」的快照，只喂第 0 拍。
+//   threads —— 跨场累积的伏笔台账（kv 的 'threads:<charId>'）。单场 log 会随着
+//              场次翻页被忘掉，而「她一直没说盒子里是什么」这种是要记一辈子的。
+
+/** 台账里还没了结的那批，按时间先后（旧的在前），最多 12 条。
+ *
+ *  ⚠️ 这一个函数同时供三处用，顺序必须一致：
+ *    ① sceneLogPrompt 拿它编号成 A1/A2……递给场记；
+ *    ② mergeThreads 拿它把场记回的「A3」翻回原话；
+ *    ③ buildPrevScenes 拿它填「还悬着」那一段。
+ *  三处各自 filter 一遍就会出现「A3 指的是另一条」—— 那比不给编号更坏。
+ */
+function pendingThreads(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter(x => x && x.t && x.done !== true)
+    .slice(-12)
+    .map(x => String(x.t));
+}
+
+/**
+ * 两条伏笔算不算「同一件事」。
+ *
+ * 原话相等，或长度 ≥4 的互相包含。4 字下限是防「那杯茶」删掉「那杯茶我掺了自己的东西」；
+ * 精确相等又太严 —— 模型每次复述同一件事都略有出入。
+ *
+ * ⚠️ 这个判据有两处用，必须一致：mergeThreads 拿它标 done，
+ *    buildPrevScenes 拿它把「已经解决了」的从单场 log 的 openThreads 里滤掉。
+ *    不一致的症状是「台账说解决了、前情里还写着悬着」。
+ */
+function threadMatch(a, b) {
+  const x = String(a == null ? '' : a);
+  const y = String(b == null ? '' : b);
+  if (!x || !y) return false;
+  return x === y
+    || (x.length >= 4 && y.indexOf(x) >= 0)
+    || (y.length >= 4 && x.indexOf(y) >= 0);
+}
+
+/** 这条是不是台账里已经标了 done 的 */
+function threadDone(t, list) {
+  return (Array.isArray(list) ? list : [])
+    .some(x => x && x.done === true && x.t && threadMatch(x.t, t));
+}
+
+/**
+ * 把这一场的场记并进台账。list 是调用方已经读好的那份（别在这里再读一遍）。
+ *
+ * 新增宽松、回收严格：
+ *   新增 —— 同一句话已经有了就不再开（不管它是不是已经 done）。只在 !done 里查的话，
+ *           一件已经解决的事被模型第二次报成 openThreads 时会重新开一条，
+ *           台账里就同时躺着「已解决」和「悬着」的同一句话。
+ *   回收 —— 原话相等，或长度 ≥4 的互相包含。4 字下限是防「那杯茶」删掉
+ *           「那杯茶我掺了自己的东西」；精确相等太严（模型每次复述都略有出入）。
+ */
+async function mergeThreads(charId, scene, list) {
+  const key = 'threads:' + charId;
+  let arr = Array.isArray(list) ? list.filter(x => x && x.t) : [];
+  const lg = (scene && scene.log && typeof scene.log === 'object') ? scene.log : {};
+  const opens = (Array.isArray(lg.openThreads) ? lg.openThreads : [])
+    .map(x => String(x == null ? '' : x).trim()).filter(Boolean).slice(0, 20);
+  const closed = (Array.isArray(lg.closedThreads) ? lg.closedThreads : [])
+    .map(x => String(x == null ? '' : x).trim()).filter(Boolean).slice(0, 5);
+  if (!opens.length && !closed.length) return arr;
+
+  // 编号是在【递给场记的那一刻】定的，所以这里必须按同一份顺序翻回去。
+  const pend = pendingThreads(arr);
+  const resolve = (raw) => {
+    const m = String(raw).match(/^A(\d+)$/i);
+    if (m) { const i = Number(m[1]) - 1; return pend[i] || ''; }
+    return String(raw);
+  };
+
+  for (const t of opens) {
+    if (!arr.some(x => x.t === t)) {
+      arr.push({
+        id: uid(), t,
+        fromTitle: (scene && scene.title) || '',
+        fromId: (scene && scene.id) || '',
+        at: Date.now(), done: false
+      });
+    }
+  }
+  // 命中项的原话收在这里，最后写回 scene.log.closedThreads ——
+  // 模型回的是编号（"A1"），直接把编号显示给用户没有意义；
+  // 而没命中的（它编了一条台账里根本没有的）会被这里丢掉，界面上就不会出现
+  // 一条「了结了」却查无此事的记录。
+  const resolved = [];
+  for (const raw of closed) {
+    const t = resolve(raw);
+    if (!t) continue;
+    const hit = arr.find(x => x && !x.done && x.t && threadMatch(x.t, t));
+    if (hit) {
+      hit.done = true;
+      hit.doneBy = (scene && scene.id) || '';
+      hit.doneAt = Date.now();
+      resolved.push(hit.t);
+    }
+  }
+  // ⚠️ 不带 resolved.length：一条都没命中时要写回空数组。
+  //    带上它就是「只覆盖有命中的情况」，模型【全部编造】时 closedThreads 原样留着，
+  //    结束页会显示一条「这一场了结了：编的X」——编号化本来要防的正是这个，
+  //    结果在写回这一步又把它放了出来。
+  if (scene && scene.log && typeof scene.log === 'object') {
+    scene.log.closedThreads = resolved;
+  }
+  arr = arr.slice(-60);        // 封顶 60 条：一场戏几百字正文换一条伏笔，60 条够用很久
+  try { await kv.set(key, arr); } catch { /* 台账存不下不该挡住正文 */ }
+  return arr;
+}
+
+/**
+ * 「前面几场发生过什么」—— 拼给第 0 拍的那一段。
+ *
+ * ⚠️ 选场次用 createdAt，不用 scenes.shelf 的 updatedAt 顺序（v0.5.7.3 复查）：
+ *    shelf 是按 updatedAt 倒序的，而回头给第 2 场补一句（onReadSay）、重写最后一拍、
+ *    删掉一拍都会把那张卡的 updatedAt 刷成最新 —— 于是它会被当成「上一场」，
+ *    下一场开戏时时间线是倒着塞进去的。
+ */
+async function buildPrevScenes(charId, scene, cap = PREV_CTX_MAX) {
+  const cap0 = Math.max(300, Number(cap) || PREV_CTX_MAX);
+  const curT = Number(scene && scene.createdAt) || Date.now();
+  const sid = String((scene && scene.id) || '');
+  let list = [];
+  try { list = await scenes.shelf(charId); } catch { return ''; }
+  const prev = list
+    // 用 <= 而不是 <：两场是前后脚开的，createdAt 可能落在同一毫秒，
+    // 那一下 < 会把「上一场」直接排除掉，而症状只是「偶尔接不上」——最难查的那种。
+    // 自己已经被 sid 排除，所以 <= 不会把本场算进来。
+    .filter(s => s && s.id !== sid && (s.blocks || []).length && (Number(s.createdAt) || 0) <= curT)
+    .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
+    .slice(0, 3);
+  let led = [];
+  try { led = (await kv.get('threads:' + charId, [])) || []; } catch { led = []; }
+
+  const blocks = [];
+  let n = 0;
+  // 从最新的往回装：最近那一场最相关，装不下时先丢最早的。
+  for (const s of prev) {
+    const lg = (s.log && typeof s.log === 'object') ? s.log : {};
+    const lines = ['· ' + (s.title || '前面某一场')];
+    const evs = (Array.isArray(lg.events) ? lg.events : []).filter(Boolean).slice(0, 4);
+    if (evs.length) lines.push('  发生：' + evs.map(x => cutAtSentence(String(x), 80)).join('；'));
+    // 按句截，不按字符截：这一段是给模型读的，切在半句上它就当成半件事
+    if (lg.change) lines.push('  变成：' + cutAtSentence(String(lg.change), 80));
+    // ⚠️ v0.5.7.3：这里要滤掉台账里已经 done 的（threadDone）。
+    //    单场 log 的 openThreads 记的是「那一场结束时确实还悬着」，是历史事实；
+    //    但后面某一场把它了结了以后，再把它列进「前面几场……还悬着」就是自相矛盾 ——
+    //    模型看到「已解决」和「还悬着」同时存在，多半会再写一遍。
+    const ths = (Array.isArray(lg.openThreads) ? lg.openThreads : [])
+      .filter(x => x && !threadDone(x, led)).slice(0, 3);
+    if (ths.length) lines.push('  还悬着：' + ths.map(x => cutAtSentence(String(x), 60)).join('；'));
+    if (lines.length < 2) continue;
+    const t = lines.join('\n');
+    if (n + t.length > cap0) break;
+    blocks.push(t); n += t.length;
+  }
+
+  // 台账单独一段、放最前面：它跨场累积，比任何单场的 openThreads 都全。
+  // 单场 log 会随着场次翻页被忘掉，台账不会。
+  const ledLines = [];
+  for (const t of pendingThreads(led).slice(-6)) {
+    const ln = '- ' + cutAtSentence(String(t), 60);
+    if (n + ln.length + 1 > cap0) break;
+    ledLines.push(ln); n += ln.length + 1;
+  }
+
+  const out = [];
+  if (ledLines.length) out.push('【整部戏还悬着的事（前面留下的，还没了结）】\n' + ledLines.join('\n'));
+  if (blocks.length) out.push('【前面几场发生过什么（同一部戏，按时间先后）】\n' + blocks.reverse().join('\n'));
+  return out.join('\n\n');
+}
+
 async function buildSceneContext(charId, sceneId, scene) {
   let ch = null;
   try { ch = await chars.get(charId); } catch { ch = null; }
@@ -15665,8 +15843,14 @@ function sceneLogHtml(sc) {
   const evs = (Array.isArray(lg.events) ? lg.events : []).map(x => String(x || '').trim()).filter(Boolean);
   const ns = (Array.isArray(lg.newSettings) ? lg.newSettings : []).map(x => String(x || '').trim()).filter(Boolean);
   const change = String(lg.change || '').trim();
+  // v0.5.7.3：这一场把哪几条旧伏笔了结了。
+  // ⚠️ 必须显示出来：台账上 done 一旦标上就【不可逆】——那条从此不再进 prevCtx，
+  //    她再也不提这件事。不显示的话，一次误判的症状和「她忘了」一模一样，
+  //    用户没有任何线索能指向一次误判。
+  const ct = (Array.isArray(lg.closedThreads) ? lg.closedThreads : [])
+    .map(x => String(x || '').trim()).filter(Boolean);
   const dropped = (sc && Array.isArray(sc.ctxDropped)) ? sc.ctxDropped.filter(Boolean) : [];
-  if (!evs.length && !ns.length && !change && !dropped.length) return '';
+  if (!evs.length && !ns.length && !change && !ct.length && !dropped.length) return '';
   const CN = {
     self: '她是谁', canon: '后来补的设定', voice: '她说话的样子', user: '你怎么称呼他',
     profile: '关于对方', env: '对方住的地方', world: '这个世界的底色', mem: '你们之间已经这样了'
@@ -15681,6 +15865,10 @@ function sceneLogHtml(sc) {
   if (evs.length) h += '<ul class="rv-log-ev">' + evs.slice(0, 8).map(e => '<li>' + esc(e) + '</li>').join('') + '</ul>';
   if (change) h += '<div class="rv-log-line"><b>变化</b>' + esc(change) + '</div>';
   if (ns.length) h += '<div class="rv-log-line"><b>新设定</b>' + ns.map(x => esc(x)).join('；') + '</div>';
+  if (ct.length) {
+    h += '<div class="rv-log-line"><b>这一场了结了</b>' + ct.map(x => esc(x)).join('；')
+      + '<span class="rv-log-tip"> 这几条以后不会再出现在前情里</span></div>';
+  }
   h += '<label class="rv-log-ck"><input type="checkbox" id="rv-log-reckon"'
     + (sc.canon === true ? ' checked' : '') + '> 这一场算正史（可以记进记忆）</label>';
   // 灰着的时候必须说清「先勾什么」—— 否则它就是个死按钮（v0.5.3.1）。
@@ -15821,6 +16009,11 @@ async function writeScene(sc, opts = {}) {
   const from = Math.max(0, Math.min(sc.beats.length - 1,
     opts.beatIdx != null ? Number(opts.beatIdx) : (Number(sc.currentBeat) || 0)));
   let stopMsg = '';
+  // 伏笔台账（v0.5.7.3）：整个循环只读一次。genLog 在整章档会被调 5 次，
+  // 每拍都读一遍 kv 是白费；而且这一场里台账本来就不会变（mergeThreads 到最后才跑）。
+  let _ledger = [];
+  try { _ledger = (await kv.get('threads:' + sc.charId, [])) || []; } catch { _ledger = []; }
+  const _openTh = pendingThreads(_ledger);
   try {
     sc.status = 'generating';
     await scenes.put(sc);
@@ -15837,6 +16030,8 @@ async function writeScene(sc, opts = {}) {
             // 底色快照（v0.5.2.4）：她是谁 / 世界 / 已经发生过的事。
             // 存在卡里而不是每拍重读库 —— 这场戏开演时世界什么样，就按那个写。
             context: sc.context || '',
+            // 跨场接力（v0.5.7.3）：前面几场发生过什么。只喂第 0 拍（由 sceneProsePrompt 把关）。
+            prevCtx: sc.prevCtx || '',
             // 场记（v0.5.2.4）：多拍时上一拍已经发生的事，别只靠正文尾巴。
             log: sc.log || null,
             userLine: attempt === 0 ? (opts.userLine || '') : '',
@@ -15874,7 +16069,7 @@ async function writeScene(sc, opts = {}) {
         if (sc.beats.length > 1 && i < sc.beats.length - 1 && !stopMsg) {
           showReadLive('（在整理这一段的场记…）');
           try {
-            const lg = await genLog({ text: sc.blocks.map(b => b.text).join('\n'), cfg });
+            const lg = await genLog({ text: sc.blocks.map(b => b.text).join('\n'), cfg, openThreads: _openTh });
             if (lg && lg.ok && lg.log) sc.log = lg.log;
           } catch { /* 场记失败不影响下一拍 */ }
           hideReadLive();
@@ -15889,10 +16084,17 @@ async function writeScene(sc, opts = {}) {
       if ((sc.blocks || []).length) {
         showReadLive('（在整理场记…）');
         try {
-          const lg = await genLog({ text: sc.blocks.map(b => b.text).join('\n'), cfg });
+          const lg = await genLog({ text: sc.blocks.map(b => b.text).join('\n'), cfg, openThreads: _openTh });
           if (lg && lg.ok && lg.log) sc.log = lg.log;
         } catch (e) { /* 场记失败不挡正文 */ }
         hideReadLive();
+      }
+      // 伏笔台账（v0.5.7.3）：正文和场记都落定了才并。
+      // ⚠️ 必须待在 !stopMsg 里 —— 中途失败时这一场没写完，sc.log 还是拍间场记
+      //    最后一次的残缺产物；拿它去并会把「只解决了一半」记成「解决了」，
+      //    而台账上 done 是不可逆的：那条伏笔从此不再进 prevCtx，永远没人知道它丢了。
+      if ((sc.blocks || []).length) {
+        try { await mergeThreads(sc.charId, sc, _ledger); } catch { /* 台账坏了不该挡住正文 */ }
       }
       sc.status = 'done';
       sc.currentBeat = Math.min(sc.currentBeat || 0, sc.beats.length - 1);
@@ -16090,6 +16292,10 @@ async function beginScene(sc) {
       sc.ctxDropped = (r.dropped || []).slice(0, 8);
     } catch { sc.context = ''; sc.ctxDropped = []; }
   }
+  // 跨场接力（v0.5.7.3）：开戏这一刻把前面几场拍下来。放在 if 外面 ——
+  // 从书架打开一张还没写过的草稿、上次中途退出又回来，都要能接上。
+  // 算不出来也要能开演：没有前情顶多从头写起，卡在这儿就是完全写不了。
+  try { sc.prevCtx = await buildPrevScenes(sc.charId, sc); } catch { sc.prevCtx = ''; }
   sc.updatedAt = Date.now();
   sc.status = 'generating';
   if (!sc.title) {
@@ -16109,6 +16315,35 @@ async function beginScene(sc) {
 async function trashScene(s) {
   const ok = await confirmBox('删除这一场', '它会进回收站，30 天内还能找回。<br><b>聊天记录一个字都不会动。</b>', '删除');
   if (!ok) return;
+  // 伏笔台账回滚（v0.5.7.3）：这一场标成「了结了」的那几条，删了就得放回去。
+  //
+  // ⚠️ 不回滚是不可逆的静默丢失：台账里的 done 不删，那条从此不再进 prevCtx，
+  //    而 restoreScene 只改 status，救不回来。症状和「她忘了」一模一样。
+  //    更要紧的是触发它的是用户自己的正常操作 ——「这场写坏了，删掉重来」。
+  //
+  // 用精确比对（indexOf）不用 threadMatch：closedThreads 存的就是台账里那条的原字符串
+  //（mergeThreads 命中后把 hit.t 写回），两边是同一份字符串，不存在判据不一致。
+  try {
+    const closed = (s.log && Array.isArray(s.log.closedThreads)) ? s.log.closedThreads : [];
+    if (closed.length) {
+      const key = 'threads:' + (s.charId || '');
+      const list = (await kv.get(key, [])) || [];
+      let n = 0;
+      for (const x of list) {
+        // doneBy 必须对上：同一角色可能有两场都想「了结」同一条，
+        // 只按文本滚会把别人标的也一起退回来。
+        if (x && x.done === true
+          && String(x.doneBy || '') === String(s.id || '')
+          && closed.indexOf(x.t) >= 0) {
+          x.done = false;
+          delete x.doneBy;
+          delete x.doneAt;
+          n++;
+        }
+      }
+      if (n) await kv.set(key, list);
+    }
+  } catch { /* 台账回滚失败不该挡住删除 */ }
   s.status = 'trashed';
   s.trashedAt = Date.now();
   s.updatedAt = Date.now();
@@ -19382,7 +19617,13 @@ const BACKUP_KV_PREFIXES = [
   //   hard:<charId> —— 用户手写的一句死命令，和剧情卡同类（写起来最费时的那种）。
   //     但它【不进清空聊天表】，理由同 arc: —— 那是他手写的东西，清聊天不该顺手删。
   'psyche:',
-  'hard:'
+  'hard:',
+  // v0.5.7.3 补（数据静默丢失级）：伏笔台账 'threads:<charId>'。
+  //   漏了它的后果很贼：正文（payload.scenes = scenes.all()）照常备份走，
+  //   台账没走 —— 换台机器导回来，每一场的场记还在，但「还悬着什么」一条不剩。
+  //   用户看到的是「续写突然不记得前面埋的线了」，而备份界面上写着「完全还原」。
+  //   逐段 remap 天然支持：两段键 <prefix>:<charId>，导入时第二段会被换成新 id。
+  'threads:'
 ];
 
 // ⚠️ 有几个键【没有冒号】，前缀表装不下它们（v0.4.0）。
@@ -19396,7 +19637,9 @@ const BACKUP_EXACT_KEYS = ['stRegex'];
  *  剧情卡不一样 —— 它是【这段剧情】本身，清聊天不该顺手删掉用户手写的东西。 */
 // ⚠️ v0.5.3.7：'hard:' 也要排掉。绝对指令是用户一个字一个字敲的，
 //    不是这段对话产生的记账 —— 清空聊天（或换个分支重来）不该把他的指令一起删了。
-const WIPE_CHAT_PREFIXES = BACKUP_KV_PREFIXES.filter(p => p !== 'arc:' && p !== 'hard:');
+// ⚠️ v0.5.7.3：'threads:' 也要排掉。伏笔台账是【整部作品】的线，不是这段对话的记账 ——
+//    而且它跨场累积，清掉一段聊天把它一起删了，等于把前几场的伏笔全作废。
+const WIPE_CHAT_PREFIXES = BACKUP_KV_PREFIXES.filter(p => p !== 'arc:' && p !== 'hard:' && p !== 'threads:');
 // v0.5.3.2（清单 §3.5）：输入草稿随「清空聊天」一起清 —— 草稿就是这一轮没说出口的话，
 // 对话都清空了，它再冒出来只会让人莫名其妙。
 // ⚠️ 它【不进】备份表（BACKUP_KV_PREFIXES）：备份该还原「记得什么」，
@@ -21636,7 +21879,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.7.2';
+const WEB_VERSION_FALLBACK = '0.5.7.3';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

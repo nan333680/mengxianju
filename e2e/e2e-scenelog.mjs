@@ -50,7 +50,9 @@ await page.evaluateOnNewDocument((LOGJSON_TEXT, PROSE_TEXT) => {
       const all = JSON.stringify(msgs);
       if (body.stream === false) {
         window.__fake.once.push({ kind: 'log', sys });
-        return new Response(JSON.stringify({ choices: [{ message: { content: LOGJSON_TEXT } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        // v0.5.7.3：允许按场次换一份场记（跨场接力那段要用一份带 closedThreads 的）
+        const content = window.__fake.logJson || LOGJSON_TEXT;
+        return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       const item = window.__fake.queue.shift() || { text: PROSE_TEXT, finish: 'stop' };
       window.__fake.chat.push({ sys, all, text: item.text });
@@ -118,6 +120,59 @@ const dbChar = (id) => page.evaluate(async (cid) => {
 const fakeReset = () => page.evaluate(() => { window.__fake.queue = []; window.__fake.chat = []; window.__fake.once = []; });
 const visible = (sel) => page.evaluate(s => { const e = document.querySelector(s); if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).display !== 'none'; }, sel);
 const click = async (sel) => { await page.waitForSelector(sel, { timeout: 15000 }); await page.evaluate(s => { const e = document.querySelector(s); if (e) e.click(); }, sel); };
+const clickSoft = async (sel) => { await page.evaluate(s => { const e = document.querySelector(s); if (e) e.click(); }, sel); };
+
+// ---- v0.5.7.3：跨场接力那一套要用的几个探针 ----
+const clearScenes = () => page.evaluate(async () => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  await new Promise(r => { const tx = db.transaction('scenes','readwrite'); tx.objectStore('scenes').clear(); tx.oncomplete = r; });
+  db.close();
+});
+const clearKvKeys = (keys) => page.evaluate(async (ks) => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  await new Promise(r => { const tx = db.transaction('kv','readwrite'); for (const k of ks) tx.objectStore('kv').delete(k); tx.oncomplete = r; });
+  db.close();
+}, keys);
+const dbKv = (k) => page.evaluate(async (kk) => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const rec = await new Promise(r => { const tx = db.transaction('kv','readonly'); const q = tx.objectStore('kv').get(kk); q.onsuccess = () => r(q.result || null); });
+  db.close();
+  return rec ? rec.v : null;
+}, k);
+const waitDone = async (ms = 60000) => {
+  try {
+    await page.waitForFunction(async () => {
+      const o = indexedDB.open('ai-companion');
+      const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+      const all = await new Promise(r => { const tx = db.transaction('scenes','readonly'); const q = tx.objectStore('scenes').getAll(); q.onsuccess = () => r(q.result || []); });
+      db.close();
+      return all.length > 0 && all.every(x => x.status !== 'generating');
+    }, { timeout: ms });
+    return true;
+  } catch (e) { return false; }
+};
+const backToList = async () => { await clickSoft('#rv-back'); await sleep(500); };
+const openScene = async (charId) => {
+  await click('#btn-settings');
+  await sleep(400);
+  await click('[data-wb-drawer="scene"]');
+  await sleep(500);
+  await page.evaluate((cid) => {
+    const s = document.getElementById('sc-char');
+    if (s) { s.value = cid; s.dispatchEvent(new Event('change', { bubbles: true })); }
+    const p = document.getElementById('sc-place'); if (p) p.value = '出租屋玄关';
+    const tm = document.getElementById('sc-time'); if (tm) tm.value = '夜里';
+  }, charId);
+  await sleep(300);
+  await click('#sc-go');
+  await page.waitForFunction(() => {
+    const v = document.getElementById('view-read');
+    return !!v && v.classList.contains('active');
+  }, { timeout: 40000 }).catch(() => {});
+};
 
 await seed({
   chars: [baseChar('sl1', '阿绫', { myProfile: '我在修车铺，手上有油。' })],
@@ -277,8 +332,151 @@ t('默认配置（11000）满卡不丢', await page.evaluate(async () => {
   return r.dropped.length === 0 && r.chars <= 11000;
 }), '');
 
-// ---------- 7. 无未捕获报错 ----------
-console.log('=== 7. 无未捕获报错 ----------');
+// ---------- 7. 跨场接力 + 伏笔台账（v0.5.7.3）----------
+console.log('=== 7. 跨场接力 + 伏笔台账 ===');
+await clearScenes();
+await clearKvKeys(['threads:sl1']);
+await fakeReset();
+await page.evaluate(() => { window.__fake.logJson = null; });
+await sleep(300);
+
+// 第 1 场：起一条悬案
+await openScene('sl1');
+await waitDone();
+const scsA = await dbScenes();
+t('第 1 场演完了', scsA.length === 1 && scsA[0].status === 'done', JSON.stringify(scsA.map(s => s.status)));
+const sc1 = scsA[0] || {};
+let led = await dbKv('threads:sl1');
+t('伏笔台账落库了', Array.isArray(led) && led.length >= 1, JSON.stringify(led));
+t('第 1 场的悬案进了台账（未解决）',
+  (Array.isArray(led) ? led : []).some(x => x && x.done === false && String(x.t).indexOf('盒子里是什么') >= 0),
+  JSON.stringify(led));
+t('台账记下了它是哪一场起的',
+  (Array.isArray(led) ? led : []).some(x => x && String(x.fromId) === String(sc1.id)),
+  JSON.stringify((Array.isArray(led) ? led : []).map(x => x.fromId)));
+
+// 第 2 场：换一份场记 —— 把 A1 标成解决了，另起一条新悬案
+console.log('=== 7b. 第 2 场：读得到第 1 场 ===');
+const LOGJSON2 = '{"events":["她把盒子打开"],"cast":["阿绫"],"change":"盒子被打开了，里面是空的","openThreads":["那盏灯是谁关的"],"closedThreads":["A1"],"keyLines":["里面什么都没有。"],"newSettings":[]}';
+await backToList();
+await fakeReset();
+await page.evaluate((s) => { window.__fake.logJson = s; }, LOGJSON2);
+await openScene('sl1');
+await waitDone();
+const scsB = await dbScenes();
+const sc2 = scsB.find(s => s && String(s.id) !== String(sc1.id)) || {};
+t('第 2 场开出来了', !!sc2.id, 'len=' + scsB.length);
+t('第 2 场拍下了跨场前情', !!String(sc2.prevCtx || ''), String(sc2.prevCtx || '').slice(0, 80));
+t('前情里有「前面几场发生过什么」',
+  String(sc2.prevCtx || '').indexOf('前面几场发生过什么') >= 0, String(sc2.prevCtx || '').slice(0, 240));
+t('前情里有台账那一段',
+  String(sc2.prevCtx || '').indexOf('整部戏还悬着的事') >= 0, String(sc2.prevCtx || '').slice(0, 240));
+t('前情里带着第 1 场的悬案原话',
+  String(sc2.prevCtx || '').indexOf('盒子里是什么') >= 0, String(sc2.prevCtx || '').slice(0, 400));
+// 拍了快照不算数 —— 得真的进了第 1 拍的提示词
+const sys2 = await page.evaluate(() => { const c = window.__fake.chat[0]; return c ? String(c.sys) : ''; });
+t('跨场前情真的进了第 1 拍的提示词',
+  sys2.indexOf('【前面几场发生过什么（同一部戏，接着往下写）】') >= 0, sys2.slice(-400));
+t('提示词里也带着第 1 场的悬案', sys2.indexOf('盒子里是什么') >= 0, '');
+
+// 台账的回收侧
+led = await dbKv('threads:sl1');
+t('第 2 场把那条标成了已解决',
+  (Array.isArray(led) ? led : []).some(x => x && x.done === true && String(x.t).indexOf('盒子里是什么') >= 0),
+  JSON.stringify(led));
+t('台账记下了是哪一场解决的',
+  (Array.isArray(led) ? led : []).some(x => x && x.done === true && String(x.doneBy) === String(sc2.id)),
+  JSON.stringify((Array.isArray(led) ? led : []).map(x => ({ t: x.t, done: x.done, by: x.doneBy }))));
+t('第 2 场新起的悬案也进了台账（未解决）',
+  (Array.isArray(led) ? led : []).some(x => x && x.done === false && String(x.t).indexOf('那盏灯是谁关的') >= 0),
+  JSON.stringify(led));
+
+// 台账必须有出口：done 不可逆，不显示的话一次误判的症状和「她忘了」一模一样
+const sc2db = (await dbScenes()).find(s => s && String(s.id) === String(sc2.id)) || {};
+t('closedThreads 落库的是原话不是编号 A1',
+  (Array.isArray(sc2db.log && sc2db.log.closedThreads) ? sc2db.log.closedThreads : [])
+    .some(x => String(x).indexOf('盒子里是什么') >= 0 && String(x).indexOf('A1') !== 0),
+  JSON.stringify(sc2db.log && sc2db.log.closedThreads));
+const endTxt = await page.evaluate(() => { const e = document.querySelector('#rv-end'); return e ? e.textContent : ''; });
+t('结束页写明了这一场了结了哪条',
+  endTxt.indexOf('这一场了结了') >= 0 && endTxt.indexOf('盒子里是什么') >= 0, endTxt.slice(0, 400));
+
+// 第 3 场：已解决的不能再出现
+console.log('=== 7c. 第 3 场：已解决的不再出现 ===');
+await backToList();
+await fakeReset();
+// 第 3 场的场记：openThreads 空、closedThreads 全是【台账里没有】的编造条目。
+// 这正是「模型不看清单、自己编一条看起来被解决了」的形态 —— 编号化要防的就是它。
+const LOGJSON3 = '{"events":["她什么也没做"],"cast":["阿绫"],"change":"没变化","openThreads":[],'
+  + '"closedThreads":["她其实早就原谅他了"]}';
+await page.evaluate((s) => { window.__fake.logJson = s; }, LOGJSON3);
+await openScene('sl1');
+await waitDone();
+const scsC = await dbScenes();
+const sc3 = scsC.find(s => s && String(s.id) !== String(sc1.id) && String(s.id) !== String(sc2.id)) || {};
+t('第 3 场开出来了', !!sc3.id, 'len=' + scsC.length);
+t('已经解决的那条不再出现在前情里',
+  String(sc3.prevCtx || '').indexOf('盒子里是什么') < 0, String(sc3.prevCtx || '').slice(0, 400));
+t('还悬着的那条仍在',
+  String(sc3.prevCtx || '').indexOf('那盏灯是谁关的') >= 0, String(sc3.prevCtx || '').slice(0, 400));
+t('前情里带上了第 2 场的变化',
+  String(sc3.prevCtx || '').indexOf('盒子被打开了') >= 0, String(sc3.prevCtx || '').slice(0, 400));
+
+// 「一条都没命中」那个分支：模型全在编的时候，closedThreads 必须被清成空数组。
+// 两条要一起看 —— 第一条防「落库没清」，第二条防「清是清了但渲染那层从别处读到了」。
+t('全是编的条目时，closedThreads 落库成空数组',
+  Array.isArray(sc3.log && sc3.log.closedThreads) && sc3.log.closedThreads.length === 0,
+  JSON.stringify(sc3.log && sc3.log.closedThreads));
+const endHtml3 = await page.evaluate(() => { const e = document.querySelector('#rv-end'); return e ? e.innerHTML : ''; });
+t('结束页不会出现一条查无此事的「了结了」',
+  !/这一场了结了/.test(endHtml3), endHtml3.slice(0, 260));
+
+// ---------- 7c2. 删掉那一场，它了结的伏笔退回来 ----------
+// 触发路径很常见：这场写坏了 → 进回收站 → 台账里 done 不动 → 那条永久消失。
+// 而 restoreScene 只改 status，救不回来。
+console.log('=== 7c2. 删场回滚台账 ===');
+led = await dbKv('threads:sl1');
+t('删之前那条是「已解决」',
+  (Array.isArray(led) ? led : []).some(x => x && x.done === true && String(x.t).indexOf('盒子里是什么') >= 0),
+  JSON.stringify(led));
+await backToList();
+const gotItem = await page.evaluate(() => {
+  const items = Array.from(document.querySelectorAll('#shelf-list .shelf-item'));
+  const it = items.find(x => String(x.textContent).indexOf('第 2 夜') >= 0);
+  if (it) { it.click(); return true; }
+  return false;
+});
+t('书架上找得到第 2 场', gotItem, '');
+await sleep(900);
+await click('#rv-more');
+await sleep(400);
+await page.evaluate(() => {
+  const b = Array.from(document.querySelectorAll('#rv-menu button')).find(x => String(x.textContent).indexOf('删除这一场') >= 0);
+  if (b) b.click();
+});
+await sleep(500);
+await click('#modal-ok').catch(() => {});
+await sleep(900);
+led = await dbKv('threads:sl1');
+t('删掉那一场之后，它了结的伏笔退回来了',
+  (Array.isArray(led) ? led : []).some(x => x && x.done === false && String(x.t).indexOf('盒子里是什么') >= 0),
+  JSON.stringify(led));
+t('回滚时把 doneBy / doneAt 一起清掉了',
+  (Array.isArray(led) ? led : []).every(x => !(x && x.done === false && (x.doneBy || x.doneAt))),
+  JSON.stringify((Array.isArray(led) ? led : []).map(x => ({ t: x.t, done: x.done, by: x.doneBy }))));
+
+// ---------- 7d. 台账进备份 / 不进清空聊天 ----------
+// 纯源码断言：这两条是「加一行就够、删一行就静默丢数据」的那种，跑不起全流程，
+// 但不钉住的话下次动备份表很容易把它漏掉（psyche: 当初就是这么漏的）。
+console.log('=== 7d. 台账进备份 ===');
+const srcApp = fs.readFileSync(R + '/www/js/app.js', 'utf8');
+t('备份表包含伏笔台账（漏了就是「正文备份走、伏笔全丢」）',
+  /BACKUP_KV_PREFIXES\s*=\s*\[[\s\S]*?'threads:'[\s\S]*?\]/.test(srcApp), '');
+t('清空聊天不连带清掉伏笔台账',
+  /WIPE_CHAT_PREFIXES\s*=\s*BACKUP_KV_PREFIXES\.filter\(p =>[^;]*'threads:'/.test(srcApp), '');
+
+// ---------- 8. 无未捕获报错 ----------
+console.log('=== 8. 无未捕获报错 ----------');
 t('没有 pageerror', errs.length === 0, JSON.stringify(errs.slice(0, 3)));
 
 console.log(String.fromCharCode(10) + '通过 ' + pass + ' / 失败 ' + fail);

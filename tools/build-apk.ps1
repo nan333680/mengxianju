@@ -157,23 +157,24 @@ if (Test-Path $changelog) {
   }
 }
 $assetName = "mengxianju-v" + $vn + ".apk"
-$verObj = [ordered]@{
-  versionCode = [int]$vc
-  versionName = $vn
-  date        = (Get-Date).ToString('yyyy-MM-dd')
-  notes       = $notes
-  apk         = [ordered]@{
-    size    = [int]$f.Length
-    sha256  = $sha
-    url     = ("https://github.com/nan333680/mengxianju/releases/download/v" + $vn + "/" + $assetName)
-    mirrors = @()
-  }
-}
-$verPath = Join-Path $root "version.json"
-$verJson = $verObj | ConvertTo-Json -Depth 5
-[System.IO.File]::WriteAllText($verPath, $verJson, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host ("   version.json: " + $verPath + "  (v" + $vn + " / " + $vc + ")")
-if ($notes) { Write-Host ("   更新说明     : " + $notes) } else { Write-Host "   ⚠️ CHANGELOG 里没找到这一版的标题行，version.json 的 notes 是空的" -ForegroundColor Yellow }
+
+# ⚠️ 这里【不再写】仓库根的 version.json（0.5.7.2 改）。
+#
+# 原来这一段会把 version.json 直接改成本次构建的版本，连 apk.url 都按
+# ".../releases/download/v<版本>/<资产名>" 拼好。可是构建的时候 Release 还没建、
+# APK 还没传 —— 这份 JSON 一旦被 git add 进去推上去，所有在用的人一打开就会
+# 检测到新版本，点进去 404。而 url 是拼出来的字符串，本地看完全正常，
+# 谁也不会怀疑它坏在那里。
+#
+# 原来靠「记得 git checkout -- version.json」兜着。那等于把这条线上更新链
+# 交给记性 —— 而 `git add -A` 是这个仓库里最常用的命令之一，一次手滑就中。
+# 现在构建只管打包；发版走 tools\publish-version.ps1，两道命令物理上分开。
+Write-Host ""
+Write-Host "   ⚠️ 仓库根的 version.json 没有动（构建 ≠ 发版）。" -ForegroundColor Yellow
+Write-Host "      发布时（Release 已建、APK 已传、curl 验到 200 之后）跑：" -ForegroundColor Yellow
+Write-Host ("        powershell -ExecutionPolicy Bypass -File tools\publish-version.ps1 -Version " + $vn) -ForegroundColor Yellow
+Write-Host "   本次构建的说明（会进 version.json 的 notes）："
+if ($notes) { Write-Host ("     " + $notes) } else { Write-Host "   ⚠️ CHANGELOG 里没找到这一版的标题行，notes 会是空的" -ForegroundColor Yellow }
 
 # 签名指纹：覆盖安装能不能保住数据，就看它和上一版是否一致
 $signer = Join-Path $env:ANDROID_HOME "build-tools\36.0.0\apksigner.bat"

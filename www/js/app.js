@@ -1703,7 +1703,7 @@ function renderSwatches() {
     b.type = 'button';
     b.className = 'swatch' + (c.k === cur ? ' on' : '');
     b.dataset.k = c.k;
-    b.title = c.name;
+    b.title = c.en;   // i18n 那条「title 里不能有中文」的断言会扫到运行时节点
     b.style.background = v.pri;
     b.onclick = async () => {
       await saveSettings({ themeColor: c.k });

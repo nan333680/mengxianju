@@ -13,25 +13,27 @@
  * lDark / lLight 只在个别色相上覆写 —— 亮色相（黄、黄绿）在白底上会糊，
  * 紫这套的默认亮度会把按钮推到「白字刚好不达标」的边上（见下）。
  */
+// en 只给 title 用：色块是运行时要建的节点，i18n 那条「title 里不能有中文」的断言扫得到，
+// 而它们不是 index.html 的静态节点，挂不上 data-i18n-en-title。
 export const THEME_COLORS = [
-  { k: 'violet', name: '紫',   h: 255, s: 88 },
-  { k: 'rose',   name: '玫红', h: 340, s: 80 },
-  { k: 'pink',   name: '粉',   h: 325, s: 75 },
-  { k: 'coral',  name: '珊瑚', h: 10,  s: 85 },
-  { k: 'red',    name: '红',   h: 355, s: 78 },
-  { k: 'orange', name: '橙',   h: 22,  s: 90 },
-  { k: 'amber',  name: '琥珀', h: 35,  s: 90 },
-  { k: 'yellow', name: '黄',   h: 45,  s: 92, lDark: 56, lLight: 40 },
-  { k: 'lime',   name: '黄绿', h: 95,  s: 58, lDark: 58, lLight: 38 },
-  { k: 'green',  name: '绿',   h: 145, s: 62 },
-  { k: 'teal',   name: '青绿', h: 170, s: 68 },
-  { k: 'cyan',   name: '青',   h: 185, s: 80 },
-  { k: 'sky',    name: '天蓝', h: 200, s: 85 },
-  { k: 'blue',   name: '蓝',   h: 220, s: 85 },
-  { k: 'indigo', name: '靛',   h: 245, s: 65 },
-  { k: 'mauve',  name: '藕',   h: 300, s: 45 },
-  { k: 'slate',  name: '灰蓝', h: 215, s: 32 },
-  { k: 'stone',  name: '石板', h: 30,  s: 12 }
+  { k: 'violet', name: '紫',   en: 'Violet', h: 255, s: 88 },
+  { k: 'rose',   name: '玫红', en: 'Rose',   h: 340, s: 80 },
+  { k: 'pink',   name: '粉',   en: 'Pink',   h: 325, s: 75 },
+  { k: 'coral',  name: '珊瑚', en: 'Coral',  h: 10,  s: 85 },
+  { k: 'red',    name: '红',   en: 'Red',    h: 355, s: 78 },
+  { k: 'orange', name: '橙',   en: 'Orange', h: 22,  s: 90 },
+  { k: 'amber',  name: '琥珀', en: 'Amber',  h: 35,  s: 90 },
+  { k: 'yellow', name: '黄',   en: 'Yellow', h: 45,  s: 92, lDark: 56, lLight: 40 },
+  { k: 'lime',   name: '黄绿', en: 'Lime',   h: 95,  s: 58, lDark: 58, lLight: 38 },
+  { k: 'green',  name: '绿',   en: 'Green',  h: 145, s: 62 },
+  { k: 'teal',   name: '青绿', en: 'Teal',   h: 170, s: 68 },
+  { k: 'cyan',   name: '青',   en: 'Cyan',   h: 185, s: 80 },
+  { k: 'sky',    name: '天蓝', en: 'Sky',    h: 200, s: 85 },
+  { k: 'blue',   name: '蓝',   en: 'Blue',   h: 220, s: 85 },
+  { k: 'indigo', name: '靛',   en: 'Indigo', h: 245, s: 65 },
+  { k: 'mauve',  name: '藕',   en: 'Mauve',  h: 300, s: 45 },
+  { k: 'slate',  name: '灰蓝', en: 'Slate',  h: 215, s: 32 },
+  { k: 'stone',  name: '石板', en: 'Stone',  h: 30,  s: 12 }
 ];
 
 export const L_DARK = 66;

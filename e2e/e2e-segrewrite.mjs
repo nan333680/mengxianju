@@ -121,8 +121,14 @@ const menuOf = async (which) => page.evaluate((which) => {
   const last = els[els.length - 1];
   last.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
   return new Promise(res => setTimeout(() => {
-    const items = [...document.querySelectorAll('.msg-menu button')].map(b => ({ k: b.dataset.k, t: b.textContent }));
-    res(items);
+    // v0.5.7.4：「从这段起重写」进了「更多…」二级（原地替换，同一个 .msg-menu）。
+    // 一级找不到就先展开，否则拿到的永远是一级那几项。
+    const more = document.querySelector('.msg-menu [data-more]');
+    if (more && !document.querySelector('.msg-menu [data-k="fromseg"]')) more.click();
+    setTimeout(() => {
+      const items = [...document.querySelectorAll('.msg-menu button')].map(b => ({ k: b.dataset.k, t: b.textContent }));
+      res(items);
+    }, 260);
   }, 400));
 }, which);
 
@@ -149,6 +155,9 @@ await page.evaluate(() => {
   els[els.length - 1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
 });
 await sleep(400);
+// v0.5.7.4：二级要手动展开一次（上面那次派发是重新打开的菜单，不是 menuOf 那次）
+await page.evaluate(() => { const m = document.querySelector('.msg-menu [data-more]'); if (m) m.click(); });
+await sleep(260);
 await page.evaluate(() => {
   const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.dataset.k === 'fromseg');
   if (b) b.click();

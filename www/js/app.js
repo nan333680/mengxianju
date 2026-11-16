@@ -2645,6 +2645,14 @@ let _keepScroll = false;        // 这一次重绘结束【不要】滚到底（
 let _chainTimer = 0;
 let _chainStopped = false;   // 这条串联链被显式叫停：下一次他主动开口才解除
 
+// 上一次真正【发出去】的那轮挂了哪些附加功能（0.5.7.2）。
+// 为什么必须单独记一份：pendingCmds 在落库那段会被清空（"发出去就清空"），
+// 而自动连写的第 2 段起走的是 cont 分支，那时读到的 pendingCmds 已经是空数组 ——
+// 于是 🧭 剧情方向只有第一段生效，后面几段像完全没收到（用户 2026-11 报的）。
+// ⚠️ 不存 search / direct，理由见赋值处。
+let _lastSentCmds = [];
+let _lastSentCmdsChar = '';
+
 /**
  * 掐掉已经排在队里的下一段。
  * @param {string} [why] 真拦下了一段才用这句话提示；队里没东西就什么都不说
@@ -2891,6 +2899,10 @@ async function renderMessages(preloaded) {
 // 多个菜单完全重叠，点「删除」只关掉最上面那个，看上去就是「点了不消失」。
 // 对策：单例 + 请求序号，让并发调用只保留最后一次；任何关闭动作都把残留清干净。
 let _pressTimer = null;
+// 长按起点（0.5.7.2）：touchmove 只有【真的在滚动】时才该取消长按。
+// 原来是无条件 clearTimeout —— 手指压在屏幕上抖一两个像素就把定时器清了，
+// 而 WebView 自己的长按选字照常生效，结果就是"文字选上了、菜单没出来"。
+let _pressStart = null;
 let _msgMenu = null;    // 当前唯一菜单
 
 let _menuSeq = 0;       // 关闭或新开时 +1，用来作废还在 await 中的旧请求
@@ -2922,12 +2934,21 @@ function attachMsgActions() {
   box.querySelectorAll('.msg').forEach(el => {
     if (el.dataset.bound) return;
     el.dataset.bound = '1';
-    el.addEventListener('touchstart', () => {
+    el.addEventListener('touchstart', (e) => {
       clearTimeout(_pressTimer);   // 前一根手指还没松开就按了另一条，别把定时器丢掉
+      const t = e.touches && e.touches[0];
+      _pressStart = t ? { x: t.clientX, y: t.clientY } : null;
       _pressTimer = setTimeout(() => showMsgMenu(el), 550);
     }, { passive: true });
-    el.addEventListener('touchend', () => clearTimeout(_pressTimer));
-    el.addEventListener('touchmove', () => clearTimeout(_pressTimer));
+    el.addEventListener('touchend', () => { _pressStart = null; clearTimeout(_pressTimer); });
+    // 位移超过 10px（100 平方）才算滑动（0.5.7.2）。原来的无条件取消把
+    // 手指的轻微抖动也当成滑动，长按经常"按得住、弹不出"。
+    el.addEventListener('touchmove', (e) => {
+      const t = e.touches && e.touches[0];
+      if (!t || !_pressStart) return;
+      const dx = t.clientX - _pressStart.x, dy = t.clientY - _pressStart.y;
+      if (dx * dx + dy * dy > 100) { clearTimeout(_pressTimer); _pressStart = null; }
+    });
     el.addEventListener('contextmenu', (e) => { e.preventDefault(); showMsgMenu(el); });
   });
   // 版本切换（v0.4.0）：气泡里那两个 ‹ ›
@@ -3230,6 +3251,11 @@ async function showMsgMenu(el) {
   // v0.5.6.1：判据看【当前那一版】。老数据切到没有记录的那一版时入口仍然保留 ——
   // 点开说「这一版没有记录」，比让入口凭空消失好懂。
   if (!isMe && (turnInjOf(m) || m.inj)) acts.push({ k: 'inj', t: '这一轮用了什么' });
+  // 她心里的账（0.5.7.2）：beliefs / secrets 从来【没进过】inj 快照 ——
+  // 「这一轮用了什么」里根本看不到它们，而 psychePrompt 每轮都在喂这两段。
+  // 于是「她认定了一件我没说过的事，之后每轮都绕着它走」就完全无解：
+  // 用户连这条东西【存在】都看不见，更别提删掉。这一项是唯一的口子。
+  if (!isMe) acts.push({ k: 'psyledger', t: '她心里的账' });
   if (isArchived) {
     // 归档的消息【不给】编辑重发 / 从这里重聊：那两条的语义是「删掉这条之后的一切」，
     // 而归档不在当前时间线上，算下去会删错一大片。只给安全的两项。
@@ -3379,6 +3405,7 @@ async function showMsgMenu(el) {
     if (k === 'search') { openSearch(''); return; }
     if (k === 'scene') { toast('这一轮的场景：' + m.scene); return; }
     if (k === 'inj') { await showInj(turnInjOf(m)); return; }
+    if (k === 'psyledger') { await showPsycheLedger(m); return; }
     if (k === 'branch') { await switchBranch(m); return; }
     // 她还在生成时不要做这三件事：它们都是「先删消息再调 send()」，
     // 而 send() 在 busy 时会直接返回 —— 结果消息删了、也没重新生成。
@@ -7722,8 +7749,20 @@ let namedInText = false;
     //    这两件事必须一起不动 —— 下面的 `pastRaw = history.filter(m => m.id !== um.id)`
     //    在 um 为 undefined 时天然放行全部历史（正是续写要的），
     //    而失败回滚那段看的是 umSaved，false 就不会去删一条不存在的消息。
-    if (noUser) {
-      // 这一轮没有新消息，父节点就是当前活动叶子本身
+    if (noUser || cont) {
+      // 这一轮没有新消息（分支重来 / 续写），父节点就是当前活动叶子本身。
+      //
+      // ⚠️ cont 必须在这里（0.5.7.2 修，P0）。续写原来不进这个分支，_parent0 保持
+      //    函数顶部的初始值 ''，落库时 am.parentId 被写成空串 = 这条消息挂到【根】上。
+      //    而 branch.js 的 pathTo 走到空串就停，于是活动路径从叶子回溯一步就断。
+      //    后果比"消息位置不对"重得多，有三层：
+      //      · 第 3 段读写历史只剩 1 条（buildHistory 走 activePath）—— 它失忆，
+      //        只能看见第 2 段那一句，然后自说自话；
+      //      · 长按【他自己】的消息时 curMsgs 拿不到它 → showMsgMenu 里
+      //        「if (!m) return」静默返回，菜单不弹；可 WebView 自己的长按选字照常
+      //        生效 —— 用户看到的是"文字选上了、菜单没出来"，像是菜单坏了；
+      //      · 退出重进时 renderMessages 会跑 seedParents，那条空串被当成"假根"
+      //        接到时间上前一条 —— 于是"重进就正常"。这条不是玄学，是修复时机问题。
       try {
         _parent0 = pickLeaf(await msgs.list(myCharId), await kv.get(leafKey(myCharId), '')) || '';
       } catch { _parent0 = ''; }
@@ -7753,6 +7792,16 @@ let namedInText = false;
       um = { id: uid(), charId: myCharId, role: 'user', content: visibleText, images, imageNotes,
              ...(_tags.length ? { tags: _tags } : {}), ...sceneSnap(myChar),
              story: storyStamp(), parentId: _parent0, ts: Date.now() };
+      // 自动连写要用的「这一轮到底挂了什么」（0.5.7.2）。必须在【清空前】存 ——
+      // 下面一行清空之后，续写那几段再去读 pendingCmds 只能读到空数组。
+      // ⚠️ 滤掉两类：
+      //    · search —— 搜一次就够，重搜纯烧 token，还可能失败；
+      //    · direct —— 它有自己的余温机制（carryOver / _prevCarry，见 buildTurnNote
+      //      的 carry），这里再回退一份会和它抢语义，同一句要求被算成两个来源。
+      _lastSentCmds = _cmds
+        .filter(c => c.k !== 'search' && c.k !== 'direct')
+        .map(c => ({ k: c.k, arg: c.arg }));
+      _lastSentCmdsChar = myCharId;
       // 发出去就清空挂着的功能（v0.4.4）—— 下一轮不该继承上一轮的命令
       pendingCmds = [];
       renderCmdSlots();
@@ -7789,7 +7838,14 @@ let namedInText = false;
       //      下一轮按发送时照样带上。也正因为不清空，失败回滚那段不用管它。
       //   ⚠️ 不取手打的 /搜 /改：续写不发送输入框里的正文，那里面的命令不属于这一轮。
       if (cont) {
-        _cmds = mergeCmds(pendingCmds, []);
+        // 自动连写第 2 段起：pendingCmds 已被上一段清空，回退到「上次真正发出去的那轮」
+        // 挂了什么（0.5.7.2）。
+        // ⚠️ 只给 autoRun > 0（即自动串联排下来的那几段）用回退。
+        //    手动点 ⟳ 要读【用户当下】挂的槽位 —— 他刚把方向 ✕ 掉，
+        //    被回退又带回来就成了"删不掉"，那是比丢方向更烦人的病。
+        // ⚠️ 回退还要比对角色：A 身上挂的方向不该跟着跑到 B 的消息里。
+        const _fallback = (autoRun > 0 && _lastSentCmdsChar === myCharId) ? _lastSentCmds : [];
+        _cmds = mergeCmds(pendingCmds.length ? pendingCmds : _fallback, []);
         const _sc0 = _cmds.find(c => c.k === 'search');
         _cmd0 = _sc0 ? { query: _sc0.arg || '' } : null;
         // 「本轮更改」的余温：续写是同一段戏的延续。这一轮没新提要求时，
@@ -11907,6 +11963,96 @@ async function showInj(inj) {
   // 每条记忆的「看原话」—— 跳到当时那句话。归档/旁支/已删的找不到就直说，绝不静默。
   $('modal-text').querySelectorAll('.inj-src').forEach(b => {
     b.onclick = () => { const id = b.dataset.src; close(); jumpToMsg(id); };
+  });
+}
+
+/**
+ * 「她心里的账」（0.5.7.2）—— 她长期记着的条目，逐条可删。
+ *
+ * 为什么需要这个面板：「这一轮用了什么」显示的是 turnInj 快照，而 beliefs / secrets
+ * 【从来没有进过那个快照】—— 面板里连一节都找不到。用户遇到「她认定了一件我没说过的
+ * 事，之后每轮都绕着它走」时，在世界书、记忆、聊天原文里都查不到它，界面上也看不见，
+ * 于是完全无解。而 psychePrompt 每轮都把这两段当"她确信的事实"喂进提示词，
+ * 判断层再把它们当前提继续推理 —— 自我强化，越绕越紧。
+ *
+ * ⚠️ 删的是 psyche:<charId> 本身，不是那条消息的 inj 快照。
+ *    快照记的是"那一轮当时给了什么"，是历史；改它既不会影响 psyche，
+ *    还等于篡改排查证据。
+ * ⚠️ 匹配必须精确 ===，不能借用 findItem / sameThing：
+ *    那两个是「双向 includes + 4 字下限」，「那杯茶」会把「那杯茶我掺了东西」
+ *    一并命中。读的时候那叫自愈，删的时候那叫误删。
+ * ⚠️ 直接改 raw 里那一个数组再写回，不经过 normalizePsyche ——
+ *    归一化会重排/合并条目，用户点的是哪一条就该只删哪一条。
+ * @param {any} m 长按的那条消息（群聊要靠它的 speakerId 找到对应那个人的 psyche）
+ */
+async function showPsycheLedger(m) {
+  const gid = curCharId;
+  if (!gid) return;
+  // 群聊是每人一份状态（'psyche:<组id>:<成员id>'，见 send() 里那处），别读成主角色的。
+  const key = (isGroup(curChar) && m && m.speakerId)
+    ? ('psyche:' + gid + ':' + m.speakerId)
+    : ('psyche:' + gid);
+  let raw = null;
+  try { raw = await kv.get(key, null); } catch { raw = null; }
+  const p = normalizePsyche(raw);
+
+  // 只列【长期】那几类。情绪/身体/火气是按轮次衰减的，删它们没意义 ——
+  // 真正会「绕不出去」的是这几张只增不减的清单。
+  const GROUPS = [
+    { f: 'beliefs', t: '她认定的事' },
+    { f: 'secrets', t: '她瞒着的事' },
+    { f: 'boundaries', t: '她的底线' },
+    { f: 'grudges', t: '她还没消的气' },
+    { f: 'openLoops', t: '她还没问出口的' }
+  ];
+  const secs = [];
+  for (const g of GROUPS) {
+    const list = Array.isArray(p[g.f]) ? p[g.f].filter(x => x && x.t) : [];
+    if (!list.length) continue;
+    secs.push('<h4 class="inj-h">' + esc(tt(g.t)) + esc(tt('（' + list.length + ' 条）')) + '</h4>'
+      + list.map(x => '<div class="inj-row led-row">'
+        + '<span class="led-t">' + esc(x.t) + '</span>'
+        + '<button class="led-x" data-f="' + esc(g.f) + '" data-t="' + esc(x.t) + '">×</button>'
+        + '</div>').join(''));
+  }
+
+  const box = $('modal');
+  $('modal-title').textContent = tt('她心里的账');
+  $('modal-text').innerHTML = (secs.length
+    ? secs.join('')
+    : '<p class="hint-text">' + esc(tt('她心里现在什么都没记着。')) + '</p>')
+    + '<p class="hint-text">' + esc(tt('删掉一条，她以后就不会再主动想起这件事 —— 只影响她心里的状态，聊天记录不动。')) + '</p>';
+  $('modal-ok').textContent = tt('知道了');
+  $('modal-cancel').classList.add('hidden');
+  box.classList.remove('hidden');
+  const close = () => {
+    box.classList.add('hidden');
+    $('modal-cancel').classList.remove('hidden');
+    $('modal-ok').onclick = null;
+    $('modal-text').querySelectorAll('.led-x').forEach(b => { b.onclick = null; });
+  };
+  $('modal-ok').onclick = close;
+
+  $('modal-text').querySelectorAll('.led-x').forEach(b => {
+    b.onclick = async () => {
+      const field = b.dataset.f;
+      const target = b.dataset.t;
+      // ⚠️ 重新读一次再改（不是用上面那份 raw）：
+      //    面板开着的时候生成可能刚跑完，那份 raw 已经旧了 —— 拿旧的写回去会把
+      //    这一轮新写进去的条目一起冲掉。
+      let cur = null;
+      try { cur = await kv.get(key, null); } catch { cur = null; }
+      if (!cur || typeof cur !== 'object') { close(); return; }
+      if (Array.isArray(cur[field])) {
+        // 兼容老数据：条目可能是裸字符串，也可能是 { t, at, conf, … }。
+        cur[field] = cur[field].filter(x => (typeof x === 'string' ? x : (x && x.t)) !== target);
+      }
+      try { await kv.set(key, cur); } catch (e) { toast('删不掉：' + ((e && e.message) || e)); return; }
+      close();
+      toast(tt('删掉了'));
+      // 重新打开：让用户看见删掉以后的样子，而不是面板突然消失。
+      await showPsycheLedger(m);
+    };
   });
 }
 
@@ -21490,7 +21636,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.7.1';
+const WEB_VERSION_FALLBACK = '0.5.7.2';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

@@ -466,6 +466,14 @@ input[type=checkbox]{
 .inj-row.dim{ opacity:.7; }
 .inj-src{ margin-left:6px; padding:1px 8px; border-radius:8px; font-size:11.5px;
   background:transparent; border:1px solid var(--line); color:var(--pri); cursor:pointer; }
+/* 「她心里的账」（0.5.7.2）：逐条可删。
+   beliefs / secrets 从来不进 inj 快照 —— 这里是用户唯一能【看见】并清掉它们的地方。 */
+.led-row{ display:flex; align-items:flex-start; gap:8px; }
+.led-t{ flex:1; min-width:0; }
+.led-x{ flex:none; width:26px; height:26px; padding:0; line-height:1;
+  border:1px solid var(--line); border-radius:7px; background:transparent;
+  color:var(--fg2); font-size:15px; cursor:pointer; }
+.led-x:active{ color:#e5484d; border-color:#e5484d; }
 .inj-more{ margin-top:10px; }
 .inj-more > summary{ font-size:12.5px; color:var(--fg2); cursor:pointer; padding:4px 0; }
 .inj-more .inj-row{ margin-top:6px; }

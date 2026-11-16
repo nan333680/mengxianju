@@ -374,6 +374,28 @@ const ug = await page.evaluate(async () => {
 for (const x of ug) t(x.n, x.ok, x.ex);
 
 // ---------- B. 端到端 ----------
+console.log('— 6c. beliefs 能被撤回（0.5.7.2）—');
+// 起因：beliefs 原来【纯只增】—— secrets 还有 revealSecret 能删，「认定」却一条都删不掉。
+// 她给自己编一个理由（"那杯茶我掺了东西"）之后，每轮都被当成"她确信的事实"喂进去，
+// 判断层再拿它当前提继续推理 —— 自我强化，绕不出去，而界面上什么都看不见。
+const UNB = await page.evaluate(async () => {
+  const psy = await import('./js/psyche.js');
+  const base = { beliefs: [{ t: '那杯茶我掺了自己的东西', conf: 0.8 }, { t: '他是来找我算账的', conf: 0.5 }] };
+  const after = psy.applyPsycheDelta(psy.normalizePsyche(base), { unbelieve: ['那杯茶我掺了自己的东西'] });
+  return {
+    left: after.beliefs.map(b => b.t),
+    promptAfter: psy.psychePrompt(after, {}),
+    promptBefore: psy.psychePrompt(psy.normalizePsyche(base), {})
+  };
+});
+t('★ 撤回一条认定后它真的不在数组里',
+  !UNB.left.includes('那杯茶我掺了自己的东西'), JSON.stringify(UNB.left));
+t('另一条认定没被连带删掉', UNB.left.includes('他是来找我算账的'), JSON.stringify(UNB.left));
+t('★ 撤回之后那条不再进提示词',
+  !UNB.promptAfter.includes('那杯茶我掺了自己的东西'), UNB.promptAfter);
+t('撤回之前它确实进提示词（对照组）',
+  UNB.promptBefore.includes('那杯茶我掺了自己的东西'), UNB.promptBefore);
+
 console.log('— 7. 端到端：判断与生成共用同一段 system —');
 const baseChar = (id, name, extra) => Object.assign({
   id, name, greeting: '（' + name + '）', persona: '你是' + name + '。说话很短。',
@@ -556,6 +578,110 @@ const gKeys = await page.evaluate(async (gid) => {
 }, G1);
 t('★ 群聊按发言人分键写了 psyche（不是大家共用一份）',
   gKeys.length === 1 && gKeys[0].indexOf('psyche:' + G1 + ':') === 0, JSON.stringify(gKeys));
+
+console.log('— 12b. 「她心里的账」：看得见、删得掉（0.5.7.2）—');
+// 这一节测的是【界面】那半：beliefs / secrets 从来不进 turnInj 快照，
+// 「这一轮用了什么」里一节都找不到，所以菜单里另开一个入口，直接读 psyche 本身。
+// 判据不能只看"点了没报错"，必须看【删前看得见 / 删后 kv 里真的没了 / 另一条没被连累】。
+const PID = 'ledger1';
+await page.evaluate(async (pid) => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const now = Date.now();
+  const c = { id: pid, name: '账本测', greeting: '', persona: '你是账本测。', avatar: null,
+    temperature: 1, maxTokens: 1024, topP: 1, reasoningEffort: 'low', contextRounds: 20,
+    kaomojiFreq: 0, kaomojiStyle: 'jp-soft', emojiFreq: 0, verbosity: 'medium', splitMessages: false,
+    typingDelay: 1, hesitation: true, showTyping: true, longMemory: false, allowEditMine: false,
+    descLevel: 'mid', povLock: false, appearance: '', appearanceOn: true, presetKey: 'blank', createdAt: now };
+  // ⚠️ 两条【故意近似】：用来证明删除走的是精确 ===，不是 findItem 的 includes。
+  //    用「那杯茶」去删会连「那杯茶我掺了自己东西」一起打掉，那是误删。
+  const psy = {
+    beliefs: [{ t: '那杯茶我掺了自己的东西', conf: 0.8 }, { t: '他是来找我算账的', conf: 0.5 }],
+    secrets: [{ t: '那杯茶我掺了自己的东西，没敢说', reveal: '茶' }]
+  };
+  await new Promise(r => { const tx = db.transaction('characters','readwrite'); tx.objectStore('characters').put(c); tx.oncomplete = r; });
+  await new Promise(r => {
+    const tx = db.transaction('kv','readwrite');
+    const s = tx.objectStore('kv');
+    s.put({ k: 'psyche:' + pid, v: psy });
+    s.put({ k: 'greeted:' + pid, v: true });
+    s.put({ k: 'branch:' + pid, v: 'p2' });
+    s.put({ k: 'lastCharId', v: pid });
+    tx.oncomplete = r;
+  });
+  await new Promise(r => {
+    const tx = db.transaction('messages','readwrite');
+    tx.objectStore('messages').put({ id: 'p1', charId: pid, role: 'user', content: '我给你倒了茶', ts: now - 2000, parentId: '' });
+    tx.objectStore('messages').put({ id: 'p2', charId: pid, role: 'assistant', content: '（她低头看着杯子）', ts: now - 1000, parentId: 'p1' });
+    tx.oncomplete = r;
+  });
+  db.close();
+  location.reload();
+}, PID);
+await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => {});
+await sleep(1400);
+
+// 长按（合成 touchstart + 等 600ms）—— 和真机同一条路径
+await page.evaluate(() => {
+  const el = document.querySelector('#messages .msg[data-id="p2"]');
+  if (el) el.dispatchEvent(new Event('touchstart', { bubbles: true }));
+});
+await sleep(900);
+await page.evaluate(() => { const m = document.querySelector('.msg-menu [data-more]'); if (m) m.click(); });
+await sleep(300);
+const ledgerBtn = await page.evaluate(() => !!document.querySelector('.msg-menu [data-k="psyledger"]'));
+t('长按菜单里有「她心里的账」', ledgerBtn === true);
+await page.evaluate(() => { const b = document.querySelector('.msg-menu [data-k="psyledger"]'); if (b) b.click(); });
+await sleep(600);
+const panel = await page.evaluate(() => {
+  const box = document.getElementById('modal');
+  return {
+    open: !box.classList.contains('hidden'),
+    title: document.getElementById('modal-title').textContent,
+    text: document.getElementById('modal-text').textContent,
+    xs: document.querySelectorAll('#modal-text .led-x').length
+  };
+});
+t('面板打开了', panel.open === true);
+t('标题是「她心里的账」', panel.title.includes('她心里的账'), panel.title);
+t('★ 面板里看得见那条「认定」（原来界面上一节都没有）',
+  panel.text.includes('那杯茶我掺了自己的东西'), panel.text.slice(0, 120));
+t('★ 面板里也看得见那条「瞒着的事」',
+  panel.text.includes('那杯茶我掺了自己的东西，没敢说'), panel.text.slice(0, 160));
+t('每条都有删除键', panel.xs >= 3, '按钮数 ' + panel.xs);
+
+// 删掉那一条【短的】belief —— 近似的那条 secret 必须原样留着
+await page.evaluate(() => {
+  const b = [...document.querySelectorAll('#modal-text .led-x')]
+    .find(x => x.dataset.f === 'beliefs' && x.dataset.t === '那杯茶我掺了自己的东西');
+  if (b) b.click();
+});
+await sleep(800);
+const afterDel = await page.evaluate(async (pid) => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const v = await new Promise(r => {
+    const q = db.transaction('kv').objectStore('kv').get('psyche:' + pid);
+    q.onsuccess = () => r(q.result ? q.result.v : null);
+  });
+  db.close();
+  const box = document.getElementById('modal');
+  return {
+    beliefs: ((v && v.beliefs) || []).map(b => b.t),
+    secrets: ((v && v.secrets) || []).map(s => s.t),
+    stillOpen: !box.classList.contains('hidden'),
+    text: document.getElementById('modal-text').textContent
+  };
+}, PID);
+t('★ 删掉的那条从 psyche 里真的没了',
+  !afterDel.beliefs.includes('那杯茶我掺了自己的东西'), JSON.stringify(afterDel.beliefs));
+t('★ 近似的那条 secret 没被连坐（精确 ===，不是 includes）',
+  afterDel.secrets.includes('那杯茶我掺了自己的东西，没敢说'), JSON.stringify(afterDel.secrets));
+t('另一条认定还在', afterDel.beliefs.includes('他是来找我算账的'), JSON.stringify(afterDel.beliefs));
+t('删完面板重新打开，里面还剩另一条',
+  afterDel.stillOpen === true && afterDel.text.includes('他是来找我算账的'), 'open=' + afterDel.stillOpen);
+await page.evaluate(() => document.getElementById('modal-ok').click());
+await sleep(200);
 
 console.log('— 13. 没有 key 时不跑判断（也不挡聊天）—');
 await page.evaluate(async () => {

@@ -519,6 +519,18 @@ export function applyPsycheDelta(raw, delta, now = Date.now()) {
   }
 
   for (const b of strList(delta.belief, CAP.beliefs)) pushCapped(p.beliefs, { ...b, conf: b.conf == null ? 0.5 : b.conf }, CAP.beliefs);
+  // 想通了 / 被推翻了（0.5.7.2）。
+  //
+  // 为什么必须有这个口：beliefs 原来【纯只增】—— secrets 还有 revealSecret 能删，
+  // 而「认定」这两字一旦写进去就永远在 psychePrompt 里，每轮都被当成"她确信的事实"。
+  // 后果不是理论上的：她给自己编一个理由（"那杯茶我掺了自己的东西"），
+  // 之后每次对话都绕着它走，用户在世界书、记忆、聊天原文里都找不到它，也删不掉。
+  // 那句「（你比较确信）」还会让判断层把它当成前提继续推理 —— 自我强化，绕不出去。
+  // 现在判断层自己可以撤回一条（模型偶尔真会想通），用户也能在「她心里的账」里删。
+  for (const b of (Array.isArray(delta.unbelieve) ? delta.unbelieve : [])) {
+    const i = findItem(p.beliefs, b);
+    if (i >= 0) p.beliefs.splice(i, 1);   // 不再认定 ≠ 这事没发生过：secrets / 聊天记录都还在
+  }
 
   // 信息差 / 她自己 / 底线：只增不换。
   // 覆盖式写法（像 withheld 那样每轮换掉）会让"她瞒着什么"每一轮重掷一次骰子，

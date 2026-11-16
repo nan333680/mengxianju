@@ -110,7 +110,11 @@ function levelFor(c, satOff, from, target) {
 export function colorVars(c, isLight) {
   const H = c.h;
   const priLevel = clamp(isLight ? (c.lLight ?? L_LIGHT) : (c.lDark ?? L_DARK), 0, 100);
-  const pri2Level = clamp(priLevel + 10, 0, 88);
+  // pri2 是「比 pri 再亮一档」的辅助强调色。深色底上亮色文字可读，浅色底上不行 ——
+  // 实测浅色主题下 18 套里有 17 套的 pri2 当文字时对比不足（最低 1.59:1，青）。
+  // 所以浅色主题下把它压到「达标里最亮的那个」；紫本来就达标，62 不动，外观零变化。
+  const pri2Raw = clamp(priLevel + 10, 0, 88);
+  const pri2Level = isLight ? levelFor(c, -10, pri2Raw, TARGET_TEXT_LIGHT).L : pri2Raw;
   const priS = clamp(c.s, 0, 100);
   const pri2S = clamp(c.s - 10, 0, 100);
   const bubS = clamp(c.s - 12, 0, 100);

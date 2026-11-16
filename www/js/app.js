@@ -4,6 +4,7 @@ import { buildStablePrompt, buildTurnNote, askHits, decideKaomoji, decideEmoji, 
 import { assembleSceneContext, cleanExample, cutAtSentence } from './scenectx.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
 import { t, tt, applyI18n, watchI18n, setLang, getLang, getActiveLang, refreshLang, LANGS } from './i18n.js';
+import { THEME_COLORS, colorVars } from './theme.js';
 // 角色卡（实验，v1.21.40）：解析与 PNG 打包都在这个独立文件里，
 // 主文件只负责"选文件 / 落库 / 写出去"。
 // ⚠️ 只 import 真用到的（v0.4.0 复查）：卡片现在是 parseCardAuto 一把抓
@@ -180,7 +181,7 @@ const DEFAULTS = {
   // ⚠️ 判空一律写 `S.liveV2 !== false`：老库里没有这个键，undefined 必须当成【开】。
   liveV2: true,
   typingDelay: 1.0, showTyping: true, hesitation: true,
-  longMemory: false, theme: 'dark', fontSize: 15, showUsage: false,
+  longMemory: false, theme: 'dark', themeColor: 'violet', fontSize: 15, showUsage: false,
   // 朗读（v1.21.56）：她说完自动读出来。默认关 —— 不是所有人任何时候都想被念出声。
   ttsOn: false,
   // 默认【关】：你手动加的记忆，整理时原样保留，她不许改也不许删
@@ -1596,7 +1597,22 @@ function applyTheme() {
     t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
   document.documentElement.setAttribute('data-theme', t);
-  document.documentElement.style.setProperty('--fs', S.fontSize + 'px');
+  // 色板（v0.5.7.4）：18 套色相 × 深浅两档，由 theme.js 算成七个变量。
+  // 写 inline style 是为了盖过 :root / [data-theme] 里的静态值 ——
+  // inline 优先级本来就高于任何样式表选择器，跟 setAttribute 谁先谁后无关。
+  // ⚠️ --pri2 也在这里写：它原来是 :root 里写死的紫色，不跟着色板走的话，
+  //    切到黄色主题后所有用 --pri2 的标签文字仍然是紫的。
+  const c = THEME_COLORS.find(x => x.k === S.themeColor) || THEME_COLORS[0];
+  const v = colorVars(c, t === 'light');
+  const st = document.documentElement.style;
+  st.setProperty('--pri', v.pri);
+  st.setProperty('--pri2', v.pri2);
+  st.setProperty('--pri-text', v.priText);
+  st.setProperty('--btn', v.btn);
+  st.setProperty('--btn-fg', v.btnFg);
+  st.setProperty('--bubble-me', v.bubble);
+  st.setProperty('--bubble-fg', v.bubbleFg);
+  st.setProperty('--fs', S.fontSize + 'px');
 }
 
 // ================= 角色 =================

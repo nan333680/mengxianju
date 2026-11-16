@@ -51,7 +51,7 @@ const need = ['app.js', 'api.js', 'db.js', 'persona.js', 'presets.js', 'charcard
   'cliche.js', 'deflavor.js', 'psyche.js', 'director.js',
   // ⚠️ 新模块必须进这个清单（v0.5.6）：少了它 ci-check 不会报，
   //    App 白屏了才知道 —— 这份列表是硬编码的，加文件的人得自己记得补。
-  'memaudit.js', 'mempick.js', 'innerthought.js', 'cadence.js', 'scenectx.js', 'reflect.js'];
+  'memaudit.js', 'mempick.js', 'innerthought.js', 'cadence.js', 'scenectx.js', 'reflect.js', 'theme.js'];
 const miss = need.filter(f => !fs.existsSync(path.join(ROOT, 'www/js', f)));
 if (miss.length) { console.log('   ✗ 少了：' + miss.join(', ')); process.exit(1); }
 console.log('   ✓ ' + need.length + ' 个都在');

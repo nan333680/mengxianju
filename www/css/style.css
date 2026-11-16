@@ -6,6 +6,8 @@
   --fg:#e8eaf2; --fg2:#9aa0b5; --fg3:#6b7288;
   --pri:#8b7cf6; --pri2:#a99bff; --danger:#f2555a;
   --bubble-me:#6d5ce0; --bubble-ai:#232635;
+  /* 色板（v0.5.7.4）：运行时由 applyTheme 写 inline style 覆盖，这里只兜底 */
+  --pri-text:var(--pri); --btn:var(--pri); --btn-fg:#fff; --bubble-fg:#fff;
   --fs:15px;
   /* 系统栏占位。CSS 里能直接用 env()，但 JS 读不到 —— 长按菜单要靠它避让，
      所以在这里落成变量给 JS 取（见 placeMenu）。 */
@@ -121,7 +123,7 @@ body{
   word-break:break-word; white-space:pre-wrap; overflow-wrap:anywhere;
 }
 .msg.me .bub{
-  background:var(--bubble-me); border-color:transparent; color:#fff;
+  background:var(--bubble-me); border-color:transparent; color:var(--bubble-fg);
   border-bottom-right-radius:5px;
 }
 .msg.ai .bub{ border-bottom-left-radius:5px; }
@@ -224,7 +226,7 @@ body{
 #input-count:empty{ display:none; }
 .send-btn{
   height:42px; padding:0 18px; border:none; border-radius:21px;
-  background:var(--pri); color:#fff; font-size:14.5px; font-weight:600;
+  background:var(--btn); color:var(--btn-fg); font-size:14.5px; font-weight:600;
   cursor:pointer; flex-shrink:0;
 }
 .send-btn:active{ background:var(--pri2); }
@@ -246,7 +248,7 @@ body{
   justify-content:center; font-size:20px; line-height:1;
 }
 .cmd-item:active .ci-box{ border-color:var(--pri); }
-.cmd-item.on{ color:var(--pri); }
+.cmd-item.on{ color:var(--pri-text); }
 .cmd-item.on .ci-box{ border-color:var(--pri); }
 /* 功能参数槽（输入行【上方】）：一行 = 图标 + 名称 + 它自己的输入框 + ✕ */
 .cmd-slots{ display:flex; flex-direction:column; gap:7px; padding:2px 2px 8px; }
@@ -382,7 +384,7 @@ input[type=checkbox]{
   background:var(--bg3); border:1px solid var(--line); color:var(--fg2);
   font-size:12.5px; cursor:pointer; font-family:inherit;
 }
-.seg button.on{ background:var(--pri); border-color:var(--pri); color:#fff; font-weight:600; }
+.seg button.on{ background:var(--btn); border-color:var(--btn); color:var(--btn-fg); font-weight:600; }
 
 /* ===== 角色列表 ===== */
 .char-list{ display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
@@ -440,7 +442,7 @@ input[type=checkbox]{
 .mem-item.sup .txt{ text-decoration:line-through; text-decoration-color:var(--fg3); }
 .mem-item .restore{
   flex:0 0 auto; font-size:12px; padding:3px 8px; border-radius:8px; cursor:pointer;
-  color:var(--pri); background:transparent; border:1px solid var(--pri);
+  color:var(--pri-text); background:transparent; border:1px solid var(--pri);
 }
 
 /* 记忆来源弹层（v0.5.1.1）：每条来源一段，讲的人 + 第几天 + 原文 */
@@ -461,11 +463,11 @@ input[type=checkbox]{
 .inj-row{ font-size:13.5px; line-height:1.55; padding:6px 10px; border-radius:9px;
   background:var(--bg2); border:1px solid var(--line); margin-bottom:6px; word-break:break-word; }
 /* 记忆 OS：每条记忆的槽位、为什么进来、占多少 token */
-.inj-key{ font-weight:600; color:var(--pri); font-size:12px; }
+.inj-key{ font-weight:600; color:var(--pri-text); font-size:12px; }
 .inj-why{ display:block; margin-top:2px; font-style:normal; font-size:11.5px; color:var(--fg3); }
 .inj-row.dim{ opacity:.7; }
 .inj-src{ margin-left:6px; padding:1px 8px; border-radius:8px; font-size:11.5px;
-  background:transparent; border:1px solid var(--line); color:var(--pri); cursor:pointer; }
+  background:transparent; border:1px solid var(--line); color:var(--pri-text); cursor:pointer; }
 /* 「她心里的账」（0.5.7.2）：逐条可删。
    beliefs / secrets 从来不进 inj 快照 —— 这里是用户唯一能【看见】并清掉它们的地方。 */
 .led-row{ display:flex; align-items:flex-start; gap:8px; }
@@ -530,7 +532,7 @@ input[type=checkbox]{
 .look-box{ min-height:78px; }
 /* 「立即生效」是主操作，给它一点强调 */
 .ghost-btn.prim{
-  background:var(--pri); border-color:var(--pri); color:#fff;
+  background:var(--btn); border-color:var(--btn); color:var(--btn-fg);
 }
 .ghost-btn.prim:active{ background:var(--pri2); }
 .ghost-btn.prim:disabled{ opacity:.55; }
@@ -564,13 +566,13 @@ input[type=checkbox]{
    次要动作用描边，只有「重试」那一个是紫色主按钮 —— 一条卡上一眼就能看出该点哪儿。 */
 .err-btn{
   align-self:flex-start; margin-top:6px; padding:6px 12px; border-radius:8px;
-  background:transparent; color:var(--pri); border:1px solid var(--line); font-size:12.5px;
+  background:transparent; color:var(--pri-text); border:1px solid var(--line); font-size:12.5px;
   cursor:pointer; font-family:inherit;
 }
 .err-btn:active{ background:rgba(255,255,255,.06); }
 .retry-btn{
   align-self:flex-start; margin-top:6px; padding:6px 14px; border-radius:8px;
-  background:var(--pri); color:#fff; border:none; font-size:12.5px;
+  background:var(--btn); color:var(--btn-fg); border:none; font-size:12.5px;
   cursor:pointer; font-family:inherit;
 }
 .retry-btn:active{ background:var(--pri2); }
@@ -714,7 +716,7 @@ input + .hint-text{ margin-top:8px; }
 /* 「来自 N 条」：点开看原文，记忆回链 */
 .mem-tag.src{ cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
 /* 「自定义」= 你自己写进去的 */
-.mem-tag.mine{ color:var(--pri); border:1px solid var(--pri); background:transparent; }
+.mem-tag.mine{ color:var(--pri-text); border:1px solid var(--pri); background:transparent; }
 /* 「她以为」（记忆 OS）：belief 不是事实。用户拿它去纠正她之前，得先看见这只是她以为的 */
 .mem-tag.belief{ color:#e0a95f; border:1px dashed #e0a95f; background:transparent; }
 /* 其它类型（计划 / 关系 / 状态 / 物品） */
@@ -729,7 +731,7 @@ input + .hint-text{ margin-top:8px; }
   font-family:inherit; font-size:11.5px; padding:4px 9px; border-radius:8px;
   border:1px solid var(--line); background:var(--bg3); color:var(--fg2); cursor:pointer;
 }
-.mem-draft-acts button.ok{ color:#fff; background:var(--pri); border-color:var(--pri); }
+.mem-draft-acts button.ok{ color:var(--btn-fg); background:var(--btn); border-color:var(--btn); }
 .mem-draft-acts button:active{ transform:scale(.96); }
 /* 收件箱按钮上的数字 */
 .mem-inbox-n{
@@ -1395,7 +1397,7 @@ input + .hint-text{ margin-top:8px; }
   border:2px solid var(--line); display:flex; align-items:center;
   justify-content:center; font-size:13px; color:transparent;
 }
-.pick-row.on .pk-box{ background:var(--pri); border-color:var(--pri); color:#fff; }
+.pick-row.on .pk-box{ background:var(--btn); border-color:var(--btn); color:var(--btn-fg); }
 .pick-row.on{ border-color:var(--pri); }
 /* 全选按钮：和普通按钮区分开 */
 .pick-all{
@@ -1513,7 +1515,7 @@ input + .hint-text{ margin-top:8px; }
 .empty-chat .ec-main{
   display:block; width:100%; max-width:280px; margin:0 auto;
   padding:14px 18px; border-radius:14px; border:none;
-  background:var(--pri); color:#fff; font-size:15px; font-weight:600;
+  background:var(--btn); color:var(--btn-fg); font-size:15px; font-weight:600;
   font-family:inherit; cursor:pointer;
 }
 .empty-chat .ec-main:active{ background:var(--pri2); }
@@ -1523,7 +1525,7 @@ input + .hint-text{ margin-top:8px; }
 /* 「先看示例」这类不要边框的链接按钮 */
 .ks-link{
   background:none; border:none; padding:2px 0; font-size:12.5px;
-  color:var(--pri); font-family:inherit; cursor:pointer; text-align:left;
+  color:var(--pri-text); font-family:inherit; cursor:pointer; text-align:left;
 }
 .ks-link:active{ opacity:.7; }
 
@@ -2055,7 +2057,7 @@ input[type="range"] { touch-action: pan-y; }
 .arc-next{ flex:0 0 auto; padding:6px 10px; border-radius:9px; cursor:pointer;
   border:1px solid var(--pri); background:transparent; color:var(--pri2);
   font-family:inherit; font-size:12px; white-space:nowrap; }
-.arc-next:active{ background:var(--pri); color:#fff; }
+.arc-next:active{ background:var(--btn); color:var(--btn-fg); }
 .arc-next:disabled{ opacity:.45; border-color:var(--line); color:var(--fg3); }
 .arc-now-h{ margin:7px 0 0; font-size:11.5px; line-height:1.6; color:var(--fg3); }
 
@@ -2104,7 +2106,7 @@ input[type="range"] { touch-action: pan-y; }
 }
 .arc-inline .ai-btn{
   flex:0 0 auto; padding:5px 10px; border-radius:9px; cursor:pointer;
-  border:1px solid var(--pri); background:var(--pri); color:#fff;
+  border:1px solid var(--btn); background:var(--btn); color:var(--btn-fg);
   font-family:inherit; font-size:12px; white-space:nowrap;
 }
 .arc-inline .ai-btn.ghost{ background:transparent; color:var(--fg2); border-color:var(--line); }
@@ -2319,8 +2321,8 @@ input[type="range"] { touch-action: pan-y; }
   background:var(--bg3); border:1px solid var(--line);
   font-size:12.5px; color:var(--fg2); }
 .rv-undo button{ font-family:inherit; font-size:12.5px; padding:5px 12px; cursor:pointer;
-  border-radius:8px; border:1px solid var(--pri); background:transparent; color:var(--pri); }
-.rv-undo button:active{ background:var(--pri); color:#fff; }
+  border-radius:8px; border:1px solid var(--pri); background:transparent; color:var(--pri-text); }
+.rv-undo button:active{ background:var(--btn); color:var(--btn-fg); }
 
 /* ---- 开戏弹窗 / 分镜 ---- */
 .scene-box{ max-height:86vh; overflow-y:auto; }

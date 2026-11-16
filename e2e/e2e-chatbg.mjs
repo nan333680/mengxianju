@@ -100,6 +100,20 @@ console.log('=== 清除背景（v0.5.7.5） ===');
 // 所以必须先真的进一次设置页，否则 onclick 是 null。
 await page.evaluate(() => document.getElementById('btn-settings').click()); await sleep(700);
 await page.evaluate(() => { const b=[...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x=>x.dataset.wbDrawer==='mine'); if(b)b.click(); }); await sleep(800);
+console.log('=== 气泡不透明度（v0.5.7.5） ===');
+const a1 = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bubble-alpha').trim());
+t('有图、默认 100% 时 alpha 是 1', a1 === '1', a1);
+await page.evaluate(() => { const el = document.getElementById('s-bubblealpha'); el.value = '70'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+await sleep(400);
+const a2 = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bubble-alpha').trim());
+t('拉到 70% 后 alpha 是 0.7', a2 === '0.7', a2);
+await page.evaluate(() => { const s = document.getElementById('s-theme'); s.value = 'light'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+await sleep(450);
+const a3 = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bubble-alpha').trim());
+t('切浅色后 alpha 仍跟随滑杆', a3 === '0.7', a3);
+await page.evaluate(() => { const s = document.getElementById('s-theme'); s.value = 'dark'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+await sleep(450);
+
 const diag = await page.evaluate(() => {
   const el = document.getElementById('s-bg-clear');
   return { exists: !!el, handler: el ? typeof el.onclick : 'no-el', disabled: el ? el.hasAttribute('disabled') : null };
@@ -122,6 +136,8 @@ t('点清除后 --bg-img 变 none', afterClear.imgVar === 'none', afterClear.img
 t('图那一层的背景也清掉了', afterClear.bgImage === 'none' || afterClear.bgImage === '', afterClear.bgImage);
 t('kv 里的 bgImg 真的删了', !afterClear.inDb, String(afterClear.inDb));
 t('清除后按钮自己变灰', afterClear.clearDisabled === true, String(afterClear.clearDisabled));
+const a4 = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bubble-alpha').trim());
+t('清除背景后 alpha 回到 1（没图就不透）', a4 === '1', a4);
 
 t('页内没有 JS 异常', errs.length === 0, errs.join(' | '));
 console.log('');

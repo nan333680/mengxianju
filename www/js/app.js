@@ -184,6 +184,9 @@ const DEFAULTS = {
   longMemory: false, theme: 'dark', themeColor: 'violet', fontSize: 15, showUsage: false,
   // 聊天背景（v0.5.7.4）：暗化默认 50 —— 给 0 的话第一次选完背景会被自己的照片晃到眼。
   bgDim: 50, bgBlur: 0,
+  // 气泡不透明度（v0.5.7.5）：只有在设了背景图时才生效 —— 没图时 applyChatBg 强制写回 1，
+  // 所以不设图的人看到的气泡和以前一模一样。
+  bubbleAlpha: 100,
   // 朗读（v1.21.56）：她说完自动读出来。默认关 —— 不是所有人任何时候都想被念出声。
   ttsOn: false,
   // 默认【关】：你手动加的记忆，整理时原样保留，她不许改也不许删
@@ -1613,6 +1616,9 @@ function applyTheme() {
   st.setProperty('--btn', v.btn);
   st.setProperty('--btn-fg', v.btnFg);
   st.setProperty('--bubble-me', v.bubble);
+  // 气泡不透明度要用 rgba()，而 rgba 要的是 "r,g,b" —— 数组直接给 setProperty
+  // 运行时会 String() 成 "109,92,224"，但 tsc 会多报一条 TS2345（value: string）。
+  st.setProperty('--bubble-me-rgb', v.bubbleRgb.join(','));
   st.setProperty('--bubble-fg', v.bubbleFg);
   st.setProperty('--fs', S.fontSize + 'px');
   renderSwatches();
@@ -1637,6 +1643,9 @@ async function applyChatBg(force) {
   }
   const img = _bgImg;
   st.setProperty('--bg-img', img ? 'url("' + img + '")' : 'none');
+  // ⚠️ 没图时强制 1 —— 否则气泡会半透明叠在纯色底上，比现在难看。
+  //    这一行是整条功能「只在有背景图时生效」的开关。
+  st.setProperty('--bubble-alpha', String(img ? (Number(S.bubbleAlpha) || 100) / 100 : 1));
   st.setProperty('--bg-dim', String((Number(S.bgDim) || 0) / 100));
   st.setProperty('--bg-blur', (Number(S.bgBlur) || 0) + 'px');
 
@@ -1649,8 +1658,10 @@ async function applyChatBg(force) {
   if (d1) d1.textContent = String(S.bgDim ?? 50);
   const d2 = document.getElementById('v-bgblur');
   if (d2) d2.textContent = String(S.bgBlur ?? 0);
-  // 没选图时两个滑杆和「清除」都灰着 —— 否则用户会对着一个没反应的控件调半天
-  for (const id of ['s-bgdim', 's-bgblur', 's-bg-clear']) {
+  const d3 = document.getElementById('v-bubblealpha');
+  if (d3) d3.textContent = String(S.bubbleAlpha ?? 100);
+  // 没选图时这些控件全灰着 —— 否则用户会对着一个没反应的控件调半天
+  for (const id of ['s-bgdim', 's-bgblur', 's-bubblealpha', 's-bg-clear']) {
     const el = document.getElementById(id);
     if (el) { if (img) el.removeAttribute('disabled'); else el.setAttribute('disabled', ''); }
   }
@@ -18655,6 +18666,12 @@ function bindSettings() {
     saveSettings({ bgBlur: Number(e.target.value) });
     applyChatBg();
   };
+  // 气泡不透明度（v0.5.7.5）：下限 50，applyChatBg 里没图时会把 alpha 强制写回 1
+  $('s-bubblealpha').oninput = e => {
+    $('v-bubblealpha').textContent = e.target.value;
+    saveSettings({ bubbleAlpha: Number(e.target.value) });
+    applyChatBg();
+  };
   $('s-font').oninput = e => { $('v-font').textContent = e.target.value; saveSettings({ fontSize: Number(e.target.value) }); applyTheme(); };
   $('s-showusage').onchange = async e => {
     await saveSettings({ showUsage: e.target.checked });
@@ -22027,7 +22044,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.7.4';
+const WEB_VERSION_FALLBACK = '0.5.7.5';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

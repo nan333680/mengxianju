@@ -6,6 +6,14 @@
   --fg:#e8eaf2; --fg2:#9aa0b5; --fg3:#6b7288;
   --pri:#8b7cf6; --pri2:#a99bff; --danger:#f2555a;
   --bubble-me:#6d5ce0; --bubble-ai:#232635;
+  /* 气泡不透明度（v0.5.7.5）：只有设了背景图才由 JS 改成 <1。
+     --bubble-me-rgb 必须在这里写死兜底 —— 首帧 applyTheme 还没跑时
+     rgba(var(--bubble-me-rgb), …) 参数非法，整条 background 会被丢弃，
+     所有气泡会闪一下没有底色。 */
+  --bubble-alpha:1;
+  --bubble-me-rgb:109,92,224;
+  --bubble-ai-rgb:35,38,53;
+  --line-rgb:44,48,64;
   /* 色板（v0.5.7.4）：运行时由 applyTheme 写 inline style 覆盖，这里只兜底 */
   --pri-text:var(--pri); --btn:var(--pri); --btn-fg:#fff; --bubble-fg:#fff;
   --fs:15px;
@@ -23,6 +31,8 @@
   --fg:#1c1e26; --fg2:#5a6078; --fg3:#8b91a8;
   --pri:#6d5ce0; --pri2:#8b7cf6;
   --bubble-me:#6d5ce0; --bubble-ai:#ffffff;
+  --bubble-ai-rgb:255,255,255;
+  --line-rgb:224,227,236;
 }
 
 html,body{ height:100%; overflow:hidden; }
@@ -123,11 +133,12 @@ body{
 .msg .av img{ width:100%; height:100%; object-fit:cover; }
 .bub{
   max-width:76%; padding:9px 13px; border-radius:16px;
-  background:var(--bubble-ai); border:1px solid var(--line);
+  background:rgba(var(--bubble-ai-rgb), var(--bubble-alpha));
+  border:1px solid rgba(var(--line-rgb), var(--bubble-alpha));
   word-break:break-word; white-space:pre-wrap; overflow-wrap:anywhere;
 }
 .msg.me .bub{
-  background:var(--bubble-me); border-color:transparent; color:var(--bubble-fg);
+  background:rgba(var(--bubble-me-rgb), var(--bubble-alpha)); border-color:transparent; color:var(--bubble-fg);
   border-bottom-right-radius:5px;
 }
 .msg.ai .bub{ border-bottom-left-radius:5px; }

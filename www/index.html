@@ -1148,7 +1148,12 @@
           <label class="field" data-i18n-nodes><span><span data-i18n-en="Blur">模糊</span> <b id="v-bgblur">0</b>px</span>
             <input id="s-bgblur" type="range" min="0" max="20" step="1" value="0">
           </label>
-          <p class="hint-text" data-i18n-en="Pick an image for the chat background. Higher darkening keeps text readable; blur stops it from competing with the bubbles. Both sliders do nothing until you pick an image.">选一张图当聊天背景。暗化越高字越清楚，模糊让背景不抢注意力。没有选图时这两个滑杆不起作用。</p>
+          <!-- 气泡不透明度（v0.5.7.5）：下限 50 —— 再低浅色文字的对比度会明显掉。
+               只有在设了背景图时才生效；没图时 applyChatBg 把 alpha 强制写回 1。 -->
+          <label class="field" data-i18n-nodes><span><span data-i18n-en="Bubble opacity">气泡不透明度</span> <b id="v-bubblealpha">100</b>%</span>
+            <input id="s-bubblealpha" type="range" min="50" max="100" step="5" value="100">
+          </label>
+          <p class="hint-text" data-i18n-en="Darkening dims the background, bubble opacity lets it show through. Want the image visible: lower both. Want text crispest: raise both. None of these sliders do anything until you pick an image.">暗化压背景、气泡透明度放背景进来。想要图明显就把暗化调低、气泡调低；想要字最清楚就把两个都调高。没选图时这些滑杆都不生效。</p>
           <label class="field row" data-i18n-nodes><span data-i18n-en="Show token usage">显示 token 使用量</span>
             <input id="s-showusage" type="checkbox">
           </label>

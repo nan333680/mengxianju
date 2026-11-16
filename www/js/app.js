@@ -1613,6 +1613,36 @@ function applyTheme() {
   st.setProperty('--bubble-me', v.bubble);
   st.setProperty('--bubble-fg', v.bubbleFg);
   st.setProperty('--fs', S.fontSize + 'px');
+  renderSwatches();
+}
+
+/**
+ * 主题色的 18 个色块（v0.5.7.4）。
+ *
+ * 每次 applyTheme 都重建一次 —— 深浅切换后圆点要换成同一色相的另一档亮度。
+ * 圆点用 --pri 的亮档（和边框 / focus 一致），所以看起来鲜艳；
+ * 按钮底和气泡底是压暗后能配白字的那档，这是两回事，故意分开。
+ */
+function renderSwatches() {
+  const box = document.getElementById('s-color');
+  if (!box) return;
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const cur = S.themeColor || 'violet';
+  box.innerHTML = '';
+  for (const c of THEME_COLORS) {
+    const v = colorVars(c, isLight);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'swatch' + (c.k === cur ? ' on' : '');
+    b.dataset.k = c.k;
+    b.title = c.name;
+    b.style.background = v.pri;
+    b.onclick = async () => {
+      await saveSettings({ themeColor: c.k });
+      applyTheme();
+    };
+    box.appendChild(b);
+  }
 }
 
 // ================= 角色 =================

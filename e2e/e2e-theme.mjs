@@ -102,6 +102,33 @@ t('--pri 与 violet 的亮档一致', norm(vars.pri) === norm(expected.pri), var
 t('--bubble-me 与 violet 的气泡档一致', norm(vars.bubble) === norm(expected.bubble), vars.bubble + ' vs ' + expected.bubble);
 t('--btn-fg 是白或墨', vars.btnFg === '#ffffff' || vars.btnFg === '#101014', vars.btnFg);
 
+console.log('=== 点色块真的换色吗 ===');
+const btnBefore = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--btn').trim());
+const hasSwatch = await page.$$eval('.swatch', els => els.length);
+t('设置页里有 18 个色块', hasSwatch === 18, '找到 ' + hasSwatch + ' 个');
+const onBefore = await page.$$eval('.swatch.on', els => els.map(e => e.dataset.k).join(','));
+t('默认选中的是 violet', onBefore === 'violet', onBefore);
+// 设置页在 DOM 里但不在前台（.view 默认 translateX(100%)），puppeteer 的 click 会判「不可点」。
+// 这里用 evaluate 直接派发 click，验证的是接线逻辑，不是布局。
+await page.evaluate(() => document.querySelector('.swatch[data-k="yellow"]').click());
+await sleep(350);
+const afterYellow = await page.evaluate(() => ({
+  btn: getComputedStyle(document.documentElement).getPropertyValue('--btn').trim(),
+  on: [...document.querySelectorAll('.swatch.on')].map(e => e.dataset.k).join(',')
+}));
+t('点黄色后 --btn 变了', afterYellow.btn !== btnBefore, btnBefore + ' -> ' + afterYellow.btn);
+t('点黄色后选中态移到 yellow', afterYellow.on === 'yellow', afterYellow.on);
+const normY = (s) => s.replace(/\s+/g, '');
+const expYellow = await page.evaluate(async () => {
+  const M = await import('./js/theme.js');
+  const y = M.THEME_COLORS.find(x => x.k === 'yellow');
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  return M.colorVars(y, isLight).btn;
+});
+t('黄色的按钮档与纯函数算的一致', normY(afterYellow.btn) === normY(expYellow), afterYellow.btn + ' vs ' + expYellow);
+await page.evaluate(() => document.querySelector('.swatch[data-k="violet"]').click());
+await sleep(250);
+
 t('页内没有 JS 异常', errs.length === 0, errs.join(' | '));
 console.log('');
 console.log('通过 ' + pass + ' 项 / 失败 ' + fail + ' 项');

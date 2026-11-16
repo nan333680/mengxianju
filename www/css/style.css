@@ -2353,3 +2353,11 @@ input[type="range"] { touch-action: pan-y; }
   overflow: auto;
 }
 
+
+/* ===== 主题色板（v0.5.7.4） ===== */
+/* 9 列 × 2 行。圆点用 --pri 亮档上色（由 JS 逐个写 inline background），
+   选中态靠描边，不靠加粗 —— 18 个圆点里某个突然变大很跳。 */
+.swatches{ display:grid; grid-template-columns:repeat(9,1fr); gap:8px; margin:6px 0 4px; }
+.swatch{ aspect-ratio:1; border-radius:50%; border:2px solid transparent; cursor:pointer;
+  padding:0; -webkit-appearance:none; appearance:none; }
+.swatch.on{ border-color:var(--fg); box-shadow:0 0 0 2px var(--bg3); }

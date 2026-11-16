@@ -109,3 +109,7 @@ icon_check/
 undefined/
 # 每批改动的回滚备份（清单要求：出问题就覆盖回去）
 _backup_b*/
+
+# py_compile 生成物（tools/serve-and-shutdown.py 校验时留下）
+__pycache__/
+*.pyc

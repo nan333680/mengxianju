@@ -217,6 +217,7 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | T10 | 「这一轮用了什么」看不到 `secrets` 等 | 已知 | 面板只显示 `inj`，psyche 的 secrets/grudges/boundaries 从来不在界面上 |
 | T11 | 测试版转公开 | **等你明确要求** | 见 R12；不建议我催 |
 | T12 | `PROGRESS.md` 落盘 | 已完成 | 本文件 |
+| T13 | 色块 tooltip 永远是英文 | **待办，下一版** | `theme.js:16-17` 那句注释是**错的**：它说运行时节点「挂不上 `data-i18n-en-title`」，但 `i18n.js` 是用 `querySelectorAll('[data-i18n-en-title]')` 扫 DOM 的，运行时节点照样能挂。正确写法：`btn.dataset.i18nEnTitle = c.en; btn.dataset.i18nZhTitle = c.name; btn.title = c.en`（初次占位英文，切语言时被 i18n 覆盖）。本轮不改的两个理由：触屏上 `title` 本来就不触发 tooltip；改完要再跑一轮 60 分钟的回归。下次碰 `theme.js` 时把注释一起改掉 |
 
 ---
 

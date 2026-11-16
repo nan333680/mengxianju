@@ -244,3 +244,108 @@ Write-Host ("   ASCII 副本  : " + $assetDest + "   <- 发 GitHub Release 时�
 
 # 顺带归档一份完整快照（脚本自己会拒绝覆盖已存在的版本目录）
 & (Join-Path $PSScriptRoot "archive-release.ps1") -Version $vn -Apk $dest
+
+# ============================================================
+# 睡前送达：构建完人就走，手机自己下、电脑自己关
+# ============================================================
+# ⚠️ 三条硬规矩，写错了会出事：
+#  1) 必须 Start-Process 脱离，不能同步调用 —— 否则构建永远不返回；
+#  2) 这一段任何失败都不能让构建算失败（包本身是好的，只是没送出去）；
+#  3) 不要 bind 具体 IP，手机重启后热点网段会变。
+
+$servePort = 8899
+$latestName = 'mengxianju-latest.apk'
+$latest = Join-Path $outDir $latestName
+
+# ---- 固定别名：书签失效时的兜底入口 ----
+try {
+  Copy-Item -LiteralPath $dest -Destination $latest -Force -ErrorAction Stop
+  Write-Host ("   固定别名    : " + $latestName)
+} catch {
+  Write-Host ("   ⚠️ 生成固定别名失败：" + $_.Exception.Message) -ForegroundColor Yellow
+}
+
+# ---- 下载页：链接带版本号，避开浏览器对同名文件的启发式缓存 ----
+$dlHtml = @"
+<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>梦弦居 v$vn</title>
+<body style="font-family:system-ui;background:#141317;color:#eee;margin:0;padding:36px 22px">
+<p style="opacity:.55;margin:0 0 6px;font-size:14px">最新构建</p>
+<h1 style="font-size:28px;margin:0 0 26px">梦弦居 v$vn</h1>
+<a href="mengxianju-v$vn.apk"
+   style="display:block;text-align:center;padding:22px;border-radius:16px;
+          background:#6d5ce0;color:#fff;text-decoration:none;font-size:20px;font-weight:600">
+  下载安装包（约 52 MB）
+</a>
+<p style="opacity:.4;font-size:13px;margin-top:22px;line-height:1.6">
+  下载完成后电脑会在 60 秒内自动关机。<br>
+  反悔就在电脑上敲 shutdown /a。
+</p>
+"@
+try {
+  Set-Content -Path (Join-Path $outDir 'latest.html') -Value $dlHtml -Encoding UTF8 -ErrorAction Stop
+  Write-Host "   下载页      : latest.html"
+} catch {
+  Write-Host ("   ⚠️ 生成下载页失败：" + $_.Exception.Message) -ForegroundColor Yellow
+}
+
+# ---- 探测热点网卡 IP，写到桌面，方便书签失效时查 ----
+try {
+  $lanIp = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'WLAN' -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -notlike '169.254.*' } |
+            Select-Object -First 1).IPAddress
+  if (-not $lanIp) {
+    $alias = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+              Sort-Object RouteMetric | Select-Object -First 1).InterfaceAlias
+    if ($alias) {
+      $lanIp = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias $alias -ErrorAction SilentlyContinue |
+                Select-Object -First 1).IPAddress
+    }
+  }
+} catch { $lanIp = $null }
+
+if ($lanIp) {
+  $addrFile = Join-Path ([Environment]::GetFolderPath('Desktop')) '手机下载地址.txt'
+  @(
+    "手机浏览器打开：http://$lanIp`:$servePort/latest.html",
+    "",
+    "生成时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+    "版本：v$vn",
+    "",
+    "打不开的话：热点重开过就会换 IP，重跑一次 tools\serve-apk.ps1 看新地址。"
+  ) | Set-Content -Path $addrFile -Encoding UTF8
+  Write-Host ""
+  Write-Host ("   手机打开：http://" + $lanIp + ":" + $servePort + "/latest.html") -ForegroundColor Green
+  Write-Host  "   下载完成后 60 秒自动关机（反悔敲 shutdown /a）" -ForegroundColor Green
+  Write-Host ("   地址也写进了：" + $addrFile)
+} else {
+  Write-Host "   ⚠️ 没探测到局域网 IP，手机可能连不上" -ForegroundColor Yellow
+}
+
+# ---- 拉起送达服务（独立进程，脱离本会话） ----
+try {
+  $pyw = 'C:\Python314\pythonw.exe'
+  if (-not (Test-Path $pyw)) {
+    $py  = (& where.exe python 2>$null) | Where-Object { $_ -notlike '*WindowsApps*' } | Select-Object -First 1
+    if ($py) {
+      $cand = Join-Path (Split-Path $py) 'pythonw.exe'
+      $pyw = if (Test-Path $cand) { $cand } else { $py }
+    }
+  }
+  # 端口已被占用就先停掉旧的，避免两个服务抢
+  $busy = Get-NetTCPConnection -LocalPort $servePort -State Listen -ErrorAction SilentlyContinue
+  if ($busy) {
+    $busy | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {
+      Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 400
+  }
+  Start-Process $pyw `
+    -ArgumentList @((Join-Path $PSScriptRoot 'serve-and-shutdown.py')) `
+    -WindowStyle Hidden
+  Write-Host "   送达服务    : 已启动（下载完成即关机）"
+} catch {
+  Write-Host ("   ⚠️ 送达服务没起来：" + $_.Exception.Message) -ForegroundColor Yellow
+  Write-Host  "      包已经生成好了，只是没送到手机；可以手动跑 tools\serve-apk.ps1" -ForegroundColor Yellow
+}

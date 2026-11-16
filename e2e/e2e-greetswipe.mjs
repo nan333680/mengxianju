@@ -121,9 +121,15 @@ await sleep(900);
 const labels = await page.evaluate(() => {
   const box = document.querySelector('.msg-menu');
   if (!box) return null;
-  const more = box.querySelector('[data-more]');
-  if (more) more.click();
-  return [...box.querySelectorAll('button')].map(b => b.textContent.trim());
+  const grab = () => [...box.querySelectorAll('button')].map(b => b.textContent.trim());
+  let arr = grab();
+  // v0.5.7.4：「换一个开场白」提到了一级。无条件点「更多…」会把一级原地换成二级，
+  // 反而查不到它 —— 先看一级，确实没有再展开。
+  if (!arr.some(x => x.includes('换一个开场白'))) {
+    const more = box.querySelector('[data-more]');
+    if (more) { more.click(); arr = grab(); }
+  }
+  return arr;
 });
 t('菜单弹出来了', Array.isArray(labels), JSON.stringify(labels));
 t('★ 开场白【没有】「换一个版本」入口', Array.isArray(labels) && !labels.some(x => x.includes('换一个版本')), JSON.stringify(labels));

@@ -46,8 +46,10 @@ t('角色卡入口读了 extensions.regex_scripts', SRC.includes('addStRegex(car
 t('预设报告有「把正则收进来」按钮', SRC.includes('id="stp-add-regs"'));
 // 酒馆正则那份表是【用户自己的设置】（收进来哪些、哪条开着），换机导回去必须跟着走 ——
 // 它没有冒号，前缀表装不下，得单独列一份。
+// ⚠️ 这里原来是精确字面量匹配（'[...stRegex' 那段），v0.5.7.4 往数组里加了 bgImg 就误红。
+//    断言的本意是「stRegex 在这个数组里」，不是「数组里只有它」—— 改成不排他的匹配。
 t('酒馆正则跟着备份走（漏了它"导出全部数据"就是半个备份）',
-  SRC.includes("const BACKUP_EXACT_KEYS = ['stRegex']"));
+  /const BACKUP_EXACT_KEYS = \[[^\]]*'stRegex'[^\]]*\]/.test(SRC));
 t('群聊不会导成角色卡', SRC.includes('群聊导不成角色卡'));
 
 console.log('=== 2. 造一个开着「精确时间」的角色，钟点定在 09:30 ===');

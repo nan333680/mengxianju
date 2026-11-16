@@ -178,9 +178,11 @@ const edited = await page.evaluate(() => {
   return true;
 });
 await sleep(800);
-// ⚠️ v0.5.4.7 起「编辑重发」在「更多…」二级里（一级只留 copy/regen/variant/fromseg/branch）。
-await page.evaluate(() => { const b = document.querySelector('.msg-menu [data-more]'); if (b) b.click(); });
-await sleep(200);
+// v0.5.7.4 起「编辑重发」在一级；一级没有才翻「更多…」。
+if (!(await page.$('.msg-menu [data-k="edit"]'))) {
+  await page.evaluate(() => { const b = document.querySelector('.msg-menu [data-more]'); if (b) b.click(); });
+  await sleep(200);
+}
 const hasEdit = await page.$$eval('.msg-menu [data-k="edit"]', els => els.length);
 t('弹出菜单且有「编辑重发」', hasEdit === 1, String(hasEdit));
 await jsClick('.msg-menu [data-k="edit"]');

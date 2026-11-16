@@ -245,10 +245,11 @@ await page.waitForFunction(() => !!document.querySelector('#messages .msg[data-i
 const idx = await page.evaluate(() => [...document.querySelectorAll('.msg')].findIndex(el => el.dataset.id === 'edit-test-1'));
 t('找到了自己发的那条', idx >= 0, 'index=' + idx);
 await longPressAndroid(idx);
-await openMore();
-const hasEdit = await page.$$eval('.msg-menu [data-k="edit"]', els => els.length);
+// v0.5.7.4：edit 提到了一级。这里改成「先看一级，没有再翻二级」——
+// 旧写法直接 openMore() 会把一级原地换成二级，一级上已有的 edit 反而被换掉。
+let hasEdit = await page.$$eval('.msg-menu [data-k="edit"]', els => els.length);
+if (!hasEdit) { await openMore(); hasEdit = await page.$$eval('.msg-menu [data-k="edit"]', els => els.length); }
 t('菜单里有「编辑重发」', hasEdit === 1, '找到 ' + hasEdit + ' 个');
-// 二级已经在上一步展开了，别再点一次「更多…」（那是开关，会把它收起来）
 const editLabel = await page.$eval('.msg-menu [data-k="edit"]', el => el.textContent.trim()).catch(() => '');
 t('菜单项文案是「编辑重发」', editLabel === '编辑重发', editLabel);
 await clearMenus();

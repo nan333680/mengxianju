@@ -3348,17 +3348,29 @@ async function showMsgMenu(el) {
     }
   }
 
-  // ⚠️ v0.5.4.7：一级只留四项，其余收进「更多…」。
+  // ⚠️ v0.5.7.4：一级只放「每次长按都要用」的和「同一位置的替代品」。
   //    起因：0.5.4.6 加完「从这段起重写」已经第 10 项、约 560px，
   //    而 .msg-menu 没有 max-height 也没有滚动 —— 小屏上会顶出屏幕。
-  //    ⚠️ 以后新增入口一律进「更多…」。一级这四个位置留给
-  //      "每次长按都要用"的，别再往里塞。
-  // ⚠️ 一级五项到顶（四项常驻 + 一个条件出现的 branch）。以后加第六个要先换出一个。
-  // branch 必须待在最短路径上：0.5.3.1 的顶部提示条只解决了「知道有岔路」，
-  // 「怎么切」还是要长按那条消息 —— 它再进二级，那条提示条就成了死链。
-  const PRIMARY_K = ['copy', 'regen', 'variant', 'fromseg', 'branch'];
-  const primary = acts.filter(a => PRIMARY_K.indexOf(a.k) >= 0);
+  //    fromseg / del / mknovel / search / rewind 一律进「更多…」。
+  //    edit 本来就在二级，这一版没动它的层级。
+  // ⚠️ 一级的顺序【只由 PRIMARY_K 决定】，不从 acts 的 push 顺序推（v0.5.7.4）。
+  //    旧写法靠 push 顺序碰巧对齐，改一处 push 就会静默错位。
+  // ⚠️ branch 仍留一级：它有独立的可见前提（存在兄弟消息），不占常态位置，
+  //    不受「一级只放常用项」的配额限制。0.5.3.1 的顶部提示条只解决了「知道有岔路」，
+  //    「怎么切」还是要长按那条消息 —— 它进二级，那条提示条就成了死链。
+  // altgreet 与 variant 互斥（开场白不会有 variant，普通消息不会有 altgreet），
+  // 所以两套菜单的第 3 位永远只有一项，位置天然对齐。
+  // edit 只在自己的消息上 push（见上面 isMe 那个分支），所以不需要 isMe 分支数组。
+  // 顺序即显示顺序：我的消息 copy/edit；她的末条 copy/regen/variant；开场白 copy/regen/altgreet。
+  const PRIMARY_K = ['copy', 'edit', 'regen', 'variant', 'altgreet', 'branch'];
+  const primary = PRIMARY_K.map(k => acts.find(a => a.k === k)).filter(Boolean);
   const more = acts.filter(a => PRIMARY_K.indexOf(a.k) < 0);
+  // 「删除这条」是老手感的最后一个位置（见 mknovel 那段的注释），
+  // 但 more 里它后面还压着 search / rewind / branch —— 单独提到末尾。
+  {
+    const di = more.findIndex(a => a.k === 'del');
+    if (di >= 0) more.push(more.splice(di, 1)[0]);
+  }
   const mkBtn = (a) => `<button data-k="${a.k}">${tt(a.t)}</button>`;
 
   const menu = document.createElement('div');

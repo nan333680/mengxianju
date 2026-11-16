@@ -122,14 +122,15 @@ const longPressed = await page.evaluate((id) => {
 }, u0 && u0.id);
 t('长按的那条在屏幕上', longPressed === true);
 await sleep(950);
-// ⚠️ v0.5.4.7 起菜单分两级：「编辑重发」在「更多…」里，不在弹出来的第一屏。
-//    这里先点开「更多…」（原地替换，同一个 .msg-menu），再判断键名。
+// v0.5.7.4 起「编辑重发」在一级，不再需要先展开二级；
+//    旧写法无条件点「更多…」会把一级原地换掉，一级上已有的 edit 反而查不到。
 const menuInfo = await page.evaluate(() => {
   const m = document.querySelector('.msg-menu');
   if (!m) return { open:false, hasEdit:false, more:false };
+  let hasEdit = !!m.querySelector('[data-k="edit"]');
   const more = m.querySelector('[data-more]');
-  if (more) more.click();
-  return { open:true, more:!!more, hasEdit: !!m.querySelector('[data-k="edit"]'), text:(m.textContent||'').slice(0,60) };
+  if (!hasEdit && more) { more.click(); hasEdit = !!m.querySelector('[data-k="edit"]'); }
+  return { open:true, more:!!more, hasEdit, text:(m.textContent||'').slice(0,60) };
 });
 t('长按有菜单弹出', menuInfo.open === true);
 t('菜单里有「编辑重发」', menuInfo.hasEdit === true, JSON.stringify(menuInfo));

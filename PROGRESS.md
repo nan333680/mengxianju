@@ -339,15 +339,16 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | 项 | 值 |
 | --- | --- |
 | 线上最新公开版 | **0.5.7 / versionCode 192**（Release `v0.5.7`，asset `739203945`，53,991,314 字节，sha256 `97703B7F…`） |
-| 本地工作版本 | **0.5.7.3 / versionCode 195**（测试版，未上传；跨场接力 + 伏笔台账） |
+| 本地工作版本 | **0.5.7.4 / versionCode 196**（测试版，未上传；菜单位置对齐 + 18 套主题色 + 聊天背景） |
 | 最后一次全量回归 | **0.5.7.3 这版：172 套 / 4599 项 / 0 失败 / 62.8 分钟** ← 全绿，R7 满足<br>⚠️ **跑的是「去掉 `&& resolved.length` 之前」的代码** —— 改完那两处只单跑了 `e2e-scenelog`（54 项，含新增的「全是编造条目」两条），没有重跑全量。改动只在 `mergeThreads` 的写回条件上，只有 `e2e-scenelog` 覆盖它<br>上一版是 0.5.7.2：172 套 / 4573 项 / 0 失败 / 63.1 分钟 |
 | 之后新增/修改 | 0.5.7.3：`app.js` 9 处（`pendingThreads` / `threadMatch`+`threadDone` / `mergeThreads` / `buildPrevScenes` / `beginScene` 算 prevCtx / `writeScene` 传 prevCtx+台账 / `sceneLogHtml` 台账出口 / `trashScene` 回滚 / 备份与清空前缀表）、`scene.js` 5 处（`PREV_CTX_MAX` / `emptyScene` / `normalizeScene` / `normalizeLog` / `sceneProsePrompt` / `sceneLogPrompt`）、`scenegen.js` 4 处 + `e2e-scenelog` 从 28 项扩到 54 项 |
 | 本版跑过的 e2e | **全量 172 套 / 4599 项 / 0 失败** ✅（62.8 分钟，2026-11-16 21:10）<br>`e2e-scene` 110 / `e2e-scenelog` 52 / `e2e-scenectx` 38 / `e2e-scene-clock` 38，四个小说套件全绿 |
 | e2e 总套数 | 172 套进了全量 |
-| 最新 APK | `桌面\mxj\梦弦居-v0.5.7.3.apk`（ASCII 副本 `mengxianju-v0.5.7.3.apk` 才是上传用的），54,009,706 字节，sha256 `3F1356E077596E90892DF0EA4AEF9F12BB9221A0A71FA5B4119462D29DCF2FDE`，2026-11-16 21:11，签名验证通过（apksigner 退出码 0）；归档在 `releases/v0.5.7.3`（**不含回归日志**，脚本自己检测到 `_regress.log` 比 `app.js` 旧） |
+| 最新 APK | `桌面\mxj\梦弦居-v0.5.7.4.apk`（ASCII 副本 `mengxianju-v0.5.7.4.apk`），54,016,825 字节，sha256 `8E7B10F676CC2856…`，2026-11-16 23:57，签名验证通过（apksigner 退出码 0）；归档 `releases/v0.5.7.4`（**不含回归日志**：脚本检测到 `_regress.log` 与 `app.js` 同为 23:55，判「跑完后改过代码」）<br>上一版 0.5.7.3：`桌面\mxj\梦弦居-v0.5.7.3.apk`（ASCII 副本 `mengxianju-v0.5.7.3.apk` 才是上传用的），54,009,706 字节，sha256 `3F1356E077596E90892DF0EA4AEF9F12BB9221A0A71FA5B4119462D29DCF2FDE`，2026-11-16 21:11，签名验证通过（apksigner 退出码 0）；归档在 `releases/v0.5.7.3`（**不含回归日志**，脚本自己检测到 `_regress.log` 比 `app.js` 旧） |
 | `version.json` | **仍是线上 0.5.7 / 192**（`8fb7df9` 起构建脚本已不写它） |
-| git | HEAD = `d343787`；工作区干净（0.5.7.3 改动已提交，21:15） |
-| 远端 | `origin/main` = `d343787`（0/0 同步，已推送） |
+| git | HEAD = `85eb7c0`（0.5.7.4 全部改动已提交） |
+| 远端 | `origin/main` = `85eb7c0`（已推送；头几次推送触发的 CI 红在测试断言上，见变更记录） |
+| 睡前送达 | `tools/serve-and-shutdown.py` 在 23:57 由构建脚本拉起（pythonw PID 14084，监听 `0.0.0.0:8899`），手机打开 `http://10.191.57.9:8899/latest.html`，APK 传完 60 秒后自动关机 |
 | 被忽略的人设素材 | `_yuy_ref/`、`_yukari/`、`_suwako/`、`人设卡写作规格.md`、`八云紫-写卡提示词.md` |
 
 ### 10.2 卡点（按优先级）
@@ -389,4 +390,7 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | 2026-11-16 17:0x | **把「构建」和「发版」拆开**（用户提的，P19）：`build-apk.ps1` 不再写 `version.json`，只打印 notes 和待发命令；新增 `tools/publish-version.ps1`，五道关卡（versionName 对齐 / versionCode 不许回退 / 包存在并算 sha256 / 资产地址必须 200 / content-length 与本地一致），任一不过即中止、一个字节都不写 | 实测：`-Version 0.5.7.1` 被第一关拦住；不加 `-SkipUrlCheck` 时 v0.5.7.2 的资产地址返回 **404** 被拦住 —— 正好是这个脚本要防的事故现场；`-DryRun` 输出 before 0.5.7/192 → after 0.5.7.2/194，notes 抓到了 |
 | 2026-11-16 20:1x | **0.5.7.3 = 跨场接力 + 伏笔台账**（零新增请求、零 schema 改动）：<br>① `buildPrevScenes` —— 开戏时把前面几场（发生/变成/还悬着）拍进 `sc.prevCtx`，只喂第 0 拍且本场还没写过正文；选场次按 `createdAt`（`updatedAt` 会被补写/重写/删拍刷成最新 → 时间线倒着塞）、比较用 `<=`（同毫秒会把上一场排掉）<br>② 台账落 `kv` 的 `threads:<charId>` —— `openThreads` 进账、`closedThreads` 销账；**新增严格（原话相等）、回收宽松（≥4 字互含）**；新增时连已 `done` 的一起查<br>③ 台账出口 —— 结束页「这一场了结了：…」，显示台账原话不是编号 `A1`；写回**不带** `resolved.length`（带上就会在模型全编时把编的条目显示出来）<br>④ 删场回滚 —— `trashScene` 按 `doneBy === 场次 id` 且 `closedThreads` 含原话把 `done` 退回 `false`；`restoreScene` 不回滚（宁可多留一次，不可错删）<br>⑤ 场记能看见「以前悬着什么」—— 编号成 `A1/A2…` 递进 `sceneLogPrompt`，明说「大部分场次 [] 很正常」<br>⑥ 备份表加 `threads:`、并从清空聊天表排掉；单场「还悬着」滤掉已 `done` 的 | `e2e-scenelog` 28→54 项（跨场接力 / 台账闭环 / 删场回滚 / 编造条目 / 备份前缀）；全量 **172 套 / 4599 项 / 0 失败 / 62.8 分钟** |
 | 2026-11-16 21:1x | 版本号升到 `0.5.7.3 / 195`（五处一致，`version.json` **没动**）；构建 APK（PS 5.1，BOM 已确认）。<br>⚠️ **全量回归跑的是「去掉 `resolved.length` 之前」的代码** —— 改完只单跑了 `e2e-scenelog` | `bump-version.mjs` + `ci-check` 五处全 0.5.7.3；APK 54,009,706 字节 sha256 `3F1356E0…`；`e2e-scenelog` 54/0 |
+| 2026-11-16 23:57 | **0.5.7.4 完成**：A 菜单（`PRIMARY_K` 定序、`edit`/`altgreet` 提一级、`del` 提到 more 末尾）、B 主题色板（`theme.js` 18 套、七个 CSS 变量、19 处接线、18 个色块）、C 聊天背景（kv `bgImg` + 两层遮罩 + 设置面板）；9 处写死的紫换成 `color-mix`；升 0.5.7.4 / 196 | `e2e-theme` 22/0、`e2e-chatbg` 13/0、`e2e-settings` 55/0、`e2e-menu` 19/0；全量 174/1（那 1 条是 `e2e-greetswipe` 旧断言，修后单跑 17/0） |
+| 2026-11-16 23:57 | 两轮 CI 红都是**测试写法过时**，不是产品 bug：① `e2e-i18n` 扫到色块的中文 `title` → 加 `en` 字段；② `e2e-segrewrite` / `e2e-greetswipe` 无条件点「更多…」把一级换掉 → 改成先查一级；③ `e2e-v040fix` 用精确字面量匹配 `BACKUP_EXACT_KEYS = ['stRegex']`，加了 `bgImg` 就误红 → 改成不排他的正则 | `6cedf68` / `65e59a9` 两轮 annotations；修后各自单跑 31/0、14/0、18/0、17/0 |
+| 2026-11-16 23:57 | 新增睡前送达链：`tools/serve-and-shutdown.py`（覆写 `copyfile` 判真正传完才关机）、`tools/serve-apk.ps1`（日常共享不关机）、`build-apk.ps1` 末尾生成 `latest.html` + `mengxianju-latest.apk` + 桌面 `手机下载地址.txt` 并拉起服务 | 构建输出：`手机打开：http://10.191.57.9:8899/latest.html`；实测 `latest.html` 200、APK HEAD 200 / 54,016,825 字节 |
 | 2026-11-16 21:55 | 更正 10.1 / 10.2 的 git 行：0.5.7.3 已于 21:15 提交 `d343787` 并推送，工作区干净（原文写「未提交」） | `git log -1 --date=format:'%H:%M'` + `git ls-remote origin refs/heads/main` 均为 `d343787` |

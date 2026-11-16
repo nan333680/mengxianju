@@ -74,7 +74,7 @@ await page.evaluateOnNewDocument((dirJson) => {
         if (flat.indexOf('# 这一轮先别写正文') >= 0) window.__hits.dir.push(body);
         else if (flat.indexOf('先别写回复') >= 0) window.__hits.inner.push(body);
         window.__hits.once.push(body);
-        return new Response(JSON.stringify({ choices: [{ message: { content: dirJson } }] }),
+        return new Response(JSON.stringify({ choices: [{ message: { content: window.__dirOverride || dirJson } }] }),
           { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       window.__hits.stream.push(body);
@@ -396,6 +396,46 @@ t('★ 撤回之后那条不再进提示词',
 t('撤回之前它确实进提示词（对照组）',
   UNB.promptBefore.includes('那杯茶我掺了自己的东西'), UNB.promptBefore);
 
+console.log('— 6d. unbelieve 的整条链路（单元测不出断链）—');
+// 6c 只测了 applyPsycheDelta 这一个函数 —— 那是【单元】，链路断在哪它看不见。
+// 第一版就是这么翻车的：applyPsycheDelta 里写了 unbelieve 分支，
+// 而 normalizeDirector 是字段白名单、directorDelta 又不转，于是永远走不到。
+// 这一节把 判断输出 → 归一化 → 转 delta → 落 psyche 四段串起来跑。
+const CHAIN = await page.evaluate(async () => {
+  const psy = await import('./js/psyche.js');
+  const dir = await import('./js/director.js');
+  const base = () => psy.normalizePsyche({ beliefs: [
+    { t: '那杯茶我掺了自己的东西', conf: 0.8 },
+    { t: '他是来找我算账的', conf: 0.5 }
+  ] });
+  const run = (raw) => {
+    const d = dir.normalizeDirector(raw);
+    const delta = d ? dir.directorDelta(d) : null;
+    return { d, delta, psy: delta ? psy.applyPsycheDelta(base(), delta) : base() };
+  };
+  const exact = run({ reading: '他好像看出来了', unbelieve: ['那杯茶我掺了自己的东西'] });
+  const noted = run({ reading: '他好像看出来了', unbelieve: ['那杯茶我掺了自己的东西（你比较确信）'] });
+  const partial = run({ reading: '他好像看出来了', unbelieve: ['那杯茶'] });
+  return {
+    kept: exact.d ? (exact.d.unbelieve || null) : null,
+    inDelta: exact.delta ? (exact.delta.unbelieve || null) : null,
+    left: exact.psy.beliefs.map(b => b.t),
+    leftNoted: noted.psy.beliefs.map(b => b.t),
+    leftPartial: partial.psy.beliefs.map(b => b.t)
+  };
+});
+t('★ normalizeDirector 把 unbelieve 留下来了（白名单那一步最容易漏）',
+  Array.isArray(CHAIN.kept) && CHAIN.kept.includes('那杯茶我掺了自己的东西'), JSON.stringify(CHAIN.kept));
+t('★ directorDelta 把它转成了 psyche delta',
+  Array.isArray(CHAIN.inDelta) && CHAIN.inDelta.length === 1, JSON.stringify(CHAIN.inDelta));
+t('★ 整条链路跑完，那条认定真的没了',
+  !CHAIN.left.includes('那杯茶我掺了自己的东西'), JSON.stringify(CHAIN.left));
+t('另一条认定没被连坐', CHAIN.left.includes('他是来找我算账的'), JSON.stringify(CHAIN.left));
+t('★ 抄的时候带上「（你比较确信）」也能对上（尾注会被剥掉）',
+  !CHAIN.leftNoted.includes('那杯茶我掺了自己的东西'), JSON.stringify(CHAIN.leftNoted));
+t('★ 只抄半句「那杯茶」不误删（宁可漏删，不可错删）',
+  CHAIN.leftPartial.includes('那杯茶我掺了自己的东西'), JSON.stringify(CHAIN.leftPartial));
+
 console.log('— 7. 端到端：判断与生成共用同一段 system —');
 const baseChar = (id, name, extra) => Object.assign({
   id, name, greeting: '（' + name + '）', persona: '你是' + name + '。说话很短。',
@@ -682,6 +722,33 @@ t('删完面板重新打开，里面还剩另一条',
   afterDel.stillOpen === true && afterDel.text.includes('他是来找我算账的'), 'open=' + afterDel.stillOpen);
 await page.evaluate(() => document.getElementById('modal-ok').click());
 await sleep(200);
+
+console.log('— 12c. 端到端：判断层返回 unbelieve，psyche 真的会变 —');
+// 6d 走的是模块链路，这一段走真 HTTP：mock 的判断层吐出 unbelieve，
+// 看 app.js 的 send() 有没有把它落到 psyche 里。两段一起才算把这条通道钉死。
+await page.evaluate((j) => { window.__dirOverride = j; }, JSON.stringify({
+  reading: '他把话挑明到这份上，我也没什么好瞒了',
+  confidence: 0.7,
+  unbelieve: ['他是来找我算账的'],
+  move: 'answer',
+  beats: ['停一下', '把杯子推开'],
+  length: 'short'
+}));
+await say('你到底在想什么');
+await sleep(600);
+const unbE2E = await page.evaluate(async (pid) => {
+  const o = indexedDB.open('ai-companion');
+  const db = await new Promise(r => { o.onsuccess = () => r(o.result); });
+  const v = await new Promise(r => {
+    const q = db.transaction('kv').objectStore('kv').get('psyche:' + pid);
+    q.onsuccess = () => r(q.result ? q.result.v : null);
+  });
+  db.close();
+  return { beliefs: ((v && v.beliefs) || []).map(b => b.t) };
+}, PID);
+t('★ 端到端：判断层返回 unbelieve 后，那条认定从库里真的没了',
+  !unbE2E.beliefs.includes('他是来找我算账的'), JSON.stringify(unbE2E.beliefs));
+await page.evaluate(() => { window.__dirOverride = null; });
 
 console.log('— 13. 没有 key 时不跑判断（也不挡聊天）—');
 await page.evaluate(async () => {

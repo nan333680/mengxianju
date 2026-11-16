@@ -405,6 +405,17 @@ export function decayPsyche(raw, now = Date.now(), stepMs = 30 * 60 * 1000) {
   return p;
 }
 
+/**
+ * 剥掉 psychePrompt 给 beliefs 追加的尾注（「（你比较确信）」/「（你自己也没底）」）。
+ *
+ * 为什么需要它：unbelieve 走精确匹配（见下），而模型抄原文时经常把那个括号
+ * 一起带上 —— 不剥的话「那杯茶我掺了自己的东西」和「那杯茶我掺了自己的东西（你比较确信）」
+ * 就不相等，这个出口会永远对不上，等于没开。
+ */
+function stripBeliefNote(s) {
+  return cut(String(s == null ? '' : s).replace(/（你(?:比较确信|自己也没底)）\s*$/, ''));
+}
+
 /** 按文本前缀/包含关系找列表项 —— 模型复述原话时很少一字不差。 */
 function findItem(list, text) {
   const t = cut(text);
@@ -527,9 +538,19 @@ export function applyPsycheDelta(raw, delta, now = Date.now()) {
   // 之后每次对话都绕着它走，用户在世界书、记忆、聊天原文里都找不到它，也删不掉。
   // 那句「（你比较确信）」还会让判断层把它当成前提继续推理 —— 自我强化，绕不出去。
   // 现在判断层自己可以撤回一条（模型偶尔真会想通），用户也能在「她心里的账」里删。
+  //
+  // ⚠️ 匹配必须【精确】，不能用上面的 findItem。它是双向 includes 且没有长度下限
+  //    （那 4 字门槛在 sameThing 里，不在它这里），模型写 unbelieve: ["那杯茶"]
+  //    就会把「那杯茶我掺了自己的东西」一起抹掉 —— 「她心里的账」面板已经避开了这个坑，
+  //    这条路径也得避开。
+  //    宁可漏删，不可错删：模型要撤回某一条时有原文可抄（psychePrompt 把整张清单
+  //    都列给它了），抄不准说明它其实不是在撤回那一条。
+  //    不再认定 ≠ 这事没发生过：secrets / 聊天记录都不动，这一条只是离开 beliefs。
   for (const b of (Array.isArray(delta.unbelieve) ? delta.unbelieve : [])) {
-    const i = findItem(p.beliefs, b);
-    if (i >= 0) p.beliefs.splice(i, 1);   // 不再认定 ≠ 这事没发生过：secrets / 聊天记录都还在
+    const want = stripBeliefNote(b);
+    if (!want) continue;
+    const i = p.beliefs.findIndex(x => x && stripBeliefNote(x.t) === want);
+    if (i >= 0) p.beliefs.splice(i, 1);
   }
 
   // 信息差 / 她自己 / 底线：只增不换。

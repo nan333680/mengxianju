@@ -84,6 +84,7 @@ const ASK = [
   '  "selfEvent": ["你自己这两天的事，跟对方没关系（最多两条）；没有就空数组"],',
   '  "boundary": ["你这一轮明确不接受的那一套（最多一条）；没有就空数组"],',
   '  "revealSecret": ["这一轮被问住了、你决定说破的那一件（最多一条）；没有就空数组"],',
+  '  "unbelieve": ["这一轮你想通了、不再认定的某一条（从「你心里认定的」里挑，照抄原文；最多一条）；没有就空数组"],',
   '  "move": "answer / deflect / tease / ask_back / act / silence / leave / push / do 里挑一个",',
   '  "beats": ["这一轮的表达节拍，2~3 条；写怎么演，不要写台词"],',
   '  "callback": "历史里可以主动提起来的一件旧事；没有就空串",',
@@ -103,6 +104,7 @@ const ASK = [
   '- secret 是【你明知、但没告诉对方】的具体一件事 —— 这是信息差，不是悬念。selfEvent 是你自己生活里的事：跟对方无关，也不是"你们之间"的事。',
   '- boundary 是你这一轮不吃的那一套（比如"别拿这种玩笑试探我""别替我安排"）。踩上去你会真的不高兴，不用哄好。',
   '- revealSecret 只能从 secret 里挑一件：对方这一轮真的问到了、或者你自己想赌一把，才填。',
+  '- unbelieve 只能从「你心里认定的」里挑一条，而且照抄原文：这一轮你真的想通了、或者被对方说破，才填。别为了「有点新东西」而撤一条。',
   '- 不要为了显得有内容而编细节。想不出就留空。'
 ].join('\n');
 
@@ -208,6 +210,10 @@ export function normalizeDirector(raw) {
   const selfEvent = (Array.isArray(raw.selfEvent) ? raw.selfEvent : []).map(txt).filter(Boolean).slice(0, 2);
   const boundary = (Array.isArray(raw.boundary) ? raw.boundary : []).map(txt).filter(Boolean).slice(0, 1);
   const revealSecret = (Array.isArray(raw.revealSecret) ? raw.revealSecret : []).map(txt).filter(Boolean).slice(0, 1);
+  // ⚠️ 必须在这里显式取一次（0.5.7.2）。这个函数是【字段白名单】，out 里没列的键
+  //    一律丢 —— 只在 directorDelta 里加一行的话，d.unbelieve 永远是 undefined，
+  //    那个出口就成了永远走不到的死代码（第一版就是这么写错的）。
+  const unbelieve = (Array.isArray(raw.unbelieve) ? raw.unbelieve : []).map(txt).filter(Boolean).slice(0, 1);
   const move = MOVES.includes(raw.move) ? raw.move : '';
   const length = LENGTHS.includes(raw.length) ? raw.length : 'normal';
   const risk = ['over_explain', 'service_tone', 'repeat', 'ooc'].includes(raw.risk) ? raw.risk : '';
@@ -235,6 +241,7 @@ export function normalizeDirector(raw) {
     selfEvent,
     boundary,
     revealSecret,
+    unbelieve,
     length,
     risk
   };
@@ -277,6 +284,9 @@ export function directorDelta(d) {
   if (Array.isArray(d.selfEvent) && d.selfEvent.length) delta.selfEvent = d.selfEvent;
   if (Array.isArray(d.boundary) && d.boundary.length) delta.boundary = d.boundary;
   if (Array.isArray(d.revealSecret) && d.revealSecret.length) delta.revealSecret = d.revealSecret;
+  // 想通了的那一条（0.5.7.2）：判断层自己撤回一条认定 —— 主功能在「她心里的账」面板，
+  // 这条是给她「自己想通」留的通道。匹配在 applyPsycheDelta 里是精确的（见那边注释）。
+  if (Array.isArray(d.unbelieve) && d.unbelieve.length) delta.unbelieve = d.unbelieve;
 
   // 关系增量：慢变量，从这里推一个很小的位移（applyRelation 里还会再 clamp 一次）。
   // ⚠️ 挂在 delta 上而不是返回 {delta, relationDelta} 二元组 —— e2e 和 app.js 都

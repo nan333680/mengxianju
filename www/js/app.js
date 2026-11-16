@@ -182,6 +182,8 @@ const DEFAULTS = {
   liveV2: true,
   typingDelay: 1.0, showTyping: true, hesitation: true,
   longMemory: false, theme: 'dark', themeColor: 'violet', fontSize: 15, showUsage: false,
+  // 聊天背景（v0.5.7.4）：暗化默认 50 —— 给 0 的话第一次选完背景会被自己的照片晃到眼。
+  bgDim: 50, bgBlur: 0,
   // 朗读（v1.21.56）：她说完自动读出来。默认关 —— 不是所有人任何时候都想被念出声。
   ttsOn: false,
   // 默认【关】：你手动加的记忆，整理时原样保留，她不许改也不许删
@@ -1614,6 +1616,72 @@ function applyTheme() {
   st.setProperty('--bubble-fg', v.bubbleFg);
   st.setProperty('--fs', S.fontSize + 'px');
   renderSwatches();
+  applyChatBg();
+}
+
+/* ---------------- 聊天背景（v0.5.7.4） ---------------- */
+
+// 图的缓存：滑杆拖动时不必每次都读一遍库。undefined = 还没读过。
+let _bgImg; _bgImg = undefined;
+let _bgImgLoaded = false;
+
+/**
+ * 把 kv 里的背景图 + S 里的暗化/模糊写到 CSS 变量上。
+ * force=true 时才重读库（选完新图之后）。
+ */
+async function applyChatBg(force) {
+  const st = document.documentElement.style;
+  if (force || !_bgImgLoaded) {
+    try { _bgImg = (await kv.get('bgImg', '')) || ''; } catch { _bgImg = ''; }
+    _bgImgLoaded = true;
+  }
+  const img = _bgImg;
+  st.setProperty('--bg-img', img ? 'url("' + img + '")' : 'none');
+  st.setProperty('--bg-dim', String((Number(S.bgDim) || 0) / 100));
+  st.setProperty('--bg-blur', (Number(S.bgBlur) || 0) + 'px');
+
+  const th = document.getElementById('s-bg-thumb');
+  if (th) {
+    if (img) { th.style.backgroundImage = 'url("' + img + '")'; th.classList.add('has'); }
+    else { th.style.backgroundImage = ''; th.classList.remove('has'); }
+  }
+  const d1 = document.getElementById('v-bgdim');
+  if (d1) d1.textContent = String(S.bgDim ?? 50);
+  const d2 = document.getElementById('v-bgblur');
+  if (d2) d2.textContent = String(S.bgBlur ?? 0);
+  // 没选图时两个滑杆灰着 —— 否则用户会对着一个没反应的滑杆调半天
+  for (const id of ['s-bgdim', 's-bgblur']) {
+    const el = document.getElementById(id);
+    if (el) { if (img) el.removeAttribute('disabled'); else el.setAttribute('disabled', ''); }
+  }
+}
+
+/**
+ * 选一张图当聊天背景。
+ * ⚠️ 不经过 canvas：FileReader 原样读，透明 / EXIF 方向 / 格式全部保留。
+ *    只有超过 8MB 的才缩（普通手机截图 1~4MB，一个字节都不改）。
+ */
+async function pickChatBg() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    let url = '';
+    try { url = await fileToDataUrl(f); }
+    catch (e) { toast('这张图读不出来：' + ((e && e.message) || e)); return; }
+    if (f.size > 8 * 1024 * 1024) {
+      try {
+        url = await compressImage(url, 2048, 0.9);
+        toast('这张太大（' + Math.round(f.size / 1048576) + 'MB），已缩到长边 2048', 3600);
+      } catch { /* 缩不了就用原图 */ }
+    }
+    try { await kv.set('bgImg', url); }
+    catch (e) { toast('存不下来：' + ((e && e.message) || e)); return; }
+    await applyChatBg(true);
+  };
+  inp.click();
 }
 
 /**
@@ -18567,6 +18635,18 @@ function bindSettings() {
   };
 
   $('s-theme').onchange = async e => { await saveSettings({ theme: e.target.value }); applyTheme(); };
+  // 聊天背景（v0.5.7.4）
+  $('s-bg-pick').onclick = () => pickChatBg();
+  $('s-bgdim').oninput = e => {
+    $('v-bgdim').textContent = e.target.value;
+    saveSettings({ bgDim: Number(e.target.value) });
+    applyChatBg();
+  };
+  $('s-bgblur').oninput = e => {
+    $('v-bgblur').textContent = e.target.value;
+    saveSettings({ bgBlur: Number(e.target.value) });
+    applyChatBg();
+  };
   $('s-font').oninput = e => { $('v-font').textContent = e.target.value; saveSettings({ fontSize: Number(e.target.value) }); applyTheme(); };
   $('s-showusage').onchange = async e => {
     await saveSettings({ showUsage: e.target.checked });
@@ -19688,7 +19768,9 @@ const BACKUP_KV_PREFIXES = [
 //    酒馆正则那份表就是：用户从卡/预设里收进来、又逐条开关过的东西，
 //    是【他自己的设置】，换台机器导回去当然要跟着走 ——
 //    漏了它，"导出全部数据"就成了半个备份，而且没人会发现少了什么。
-const BACKUP_EXACT_KEYS = ['stRegex'];
+// bgImg 是聊天背景（v0.5.7.4）。它不进 WIPE_CHAT_PREFIXES（那是前缀表，没有一条命中 bgImg），
+// 所以「清空聊天」不会删掉背景图 —— 那是想要的。
+const BACKUP_EXACT_KEYS = ['stRegex', 'bgImg'];
 
 /** 清空聊天时要【一起】清掉的键（v0.5.0.2）。
  *  就是备份表去掉 arc：那几个全是「这段对话的记账」，对话没了它们毫无意义。

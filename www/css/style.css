@@ -9,6 +9,9 @@
   /* 色板（v0.5.7.4）：运行时由 applyTheme 写 inline style 覆盖，这里只兜底 */
   --pri-text:var(--pri); --btn:var(--pri); --btn-fg:#fff; --bubble-fg:#fff;
   --fs:15px;
+  /* 聊天背景（v0.5.7.4）：图挂在一个真实 div 上（不是伪元素，因为 .view.active::after
+     已经被左缘投影占着）。遮罩单独一层，让 filter:blur 只作用于图、不吃遮罩。 */
+  --bg-img:none; --bg-dim:0.5; --bg-dim-color:#000; --bg-blur:0px;
   /* 系统栏占位。CSS 里能直接用 env()，但 JS 读不到 —— 长按菜单要靠它避让，
      所以在这里落成变量给 JS 取（见 placeMenu）。 */
   --sat:env(safe-area-inset-top, 0px);
@@ -16,6 +19,7 @@
 }
 [data-theme="light"]{
   --bg:#f5f6fa; --bg2:#ffffff; --bg3:#eef0f6; --line:#e0e3ec;
+  --bg-dim-color:#fff;
   --fg:#1c1e26; --fg2:#5a6078; --fg3:#8b91a8;
   --pri:#6d5ce0; --pri2:#8b7cf6;
   --bubble-me:#6d5ce0; --bubble-ai:#ffffff;
@@ -2361,3 +2365,16 @@ input[type="range"] { touch-action: pan-y; }
 .swatch{ aspect-ratio:1; border-radius:50%; border:2px solid transparent; cursor:pointer;
   padding:0; -webkit-appearance:none; appearance:none; }
 .swatch.on{ border-color:var(--fg); box-shadow:0 0 0 2px var(--bg3); }
+
+/* ===== 聊天背景（v0.5.7.4） ===== */
+/* 为什么是真实 div 而不是 #view-chat 的伪元素：.view.active::after 已经被左缘投影占着，
+   两套属性会合到同一个伪元素上 —— 遮罩会带上投影，opacity 又把投影一起调透明。
+   .bg-img 用负 inset 把图放大一圈，模糊后四边不留白边，所以不需要 scale。 */
+#chat-bg{ position:absolute; inset:0; z-index:-2; overflow:hidden; pointer-events:none; }
+#chat-bg .bg-img{ position:absolute; inset:-14px; background-image:var(--bg-img);
+  background-size:cover; background-position:center; filter:blur(var(--bg-blur)); }
+#chat-bg .bg-dim{ position:absolute; inset:0; background:var(--bg-dim-color); opacity:var(--bg-dim); }
+
+.bg-thumb{ width:60px; height:100px; border-radius:10px; border:1px dashed var(--line);
+  margin:-2px 0 12px; background-size:cover; background-position:center; }
+.bg-thumb.has{ border-style:solid; }

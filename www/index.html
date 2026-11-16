@@ -11,6 +11,8 @@
 
 <!-- ============ 聊天 ============ -->
 <div id="view-chat" class="view active">
+  <!-- 聊天背景（v0.5.7.4）：图和遮罩分两层，遮罩不进 blur 的作用域 -->
+  <div id="chat-bg" aria-hidden="true"><div class="bg-img"></div><div class="bg-dim"></div></div>
   <header class="topbar">
     <button class="icon-btn" id="btn-chars" title="角色" data-i18n-en-title="Character">☰</button>
     <div class="title" id="chat-title" data-i18n-nodes>
@@ -1132,6 +1134,18 @@
           <label class="field" data-i18n-nodes><span><span data-i18n-en="Font size">字体大小</span> <b id="v-font">15</b></span>
             <input id="s-font" type="range" min="12" max="22" step="1" value="15">
           </label>
+          <!-- 聊天背景（v0.5.7.4）：只挂聊天页（#view-chat），不挂 body —— 书架 / 阅读 / 设置各有底色 -->
+          <div class="field" data-i18n-nodes><span data-i18n-en="Chat background">聊天背景</span>
+            <button class="ghost-btn" id="s-bg-pick" type="button" data-i18n-en="Choose image">更换</button>
+          </div>
+          <div class="bg-thumb" id="s-bg-thumb"></div>
+          <label class="field" data-i18n-nodes><span><span data-i18n-en="Darken">暗化</span> <b id="v-bgdim">50</b>%</span>
+            <input id="s-bgdim" type="range" min="0" max="100" step="5" value="50">
+          </label>
+          <label class="field" data-i18n-nodes><span><span data-i18n-en="Blur">模糊</span> <b id="v-bgblur">0</b>px</span>
+            <input id="s-bgblur" type="range" min="0" max="20" step="1" value="0">
+          </label>
+          <p class="hint-text" data-i18n-en="Pick an image for the chat background. Higher darkening keeps text readable; blur stops it from competing with the bubbles. Both sliders do nothing until you pick an image.">选一张图当聊天背景。暗化越高字越清楚，模糊让背景不抢注意力。没有选图时这两个滑杆不起作用。</p>
           <label class="field row" data-i18n-nodes><span data-i18n-en="Show token usage">显示 token 使用量</span>
             <input id="s-showusage" type="checkbox">
           </label>

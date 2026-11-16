@@ -2378,3 +2378,8 @@ input[type="range"] { touch-action: pan-y; }
 .bg-thumb{ width:60px; height:100px; border-radius:10px; border:1px dashed var(--line);
   margin:-2px 0 12px; background-size:cover; background-position:center; }
 .bg-thumb.has{ border-style:solid; }
+
+/* 聊天背景的两个按钮并排（v0.5.7.5）：原来只有一个「更换」，
+   用户设完图发现撤不掉 —— 得单独给一个「清除」。 */
+.bg-acts{ display:flex; gap:8px; }
+.bg-acts .ghost-btn{ flex:1; }

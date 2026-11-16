@@ -1649,8 +1649,8 @@ async function applyChatBg(force) {
   if (d1) d1.textContent = String(S.bgDim ?? 50);
   const d2 = document.getElementById('v-bgblur');
   if (d2) d2.textContent = String(S.bgBlur ?? 0);
-  // 没选图时两个滑杆灰着 —— 否则用户会对着一个没反应的滑杆调半天
-  for (const id of ['s-bgdim', 's-bgblur']) {
+  // 没选图时两个滑杆和「清除」都灰着 —— 否则用户会对着一个没反应的控件调半天
+  for (const id of ['s-bgdim', 's-bgblur', 's-bg-clear']) {
     const el = document.getElementById(id);
     if (el) { if (img) el.removeAttribute('disabled'); else el.setAttribute('disabled', ''); }
   }
@@ -18637,6 +18637,14 @@ function bindSettings() {
   $('s-theme').onchange = async e => { await saveSettings({ theme: e.target.value }); applyTheme(); };
   // 聊天背景（v0.5.7.4）
   $('s-bg-pick').onclick = () => pickChatBg();
+  // 清除（v0.5.7.5）：只删 kv 里那张图，暗化/模糊的数值留着 ——
+  // 下次再选图时直接沿用上次调好的观感，不用重新调。
+  $('s-bg-clear').onclick = async () => {
+    try { await kv.del('bgImg'); }
+    catch (e) { toast('清除失败：' + ((e && e.message) || e)); return; }
+    await applyChatBg(true);
+    toast('背景已清除');
+  };
   $('s-bgdim').oninput = e => {
     $('v-bgdim').textContent = e.target.value;
     saveSettings({ bgDim: Number(e.target.value) });

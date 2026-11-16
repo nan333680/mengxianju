@@ -43,13 +43,13 @@ const none = await page.evaluate(() => ({
   imgVar: getComputedStyle(document.documentElement).getPropertyValue('--bg-img').trim(),
   dimVar: getComputedStyle(document.documentElement).getPropertyValue('--bg-dim').trim(),
   blurVar: getComputedStyle(document.documentElement).getPropertyValue('--bg-blur').trim(),
-  sliders: ['s-bgdim','s-bgblur'].map(id => { const e = document.getElementById(id); return e ? e.hasAttribute('disabled') : null; })
+  sliders: ['s-bgdim','s-bgblur','s-bg-clear'].map(id => { const e = document.getElementById(id); return e ? e.hasAttribute('disabled') : null; })
 }));
 t('#chat-bg 挂在 #view-chat 里（不是 body）', none.parent === 'view-chat', '父节点=' + none.parent);
 t('没图时 --bg-img 是 none', none.imgVar === 'none', none.imgVar);
 t('暗化默认 50%', none.dimVar === '0.5', none.dimVar);
 t('模糊默认 0px', none.blurVar === '0px', none.blurVar);
-t('没图时两个滑杆都是灰的', none.sliders[0] === true && none.sliders[1] === true, JSON.stringify(none.sliders));
+t('没图时两个滑杆和「清除」都是灰的', none.sliders.every(x => x === true), JSON.stringify(none.sliders));
 
 console.log('=== 塞一张图进库，重载 ===');
 const dataUrl = await page.evaluate(() => {
@@ -94,6 +94,34 @@ const keep = await page.evaluate(async () => {
   return typeof v === 'string' && v.startsWith('data:image');
 });
 t('清空/重载之后 bgImg 仍在库里', keep === true, String(keep));
+
+console.log('=== 清除背景（v0.5.7.5） ===');
+// 背景这组控件的事件是在「我的设置」页初始化时绑的（不随启动绑），
+// 所以必须先真的进一次设置页，否则 onclick 是 null。
+await page.evaluate(() => document.getElementById('btn-settings').click()); await sleep(700);
+await page.evaluate(() => { const b=[...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x=>x.dataset.wbDrawer==='mine'); if(b)b.click(); }); await sleep(800);
+const diag = await page.evaluate(() => {
+  const el = document.getElementById('s-bg-clear');
+  return { exists: !!el, handler: el ? typeof el.onclick : 'no-el', disabled: el ? el.hasAttribute('disabled') : null };
+});
+console.log('   [诊断] ' + JSON.stringify(diag));
+const clearBefore = await page.evaluate(() => document.getElementById('s-bg-clear').hasAttribute('disabled'));
+t('有图时「清除」可点', clearBefore === false, String(clearBefore));
+await page.evaluate(() => document.getElementById('s-bg-clear').click());
+await sleep(450);
+const afterClear = await page.evaluate(async () => {
+  const { kv } = await import('./js/db.js');
+  return {
+    imgVar: getComputedStyle(document.documentElement).getPropertyValue('--bg-img').trim(),
+    bgImage: document.querySelector('#chat-bg .bg-img') ? getComputedStyle(document.querySelector('#chat-bg .bg-img')).backgroundImage : '',
+    clearDisabled: document.getElementById('s-bg-clear').hasAttribute('disabled'),
+    inDb: await kv.get('bgImg', '')
+  };
+});
+t('点清除后 --bg-img 变 none', afterClear.imgVar === 'none', afterClear.imgVar);
+t('图那一层的背景也清掉了', afterClear.bgImage === 'none' || afterClear.bgImage === '', afterClear.bgImage);
+t('kv 里的 bgImg 真的删了', !afterClear.inDb, String(afterClear.inDb));
+t('清除后按钮自己变灰', afterClear.clearDisabled === true, String(afterClear.clearDisabled));
 
 t('页内没有 JS 异常', errs.length === 0, errs.join(' | '));
 console.log('');

@@ -1,6 +1,6 @@
 # 梦弦居 · 进度交接
 
-> 最后更新：2026-11-13 22:50
+> 最后更新：2026-11-17 14:10
 > 这份文档的用途：换一个人（或者换一个 AI 对话）接手时，不用翻几万条历史也能知道**现在到哪了**。
 >
 > 写作约定：
@@ -42,7 +42,7 @@
 | 前端 | 原生 ES modules，**无构建步骤** | 改完刷新即生效 |
 | 存储 | IndexedDB（`ai-companion`） | characters / messages / kv / memories / wbGroups / wbSolo / scenes |
 | 本地向量 | `bge-small-zh-v1.5` 量化版（24MB，APK 自带，ONNX 原生） | `embedding.js`，**async，过原生桥** |
-| 测试 | Puppeteer + 本地 http server + hijack `fetch` | 173 套 `e2e/e2e-*.mjs` |
+| 测试 | Puppeteer + 本地 http server + hijack `fetch` | 174 套 `e2e/e2e-*.mjs` |
 | CI | GitHub Actions `windows-latest` | 只跑不需要真 key 的那批 |
 | 类型检查 | `tsc --noEmit` 只看语法 | 28 条历史类型噪音，语法错必须 0 |
 
@@ -53,9 +53,9 @@ A-Apk/
 ├── www/                 全部前端源码（唯一源目录）
 │   ├── index.html       单页，所有视图都在这里
 │   ├── css/
-│   └── js/              36 个模块
+│   └── js/              37 个模块
 ├── android/             Capacitor 壳 + build.gradle（版本号在这里）
-├── e2e/                 173 套回归
+├── e2e/                 174 套回归
 ├── tools/               构建 / 回归 / 静态检查 / 版本号 / 发版自检
 ├── docs/                9 份文档
 ├── assets/
@@ -65,7 +65,7 @@ A-Apk/
 └── release.keystore     签名（不入库，但在本机）
 ```
 
-### 2.3 核心模块（`www/js/`，36 个）
+### 2.3 核心模块（`www/js/`，37 个）
 
 | 模块 | 职责 |
 | --- | --- |
@@ -82,6 +82,7 @@ A-Apk/
 | `scene.js` / `scenectx.js` / `scenegen.js` / `prose.js` | 开一场戏 / 阅读页 / 小说层 |
 | `charcard.js` / `ccv3.js` / `stchat.js` / `stregex.js` | 角色卡 V2/V3、酒馆聊天记录、酒馆正则 |
 | `updater.js` | 检查更新（5 源竞速，取版本最大） |
+| `theme.js` | 主题色板：18 色表 + 对比度计算（纯函数，node 里直接跑表） |
 | `embedding.js` | 本地向量（复读检测、语义去重） |
 | `i18n.js` | 中/英（中文必须逐字不变） |
 | `autobackup.js` / `exportmd.js` / `presets.js` / `stylecard.js` | 备份、导出 Markdown、预设、风格卡 |
@@ -92,7 +93,7 @@ A-Apk/
 
 | 目的 | 命令 |
 | --- | --- |
-| 全量回归 | `pwsh -NoProfile -File tools/run-regression.ps1`（173 套，约 62 分钟） |
+| 全量回归 | `pwsh -NoProfile -File tools/run-regression.ps1`（174 套，约 65 分钟） |
 | 单套 | `node e2e/e2e-xxx.mjs` |
 | 静态检查 | `node tools/ci-check.mjs` |
 | 改版本号 | `node tools/bump-version.mjs <版本> <versionCode>`（一次改四处） |
@@ -339,25 +340,25 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | 项 | 值 |
 | --- | --- |
 | 线上最新公开版 | **0.5.7 / versionCode 192**（Release `v0.5.7`，asset `739203945`，53,991,314 字节，sha256 `97703B7F…`） |
-| 本地工作版本 | **0.5.7.4 / versionCode 196**（测试版，未上传；菜单位置对齐 + 18 套主题色 + 聊天背景） |
-| 最后一次全量回归 | **0.5.7.3 这版：172 套 / 4599 项 / 0 失败 / 62.8 分钟** ← 全绿，R7 满足<br>⚠️ **跑的是「去掉 `&& resolved.length` 之前」的代码** —— 改完那两处只单跑了 `e2e-scenelog`（54 项，含新增的「全是编造条目」两条），没有重跑全量。改动只在 `mergeThreads` 的写回条件上，只有 `e2e-scenelog` 覆盖它<br>上一版是 0.5.7.2：172 套 / 4573 项 / 0 失败 / 63.1 分钟 |
-| 之后新增/修改 | 0.5.7.3：`app.js` 9 处（`pendingThreads` / `threadMatch`+`threadDone` / `mergeThreads` / `buildPrevScenes` / `beginScene` 算 prevCtx / `writeScene` 传 prevCtx+台账 / `sceneLogHtml` 台账出口 / `trashScene` 回滚 / 备份与清空前缀表）、`scene.js` 5 处（`PREV_CTX_MAX` / `emptyScene` / `normalizeScene` / `normalizeLog` / `sceneProsePrompt` / `sceneLogPrompt`）、`scenegen.js` 4 处 + `e2e-scenelog` 从 28 项扩到 54 项 |
-| 本版跑过的 e2e | **全量 172 套 / 4599 项 / 0 失败** ✅（62.8 分钟，2026-11-16 21:10）<br>`e2e-scene` 110 / `e2e-scenelog` 52 / `e2e-scenectx` 38 / `e2e-scene-clock` 38，四个小说套件全绿 |
-| e2e 总套数 | 172 套进了全量 |
-| 最新 APK | `桌面\mxj\梦弦居-v0.5.7.4.apk`（ASCII 副本 `mengxianju-v0.5.7.4.apk`），54,016,825 字节，sha256 `8E7B10F676CC2856…`，2026-11-16 23:57，签名验证通过（apksigner 退出码 0）；归档 `releases/v0.5.7.4`（**不含回归日志**：脚本检测到 `_regress.log` 与 `app.js` 同为 23:55，判「跑完后改过代码」）<br>上一版 0.5.7.3：`桌面\mxj\梦弦居-v0.5.7.3.apk`（ASCII 副本 `mengxianju-v0.5.7.3.apk` 才是上传用的），54,009,706 字节，sha256 `3F1356E077596E90892DF0EA4AEF9F12BB9221A0A71FA5B4119462D29DCF2FDE`，2026-11-16 21:11，签名验证通过（apksigner 退出码 0）；归档在 `releases/v0.5.7.3`（**不含回归日志**，脚本自己检测到 `_regress.log` 比 `app.js` 旧） |
+| 本地工作版本 | **0.5.7.5 / versionCode 197**（测试版，未上传；背景清除出口 + 气泡不透明度 + 送达脚本 1190） |
+| 最后一次全量回归 | **0.5.7.5 这版：174 套 / 4645 项 / 0 失败 / 64.5 分钟** ← 全绿，R7 满足<br>✅ 跑的就是最终代码（`1aaa25c`），不复存在 0.5.7.3 那种「跑完又改过」的缺口<br>上一版 0.5.7.4：174 套 / 4635 项 / **1 失败** / 63.2 分钟（失败的是 `e2e-greetswipe` 的旧断言 —— 它无条件点「更多…」，改完单跑 17/0）；再上一版 0.5.7.3：172 套 / 4599 项 / 0 失败 / 62.8 分钟 |
+| 之后新增/修改 | **0.5.7.5**：`app.js` 两处（`applyChatBg()` 没图时强制 `--bubble-alpha:1`、`s-bg-clear` 连 `_bgImg` 缓存一起清）、`e2e-chatbg` 13→22 项、`serve-and-shutdown.py` 设关机前先 `shutdown /a`。**0.5.7.4**：`PRIMARY_K` 重排 / 新增 `theme.js` / 9 处 `color-mix` / `#chat-bg` 两层 + 三个滑杆。<br>0.5.7.3：`app.js` 9 处（`pendingThreads` / `threadMatch`+`threadDone` / `mergeThreads` / `buildPrevScenes` / `beginScene` 算 prevCtx / `writeScene` 传 prevCtx+台账 / `sceneLogHtml` 台账出口 / `trashScene` 回滚 / 备份与清空前缀表）、`scene.js` 5 处（`PREV_CTX_MAX` / `emptyScene` / `normalizeScene` / `normalizeLog` / `sceneProsePrompt` / `sceneLogPrompt`）、`scenegen.js` 4 处 + `e2e-scenelog` 从 28 项扩到 54 项 |
+| 本版跑过的 e2e | **全量 174 套 / 4645 项 / 0 失败** ✅（64.5 分钟，2026-11-17 01:17）<br>`e2e-theme` 22 / `e2e-chatbg` 22 / `e2e-menu` 19 / `e2e-settings` 55，主题与背景相关套件全绿 |
+| e2e 总套数 | 174 套进了全量（`e2e/` 下 176 个文件，减掉 `e2e-helper` / `e2e-src`） |
+| 最新 APK | `桌面\mxj\梦弦居-v0.5.7.5.apk`（ASCII 副本 `mengxianju-v0.5.7.5.apk`），54,018,001 字节，sha256 `1EC69BBE96C16F5EBEA1B975D03D4F5DD380246E738173B31C2CA16F311585AF`，2026-11-17 01:18，签名验证通过（apksigner 退出码 0）；归档 `releases/v0.5.7.5`（**含** `_regress-0.5.7.5.log`）<br>上一版 0.5.7.4：54,016,825 字节，sha256 `8E7B10F676CC2856…`，归档不含回归日志（脚本判「跑完后改过代码」）<br>再上一版 0.5.7.3：`桌面\mxj\梦弦居-v0.5.7.3.apk`（ASCII 副本 `mengxianju-v0.5.7.3.apk` 才是上传用的），54,009,706 字节，sha256 `3F1356E077596E90892DF0EA4AEF9F12BB9221A0A71FA5B4119462D29DCF2FDE`，2026-11-16 21:11，签名验证通过（apksigner 退出码 0）；归档在 `releases/v0.5.7.3`（**不含回归日志**，脚本自己检测到 `_regress.log` 比 `app.js` 旧） |
 | `version.json` | **仍是线上 0.5.7 / 192**（`8fb7df9` 起构建脚本已不写它） |
-| git | HEAD = `85eb7c0`（0.5.7.4 全部改动已提交） |
-| 远端 | `origin/main` = `85eb7c0`（已推送；头几次推送触发的 CI 红在测试断言上，见变更记录） |
-| 睡前送达 | `tools/serve-and-shutdown.py` 在 23:57 由构建脚本拉起（pythonw PID 14084，监听 `0.0.0.0:8899`），手机打开 `http://10.191.57.9:8899/latest.html`，APK 传完 60 秒后自动关机 |
+| git | HEAD = `1aaa25c`（0.5.7.5 全部改动已提交）+ 本次文档同步提交 |
+| 远端 | `origin/main` = 本次文档同步提交（同步前与本地同为 `1aaa25c`，无领先/落后） |
+| 睡前送达 | 已完成：2026-11-17 01:20:24–01:20:27 手机（`10.191.57.143`）取件、传输完成，随后触发 60 秒关机。现在 **`shutdown /a` 返回 1116**（无挂起安排）、8899 不再监听，环境干净 |
 | 被忽略的人设素材 | `_yuy_ref/`、`_yukari/`、`_suwako/`、`人设卡写作规格.md`、`八云紫-写卡提示词.md` |
 
 ### 10.2 卡点（按优先级）
 
-1. **0.5.7.3 全量回归已绿，但有一个诚实缺口** —— 那 172 套跑的是「去掉 `&& resolved.length` 之前」的代码；改完那两处只单跑了 `e2e-scenelog`（54 项），没有重跑全量。改动只在 `mergeThreads` 的写回条件上，也只有那套覆盖它。要彻底干净就重跑一次全量（65 分钟）。
-2. **要真机验证的三件事**（APK 已出，装桌面那个 0.5.7.3）：① **连写 3 段，读第 3 段接不接得上** —— 写了前两段没提过的事 / 把已完成的事当成还没发生 / 把开场又写一遍，三种任一出现就算「还是失忆」；② 连写刚结束，长按**你自己发的**那条能不能弹菜单；③ 「这一轮用了什么」里 `gl`/`ur`/`by` 还在不在。<br>② 和 ① 是一对：②好了而①还失忆 → 历史链没问题，是前情没喂进去或喂了她没写。
+1. **全量回归已无缺口** —— 0.5.7.5 那 174 套跑的就是最终代码（`1aaa25c`），一次全绿；0.5.7.3 遗留的「跑完又改过」已由这一轮补上。下次动代码之后仍要重跑（约 65 分钟）。
+2. **要真机看的三件事**（手机已装 0.5.7.5）：① **18 套主题色里黄 / 青绿 / 青** —— 这三套的按钮为保住白字被压到 `l = 29`，深浅两套都是，看起来是暗褐黄 / 深青，能不能接受；② **气泡不透明度降到 60%** 时，深色主题下她那条气泡的**边**还在不在（`--bubble-ai` 与 `--line` 是同一档灰，图透上来容易糊掉边界）；③ **清除**真的回到纯色底、滑杆跟着变灰。<br>这三条回归都证明不了 —— 前两条是观感，第三条 0.5.7.5 的 e2e 验的是「点了之后变量/库/按钮三处都对」，不是「手机上真的看起来对」。
 3. **删场回滚那条不要真机验** —— `prevCtx` 没有可视化，第 3 场没提那条伏笔时分不清「没喂进去」还是「喂了她没写」，真机上归因不了。它留在 `e2e-scenelog` 里（含删场回滚 4 条、编造条目 2 条）。真机唯一能看到的是结束页那句「这一场了结了：…」，它只证明台账那一端在工作。
 4. **台账是角色级的，伏笔是作品级的** —— 删角色保作品（`detachChar`）时场次 `charId` 置空，`threads:<原id>` 成孤儿。第六步 `bookId` 落地后键应迁到 `threads:<bookId>`，否则一个角色归到两本书里会共用一份伏笔账。
-5. **0.5.7.3 的代码已提交 `d343787` 并推送到远端**（`git ls-remote` 与本地同为 `d343787`）—— 按测试版处理，没打 tag、没建 Release、`version.json` 没动。
+5. **0.5.7.4 / 0.5.7.5 的代码已提交并推送到远端**（提交前 HEAD `1aaa25c`）—— 按测试版处理，没打 tag、没建 Release、`version.json` 仍是线上 `0.5.7 / 192`，没动。
 6. 之后的公开发版要等你明确要求（R12），攒成一个三位数版本走完整流程。
 7. **写后核对 / 局部重写 / 书层** 按计划推后 —— 先看这一版真机结果再定要不要付那 5 次请求的钱。
 
@@ -394,3 +395,7 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | 2026-11-16 23:57 | 两轮 CI 红都是**测试写法过时**，不是产品 bug：① `e2e-i18n` 扫到色块的中文 `title` → 加 `en` 字段；② `e2e-segrewrite` / `e2e-greetswipe` 无条件点「更多…」把一级换掉 → 改成先查一级；③ `e2e-v040fix` 用精确字面量匹配 `BACKUP_EXACT_KEYS = ['stRegex']`，加了 `bgImg` 就误红 → 改成不排他的正则 | `6cedf68` / `65e59a9` 两轮 annotations；修后各自单跑 31/0、14/0、18/0、17/0 |
 | 2026-11-16 23:57 | 新增睡前送达链：`tools/serve-and-shutdown.py`（覆写 `copyfile` 判真正传完才关机）、`tools/serve-apk.ps1`（日常共享不关机）、`build-apk.ps1` 末尾生成 `latest.html` + `mengxianju-latest.apk` + 桌面 `手机下载地址.txt` 并拉起服务 | 构建输出：`手机打开：http://10.191.57.9:8899/latest.html`；实测 `latest.html` 200、APK HEAD 200 / 54,016,825 字节 |
 | 2026-11-16 21:55 | 更正 10.1 / 10.2 的 git 行：0.5.7.3 已于 21:15 提交 `d343787` 并推送，工作区干净（原文写「未提交」） | `git log -1 --date=format:'%H:%M'` + `git ls-remote origin refs/heads/main` 均为 `d343787` |
+| 2026-11-17 01:18 | **0.5.7.5 完成**：①背景「清除」出口（连 `_bgImg` 缓存一起清）；②气泡不透明度（`--bubble-me-rgb` + `--bubble-alpha`，只在有背景图时生效）；③送达脚本设关机前先 `shutdown /a`（否则 1190） | `e2e-chatbg` 13→22 项全绿；全量 **174 套 / 4645 项 / 0 失败 / 64.5 分钟**（`_regress-0575.log` 末尾 `DONE`）；APK 54,018,001 字节 sha256 `1EC69BBE…`，`apksigner` 退出 0 |
+| 2026-11-17 01:20 | 手机（`10.191.57.143`）从 `10.191.57.9:8899` 取件，01:20:24–01:20:27 传输完成，随后触发 60 秒关机；用户装好后用了几个小时 | 送达日志；本轮 `shutdown /a` 返回 **1116**（无挂起安排）、8899 已停 |
+| 2026-11-17 14:xx | **文档与代码对齐**（用户要求「把 GitHub 上的内容同步一下，有的数据对不上」）：README（校准版本 → 0.5.7.5；套数 172→174；项数 4599→4645；分钟 62.8→64.5；CI 清单 33→42；示例卡不再承诺「两张」→ 改写成 App 内置示例卡 + `examples/` 里同一张；新增「外观」与「菜单顺序」两节）、CHANGELOG（补 0.5.7.4 / 0.5.7.5 两节，含 `release-notes` 标记块）、版本编年史（补两版指纹与回归数据）、PROGRESS（本文件） | 真实值来自 `_regress-0575.log`、`ci.yml`（去重 42 套）、`e2e/` 176 个文件 − 2；色板数字用 `www/js/theme.js` 当场复算（按钮 4.79 / 气泡 5.25 / 6 组 `l = 29`） |
+| 2026-11-17 14:xx | **更正一条自己的错记**：0.5.7.4 首轮那 1 失败是 `e2e-greetswipe`（旧断言无条件点「更多…」），**不是** `e2e-chatbg`（那套当时只有 13 项、没有清除断言）。README / CHANGELOG / 编年史三处已改 | `_regress-0574b.log` 里唯一一行 `FAIL e2e-greetswipe.mjs 通过 16 项，失败 1 项` |

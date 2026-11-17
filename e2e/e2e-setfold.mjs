@@ -167,7 +167,9 @@ await page.evaluate(() => { const f = document.getElementById('clock-fold'); if 
 await sleep(700);
 const hOpen = await page.$eval('#view-settings main.scroll', el => el.scrollHeight);
 console.log('   设置页内容高度：收起 ' + hClosed + 'px / 展开 ' + hOpen + 'px');
-t('收起后设置页明显短了', hOpen - hClosed > 300, '短了 ' + (hOpen - hClosed) + 'px');
+// ⚠️ 0.5.7.7：说明文字精简后整页变矮（展开态 1909px），差值掉到 260px。
+//    原来 300px 这个阈值是按「旧文案展开态」定的，不是产品退化 —— 260px 仍是一整块面板。
+t('收起后设置页明显短了', hOpen - hClosed > 200, '短了 ' + (hOpen - hClosed) + 'px');
 
 console.log('');
 t('全程无 JS 错误', errs.length===0, errs.slice(0,3).join(' | '));

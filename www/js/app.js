@@ -13992,7 +13992,7 @@ async function renderGroupMemberPage() {
   const m = allChars.find(x => x.id === _gmId);
   if (!isGroup(g) || !m) { goBack(); return; }
   const cfg = memberCfgOf(g, m.id);
-  $('gm-title').textContent = '她在群里';
+  $('gm-title').textContent = '角色在本群';
   $('gm-avatar').innerHTML = m.avatar
     ? '<img src="' + esc(m.avatar) + '" style="width:100%;height:100%;object-fit:cover">' : '🎎';
   $('gm-name').textContent = m.name || '';
@@ -14000,7 +14000,7 @@ async function renderGroupMemberPage() {
   $('gm-sub').textContent = '她在「' + (g.name || '这个群') + '」里 · 只影响这个群'
     + (joined ? (' · ' + new Date(joined).toLocaleDateString('zh-CN') + ' 加入') : '');
   const items = personaItemsOf(cfg);
-  $('gm-persona-brief').textContent = items.length ? ('已覆盖 · ' + items.length + ' 条') : '跟随她本人';
+  $('gm-persona-brief').textContent = items.length ? ('已覆盖 · ' + items.length + ' 条') : '跟随角色本身';
   const note = String(cfg.note || '').trim();
   $('gm-note-brief').textContent = note ? (note.slice(0, 14) + (note.length > 14 ? '…' : '')) : '没写';
   const views = (cfg.views && typeof cfg.views === 'object') ? cfg.views : {};
@@ -14051,13 +14051,13 @@ async function renderGroupMemberPage() {
   $('gm-params-open').onclick = () => { openGroupParamsEditor(_gId, _gmId); };
   $('gm-full').onclick = () => { openCharEdit(m.id); };
   $('gm-reset').onclick = async () => {
-    const ok = await confirmBox('恢复成跟随她本人',
+    const ok = await confirmBox('恢复成跟随角色本身',
       '<p>把「' + esc(m.name) + '」在<b>这个群里</b>的全部单独设置清掉？</p>'
       + '<p>清掉之后她在这个群里就是用她自己那份设定。<b>她本人的卡一个字都不会动。</b></p>', '恢复');
     if (!ok) return;
     await memberCfgWrite(_gId, _gmId, { note: null, persona: null, personaItems: null, muted: null, talk: null, speak: null, actOnly: null, views: null, params: null });
     await renderGroupMemberPage();
-    toast('已恢复成跟随她本人');
+    toast('已恢复成跟随角色本身');
   };
 }
 
@@ -14087,7 +14087,7 @@ function openGroupPersonaEditor(gid, cid) {
     if (el) el.textContent = '共 ' + n + ' / ' + GROUP_PERSONA_MAX + ' 字（超出的部分会被截掉）';
   };
   const draw = () => {
-    box.innerHTML = '<p class="hint-text" style="margin:0 0 10px">这里写的会<b>替换</b>她自己的设定，只在这个群生效。全部都空 = 跟随她本人。</p>'
+    box.innerHTML = '<p class="hint-text" style="margin:0 0 10px">这里写的会<b>替换</b>角色自己的设定，只在这个群生效。全部都空 = 跟随角色本身。</p>'
       + items.map((it, i) => '<div class="gp-item" data-i="' + i + '">'
           + '<div class="gp-row"><input type="text" data-t="' + i + '" placeholder="这条叫什么（可以空着）" value="' + esc(it.t) + '">'
           + '<button class="icon-btn" data-del="' + i + '">✕</button></div>'
@@ -14125,7 +14125,7 @@ function openGroupPersonaEditor(gid, cid) {
     });
     $('modal').classList.add('hidden');
     await renderGroupMemberPage();
-    toast(clean.length ? '改好了（只在这个群里生效）' : '已恢复成跟随她本人');
+    toast(clean.length ? '改好了（只在这个群里生效）' : '已恢复成跟随角色本身');
   };
 }
 
@@ -14206,11 +14206,11 @@ function openGroupParamsEditor(gid, cid) {
   const kRaw = Number(own ? pr.maxTokens : S.maxTokens);
   const t0 = Number.isFinite(tRaw) ? tRaw : 1;
   const k0 = Number.isFinite(kRaw) ? kRaw : 2048;
-  $('modal-title').textContent = '她在群里的参数';
+  $('modal-title').textContent = '角色在本群的参数';
   $('modal-ok').textContent = '保存';
   $('modal-cancel').textContent = '取消';
   $('modal-text').innerHTML = '<p class="hint-text" style="margin:0 0 10px">只在这个群里生效。不勾就跟随 ⚙ 全局那份（也跟随这个群自己的参数）。</p>'
-    + '<label class="look-switch"><input type="checkbox" id="gmp-own"' + (own ? ' checked' : '') + '><span>她在群里用自己的参数</span></label>'
+    + '<label class="look-switch"><input type="checkbox" id="gmp-own"' + (own ? ' checked' : '') + '><span>角色在本群用自己的参数</span></label>'
     + '<label class="field" style="margin-top:10px"><span>温度 <b id="gmp-v-temp">' + t0.toFixed(2) + '</b></span>'
     + '<input id="gmp-temp" type="range" min="0" max="2" step="0.05" value="' + t0 + '"></label>'
     + '<label class="field"><span>最大回复长度 <b id="gmp-v-maxtok">' + Math.round(k0) + '</b></span>'
@@ -19412,7 +19412,7 @@ async function renderCharMem(charId) {
   if (!id) {
     // 还没保存过的新角色：记忆要等存下来才有归属
     if (cnt) cnt.textContent = '还没有';
-    listEl.innerHTML = '<div class="sys-line">先保存这个角色，之后她记住的事会出现在这里。</div>';
+    listEl.innerHTML = '<div class="sys-line">先保存这个角色，之后角色记住的事会出现在这里。</div>';
     return;
   }
 
@@ -21939,7 +21939,7 @@ $('btn-new-char').onclick = () => openPresetPicker();
       '清空聊天记录',
       `<p>要清掉和「${nm}」的<b>全部聊天记录</b>吗？</p>` +
       `<p>清完之后她会变回<b>刚创建时的样子</b>——像新角色一样，重进来自动重新说开场白。</p>` +
-      `<p>她记住的事（长期记忆）和剧情天数<b>也一起清掉</b>，回到第一天。</p>` +
+      `<p>角色记住的事（长期记忆）和剧情天数<b>也一起清掉</b>，回到第一天。</p>` +
       `<p>人设、参数、头像、世界书都<b>不动</b>。别的角色的记忆不受影响。</p>` +
       `<p><b>这件事不能撤销。</b></p>`,
       '清空'
@@ -22153,7 +22153,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.7.6';
+const WEB_VERSION_FALLBACK = '0.5.7.7';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

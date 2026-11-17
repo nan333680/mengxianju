@@ -84,7 +84,7 @@ const zhEdit = await editLabels();
 console.log('   中文: ' + JSON.stringify(zhEdit));
 t('编辑页标签是中文（含尚未翻译的那些）', zhEdit.includes('名字') && zhEdit.includes('头像') && zhEdit.some(x => x.includes('温度')), JSON.stringify(zhEdit.slice(0, 4)));
 const phZh = await page.$eval('#e-name', el => el.getAttribute('placeholder'));
-t('placeholder 是中文', phZh === '给她起个名字', phZh);
+t('placeholder 是中文', phZh === '给角色起个名字', phZh);
 
 await page.evaluate(() => document.getElementById('btn-edit-back').click()); await sleep(500);
 await page.evaluate(() => document.getElementById('btn-settings').click()); await sleep(700);
@@ -105,7 +105,7 @@ t('已标记的标签变英文', enEdit.includes('Name') && enEdit.includes('Ava
 // 之前 textContent 整块替换会把 <b> 子元素吃掉，表现就是数量对不上。
 t('切换语言不会丢标签', enEdit.length === zhEdit.length, zhEdit.length + ' -> ' + enEdit.length);
 const phEn = await page.$eval('#e-name', el => el.getAttribute('placeholder'));
-t('placeholder 也变英文', phEn === 'Give her a name', phEn);
+t('placeholder 也变英文', phEn === 'Give the character a name', phEn);
 
 // 切回中文，逐字还原
 await page.evaluate(() => document.getElementById('btn-edit-back').click()); await sleep(500);
@@ -122,7 +122,7 @@ await page.evaluate(() => { const c = document.querySelectorAll('#char-list .cha
 await sleep(800);
 const back = await editLabels();
 t('★ 编辑页标签逐字还原', JSON.stringify(back) === JSON.stringify(zhEdit), JSON.stringify(back));
-t('★ placeholder 逐字还原', (await page.$eval('#e-name', el => el.getAttribute('placeholder'))) === '给她起个名字');
+t('★ placeholder 逐字还原', (await page.$eval('#e-name', el => el.getAttribute('placeholder'))) === '给角色起个名字');
 await page.evaluate(() => document.getElementById('btn-edit-back').click()); await sleep(500);
 
 console.log('');

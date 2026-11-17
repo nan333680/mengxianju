@@ -159,7 +159,7 @@
       <button class="fold-head" id="gf-members"><span data-i18n-en="Members">群成员</span><em class="fold-num" id="g-member-num">—</em><i class="fold-arrow">▾</i></button>
       <div class="fold-wrap" id="gfw-members"><div class="fold-inner">
         <div class="g-members" id="g-members"></div>
-        <div class="hint-text" data-i18n-en-html="Tap her avatar = edit <b>how she is in this group</b>; long-press = remove her from the group.<br>The + at the end adds members; this order is also the order they take turns.">点她的头像 = 改「她在这个群里是什么样」；长按 = 把她移出群。<br>末尾那个 ＋ 是加人，这里的顺序就是轮流发言的顺序。</div>
+        <div class="hint-text" data-i18n-en-html="Tap an avatar = edit <b>how that character is in this group</b>; long-press = remove from the group.<br>This order is also the order they take turns.">点头像 = 改角色在群里的设定；长按 = 移出群。顺序即轮流发言顺序。</div>
       </div></div>
     </section>
 
@@ -169,18 +169,17 @@
         <label class="field" data-i18n-nodes><span data-i18n-en="What this group is about">这个群是怎么回事</span>
           <textarea id="g-note" rows="3" placeholder="比如：每周六下午在她家喝茶。三个人认识很多年了，说话不客气。" data-i18n-en-ph="e.g. tea at her place every Saturday afternoon. The three have known each other for years and do not mince words."></textarea>
         </label>
-        <label class="field" data-i18n-nodes><span data-i18n-en="Who he is in their eyes (shared by the group)">在她们眼里，他是谁（这个群共用一份）</span>
+        <label class="field" data-i18n-nodes><span data-i18n-en="Who he is in the characters' eyes (shared by the group)">在角色眼里，他是谁（本群共用）</span>
           <textarea id="g-he" rows="3" placeholder="比如：他是常来的老客，三个人都认识他，但只有甲知道他姓什么。" data-i18n-en-ph="e.g. he is a regular; all three know him, but only A knows his surname."></textarea>
         </label>
         <label class="field" data-i18n-nodes><span data-i18n-en="Where this group is (city / season / the room)">这个群在哪儿（城市 / 季节 / 这间屋子）</span>
           <textarea id="g-place" rows="3" placeholder="比如：南方小城，梅雨季。老居民楼六层，客厅堆着书和一架旧钢琴。" data-i18n-en-ph="e.g. a small town in the south, rainy season. Sixth floor of an old block; books and an old piano piled in the living room."></textarea>
         </label>
-        <p class="hint-text" data-i18n-en-html="This one is <b>permanent</b> (sent every round, and it hits the cache). The “Scene” on the chat page is <b>temporary</b> and changes often.">这条是<b data-i18n-en="Always on">常驻</b>的（每轮都发、能命中缓存）。聊天页那个「场景」是<b data-i18n-en="Temporary">临时</b>的，改得勤。</p>
+        <p class="hint-text" data-i18n-en-html="This one is <b>permanent</b>, sent every round. The “Scene” on the chat page is <b>temporary</b>.">这条<b data-i18n-en="Always on">常驻</b>，每轮都发。聊天页那个「场景」是<b data-i18n-en="Temporary">临时</b>的。</p>
         <label class="field" data-i18n-nodes><span data-i18n-en="His place in this group (usually leave blank)">他在这个群里的住处（一般不填）</span>
           <textarea id="g-home" rows="3" placeholder="留空 = 用 ⚙ 里全局那份「你的居处」。" data-i18n-en-ph="Leave blank to use the global "where he lives" from ⚙."></textarea>
         </label>
-        <p class="hint-text" data-i18n-en-html="How it differs from the field above: that one says <b>where the group is</b>, this one says <b>what his place is like</b>. Leave it blank when the group is at his home — fill it only if the group is elsewhere and you still want his home described.">和上面那条的分工：上面写<b data-i18n-en="Where the group is">这个群在哪</b>，这条写<b data-i18n-en="What his place is like">他家什么样</b>。
-          群就在他家的时候留空就行 —— 只有「群在别处、你还想写他家里的样子」时才要填。</p>
+        <p class="hint-text" data-i18n-en-html="That one says <b>where the group is</b>, this one says <b>what his place is like</b>. Leave it blank when the group is at his home.">上面写<b data-i18n-en="Where the group is">群在哪</b>，这里写<b data-i18n-en="What his place is like">他家什么样</b>。群在他家时留空。</p>
       </div></div>
     </section>
 
@@ -191,7 +190,7 @@
           <select id="g-mode">
             <option value="round" data-i18n-en="Take turns (one per round, in member order)">轮流（按上面的成员顺序，一轮一个）</option>
             <option value="weight" data-i18n-en="Weighted (drawn by how often each one speaks; may send several)">概率（按各人的活跃度抽，可连发）</option>
-            <option value="call" data-i18n-en="Only when called (she speaks if you @ her or write &quot;name:&quot;)">点名（你 @谁 或写「谁：」才由她开口）</option>
+            <option value="call" data-i18n-en="Only when called (speaks if you @ them or write &quot;name:&quot;)">点名（@ 或写「谁：」才由该角色开口）</option>
           </select>
         </label>
         <button class="ghost-btn sm" id="g-try" data-i18n-en="Try once (see who would speak this round)">试一次（看这一轮会轮到谁）</button>
@@ -200,7 +199,7 @@
         <label class="field" style="margin-top:10px" data-i18n-nodes><span>你不说话时自动再写 <b id="g-v-auto">0</b> 幕（0 = 关）</span>
           <input id="g-auto" type="range" min="0" max="5" step="1">
         </label>
-        <div class="hint-text" data-i18n-en-html="Auto-continue = after you send one line, they keep acting out a few more scenes on their own. <b>Each scene is a full request, so tokens multiply</b>. Off by default.">自动续一幕 = 你发一句之后，她们自己往下再演几幕。<b data-i18n-en="Each scene is a full request — tokens multiply">每一幕都是一次完整请求，token 成倍</b>，默认关。</div>
+        <div class="hint-text" data-i18n-en-html="After you send one line, the characters keep acting out a few more scenes on their own. <b>Each scene is a full request, so tokens multiply</b>.">你发一句后角色自己再演几幕。<b data-i18n-en="Each scene is a full request — tokens multiply">每幕一次完整请求，token 成倍</b>。</div>
       </div></div>
     </section>
 
@@ -209,7 +208,7 @@
       <div class="fold-wrap" id="gfw-scene"><div class="fold-inner">
         <label class="look-switch" data-i18n-nodes><input type="checkbox" id="g-narr"><span data-i18n-en="Novel-style scene (several people may speak in one round)">小说式一幕（一轮里可以几个人说话）</span></label>
         <label class="look-switch" style="margin-top:8px" data-i18n-nodes><input type="checkbox" id="g-narr-on"><span data-i18n-en="With narration (scene description becomes its own line, marked as narration)">带旁白（场面描写单独成一条，标成旁白）</span></label>
-        <p class="hint-text" data-i18n-en-html="With narration off: her lines still split into several bubbles, but an unlabelled line counts as the <b>previous speaker</b> — no narration lines any more.">关掉旁白：她说的话照样能拆成几条，但没标名字的行会算成<b data-i18n-en="The one who spoke last">上一个说话的人</b>说的，不再出旁白条。</p>
+        <p class="hint-text" data-i18n-en-html="With narration off, an unlabelled line counts as the <b>previous speaker</b>.">关掉后，没标名字的行归<b data-i18n-en="The one who spoke last">上一个说话的人</b>。</p>
         <label class="field" style="margin-top:10px"><span data-i18n-en="How long this scene is (directly decides token cost)">这一幕写多长（直接决定花多少 token）</span>
           <select id="g-len">
             <option value="short" data-i18n-en="Short · 120–220 chars, at most two speak">短 · 120~220 字，最多两个人开口</option>
@@ -224,7 +223,7 @@
             <option value="solo" data-i18n-en="One person every scene (a monologue)">每次只有一个人（独角戏）</option>
           </select>
         </label>
-        <p class="hint-text" data-i18n-en-html="&quot;Novel-style scene&quot; stays in effect whichever one you pick — this only decides <b>how many of them act in one scene</b>. When only one is drawn the reply is still written that way (every line still carries her name; narration stays narration).">不管选哪个，<b data-i18n-en="Novel-style scene">小说式一幕</b>都照旧生效 —— 这一项只决定<b data-i18n-en="how many act in one scene">这一幕几个人动</b>。抽到只有一个人时，写法还是小说式那一套（每行照样标名字，旁白照样是旁白）。</p>
+        <p class="hint-text" data-i18n-en-html="&quot;Novel-style scene&quot; stays in effect whichever one you pick — this only decides <b>how many of them act in one scene</b>.">不管选哪个，<b data-i18n-en="Novel-style scene">小说式一幕</b>都照旧生效 —— 只决定<b data-i18n-en="how many act in one scene">这一幕几个人动</b>。</p>
       </div></div>
     </section>
 
@@ -232,7 +231,7 @@
       <button class="fold-head" id="gf-style"><span data-i18n-en="Expression">表达方式</span><em class="fold-num" id="g-style-brief" data-i18n-en="Follow global">跟随全局</em><i class="fold-arrow">▾</i></button>
       <div class="fold-wrap" id="gfw-style"><div class="fold-inner">
         <label class="look-switch" data-i18n-nodes><input type="checkbox" id="g-ownstyle"><span data-i18n-en="This group uses its own expression (unchecked = follow the global one in ⚙)">这个群用自己的表达方式（不勾 = 跟随 ⚙ 全局那份）</span></label>
-        <p class="hint-text" data-i18n-en-html="The same parameters as “Expression” on a character page, only scoped to this group.<br>To set it for one member only, open her own page.">和角色页的「表达方式」是同一套参数，只是作用范围换成这个群。<br>想只给群里某一个人单独定，去她的二级页。</p>
+        <p class="hint-text" data-i18n-en-html="The same parameters as “Expression” on a character page, only scoped to this group.">与角色页「表达方式」是同一套参数，作用范围为本群。</p>
         <div id="g-style-box">
         <div class="field" style="margin-top:10px"><span data-i18n-en="Reply length (spoken lines only)">回复长度（只管说出口的话）</span>
           <select id="g-verbosity">
@@ -252,7 +251,6 @@
             <i class="fold-arrow">›</i>
           </button>
         </div>
-        <p class="hint-text" data-i18n-en-html="Two separate switches: the first caps <b>how long</b> parentheses may get, the second sets <b>how close the lens gets</b> (the closer, the more it breaks one thing down into concrete layers — actions, what she touches, how her body changes, sounds, what moves around her). Cranking both up means long <i>and</i> detailed.">这两个<b data-i18n-en="two separate switches">各管各的</b>：上面那个管括号里<b>能写多长</b>，下面那个管<b>镜头推到多近</b>（越近越要往下拆一层具体的 —— 手上在做什么、碰到的东西什么手感、身上哪里变了、什么声音、周围什么动静）。两个都拉高，括号里就是又长又细。</p>
         <div class="field" data-i18n-nodes><span data-i18n-en="Narrative point of view (the thing that drifts most in groups)">叙事视角（群聊里最容易飘的就是这个）</span>
           <div class="seg" id="g-pov"></div>
         </div>
@@ -277,7 +275,7 @@
         <label class="field" data-i18n-nodes><span>最大回复长度 <b id="g-v-maxtok">2048</b></span>
           <input id="g-maxtok" type="range" min="256" max="8192" step="128">
         </label>
-        <div class="hint-text" data-i18n-en-html="Leave it blank to follow the global one in ⚙.<br>To tune one member inside the group, set “Her parameters in this group” on her own page.">这里不填 = 跟随 ⚙ 里全局那份。<br>想在群里单独调某个人，去她的二级页设「她在群里的参数」。</div>
+        <div class="hint-text" data-i18n-en-html="Leave it blank to follow the global one in ⚙.<br>To tune one member inside the group, open that character's page.">不填则跟随全局。单独设某人去该角色的二级页。</div>
       </div></div>
     </section>
 
@@ -286,7 +284,7 @@
       <div class="fold-wrap" id="gfw-data"><div class="fold-inner">
         <button class="pick-row" id="g-wb-open"><span data-i18n-en="Group world book">群世界书</span><em id="g-wb-sub">—</em><i class="fold-arrow">›</i></button>
         <button class="pick-row" id="g-mem-open"><span data-i18n-en="Group memory">群记忆</span><em id="g-mem-sub">—</em><i class="fold-arrow">›</i></button>
-        <div class="hint-text" data-i18n-en-html="Each member’s own entries, plus the world book groups they belong to, <b>apply inside the group automatically</b>; tap the row above to see exactly what came in.">成员各自的单独词条、以及她们所在的世界书角色组，<b data-i18n-en="Applies automatically inside the group">进群后自动生效</b>；点上面那行能看见到底带进来了哪些。</div>
+        <div class="hint-text" data-i18n-en-html="Each member’s own entries, plus the world book groups they belong to, <b>apply inside the group automatically</b>; tap the row above to see what came in.">成员的单独词条和世界书组自动生效，点上面那行可查看。</div>
       </div></div>
     </section>
 
@@ -299,7 +297,7 @@
 <div id="view-gmember" class="view" data-i18n-nodes>
   <header class="topbar">
     <button class="icon-btn" id="btn-gm-back">←</button>
-    <div class="title"><span id="gm-title" data-i18n-en="Her in this group">她在群里</span></div>
+    <div class="title"><span id="gm-title" data-i18n-en="Character in this group">角色在本群</span></div>
     <button class="icon-btn" id="btn-gm-save">✓</button>
   </header>
   <main class="scroll">
@@ -311,29 +309,27 @@
       </div>
     </div>
     <section class="group">
-      <button class="pick-row" id="gm-persona-open"><span data-i18n-en="Persona inside the group">群内人设</span><em id="gm-persona-brief" data-i18n-en="Follow her own">跟随她本人</em><i class="fold-arrow">›</i></button>
+      <button class="pick-row" id="gm-persona-open"><span data-i18n-en="Persona inside the group">群内人设</span><em id="gm-persona-brief" data-i18n-en="Follow the character">跟随角色本身</em><i class="fold-arrow">›</i></button>
       <button class="pick-row" id="gm-note-open"><span data-i18n-en="Extra notes for this group">群内补充</span><em id="gm-note-brief">—</em><i class="fold-arrow">›</i></button>
-      <button class="pick-row" id="gm-views-open"><span data-i18n-en="How she sees the others here">她怎么看群里这些人</span><em id="gm-views-brief">—</em><i class="fold-arrow">›</i></button>
-      <button class="pick-row" id="gm-params-open"><span data-i18n-en="Her parameters in this group">她在群里的参数</span><em id="gm-params-brief" data-i18n-en="Follow global">跟随全局</em><i class="fold-arrow">›</i></button>
+      <button class="pick-row" id="gm-views-open"><span data-i18n-en="How the character sees the others here">角色怎么看群里这些人</span><em id="gm-views-brief">—</em><i class="fold-arrow">›</i></button>
+      <button class="pick-row" id="gm-params-open"><span data-i18n-en="Character parameters in this group">角色在本群的参数</span><em id="gm-params-brief" data-i18n-en="Follow global">跟随全局</em><i class="fold-arrow">›</i></button>
     </section>
     <section class="group">
       <label class="field" data-i18n-nodes><span>出场频率 <b id="gm-v-talk">50</b><em class="gm-band" id="gm-t-talk" data-i18n-en="Normal">正常</em></span>
         <input id="gm-talk" type="range" min="0" max="100" step="5">
-        <em class="hint-text">她这一场戏<b data-i18n-en="Whether she is in the scene">在不在场</b>。概率发言时就是抽签的权重。</em>
+        <em class="hint-text" data-i18n-en-html="Whether the character is in the scene. In probability mode this is the draw weight.">该角色这一场<b data-i18n-en="Whether the character is in the scene">在不在场</b>。概率发言时即抽签权重。</em>
       </label>
       <label class="field" style="margin-top:12px" data-i18n-nodes><span>说话分量 <b id="gm-v-speak">50</b><em class="gm-band" id="gm-t-speak" data-i18n-en="Normal">正常</em></span>
         <input id="gm-speak" type="range" min="0" max="100" step="5">
-        <em class="hint-text">她出场时<b data-i18n-en="How many lines she gets">给她多少台词</b>。拉到 0 = 只做动作不说话 ——
-          人还在场，眼神和举动照样写出来，只是不出声。</em>
+        <em class="hint-text" data-i18n-en-html="How many lines the character gets when it appears. 0 = actions only, no voice.">角色出场时<b data-i18n-en="How many lines the character gets">给多少台词</b>。0 = 只做动作不出声。</em>
       </label>
-      <p class="hint-text" data-i18n-en-html="These two are separate: some are <b>often present but barely speak</b>, others <b>rarely appear but talk at length</b>.<br>Both numbers are <b>written into her persona every round</b>, so they stay stable and are not carried away by the mood of a scene.">这两个是分开的：有人<b data-i18n-en="Often present but barely speaks">常在场但基本不说话</b>，也有人<b data-i18n-en="Rarely appears but talks at length when she does">不常出现但一开口就一大段</b>。<br>
-        这两个数<b data-i18n-en="Written into her persona every round">每一轮都会写进她的人设</b>，所以是稳定的，不会被这一轮的气氛带跑。</p>
-      <label class="look-switch" style="margin-top:8px" data-i18n-nodes><input type="checkbox" id="gm-muted"><span data-i18n-en="She sits out entirely (not even drawn for the scene; still answers when you call her)">她整个不参与（连出场都不抽她，你点名时仍会答）</span></label>
-      <div class="hint-text" data-i18n-en-html="These <b>affect this group only</b>. Her solo settings, parameters and memories are not touched at all.">这些<b data-i18n-en="Affects this group only">只影响这个群</b>。她在单聊里的设定、参数、记忆一个字都不会动。</div>
+      <p class="hint-text" data-i18n-en-html="The two are independent. Both numbers are <b>written into the character's persona every round</b> and are not carried away by the mood of a scene.">两项独立。数值每轮写进该角色的人设，不受本轮情绪影响。</p>
+      <label class="look-switch" style="margin-top:8px" data-i18n-nodes><input type="checkbox" id="gm-muted"><span data-i18n-en="Sits out entirely (not drawn for scenes; still answers when called)">该角色不参与（不出场；点名时仍会答）</span></label>
+      <div class="hint-text" data-i18n-en-html="These <b>affect this group only</b>. The character's solo settings, parameters and memories are not touched at all.">这些<b data-i18n-en="Affects this group only">只影响这个群</b>。该角色在单聊里的设定、参数、记忆一个字都不会动。</div>
     </section>
     <section class="group">
-      <button class="ghost-btn" id="gm-full" data-i18n-en="See her full character ›">查看她的完整设定 ›</button>
-      <button class="ghost-btn" id="gm-reset" data-i18n-en="Reset to follow her own">恢复成跟随她本人</button>
+      <button class="ghost-btn" id="gm-full" data-i18n-en="See full character ›">查看完整设定 ›</button>
+      <button class="ghost-btn" id="gm-reset" data-i18n-en="Reset to follow the character">恢复成跟随角色本身</button>
     </section>
     <div class="gap"></div>
   </main>
@@ -363,7 +359,7 @@
   <main class="scroll">
     <label class="field" data-i18n-nodes>
       <span data-i18n-en="Name">名字</span>
-      <input id="e-name" type="text" data-i18n-en-ph="Give her a name" placeholder="给她起个名字">
+      <input id="e-name" type="text" data-i18n-en-ph="Give the character a name" placeholder="给角色起个名字">
     </label>
 
     <div class="field" data-i18n-nodes>
@@ -383,11 +379,11 @@
          saveCharEdit() 读的还是 $('e-persona').value，那条链路一行都没动。 -->
     <div class="field" data-i18n-nodes>
       <button class="pick-row" id="e-greeting-open">
-        <span data-i18n-en="Greeting (her first line in a new chat)">开场白（新建对话时她说的第一句）</span>
+        <span data-i18n-en="Greeting (first line in a new chat)">开场白（新对话里的第一句）</span>
         <em id="e-greeting-brief">—</em>
         <i class="fold-arrow">›</i>
       </button>
-      <textarea id="e-greeting" class="hidden-src" rows="3" data-i18n-en-ph="Leave it empty and she waits for you" placeholder="留空则她等你先开口"></textarea>
+      <textarea id="e-greeting" class="hidden-src" rows="3" data-i18n-en-ph="Leave it empty and it waits for you" placeholder="留空则等你先开口"></textarea>
     </div>
 
     <div class="field">
@@ -399,7 +395,7 @@
       <textarea id="e-persona" class="hidden-src" rows="14" data-i18n-en-ph="Who she is, what she is like, how she talks..." placeholder="写下这个角色是谁、什么性格、怎么说话…"></textarea>
     </div>
 
-    <div class="hint-box" data-i18n-en="These settings apply to her only. Switch to another character and she has her own temper.">下面这些设置只对「她」生效。切到别的角色，她们各有各的脾气。</div>
+    <div class="hint-box" data-i18n-en="These settings apply to the current character only.">以下设置只对当前角色生效。别的角色各有各的脾气。</div>
 
     <!-- 「你的设定」「你的居处」（v1.21.47）：原来在 ⚙ 里、全局共用一份，
          现在按角色分开 —— 每个角色对「你是谁、你住哪」可以有自己的理解。
@@ -414,7 +410,7 @@
       </button>
       <div class="fold-wrap" id="e-mine-wrap">
         <div class="fold-inner">
-          <p class="profile-tip" data-i18n-en-html="About “you” — this part is <b>for her alone</b>. It is sent every round and never changes; the more you write the more tokens it costs and the less room your chat history has, so <b>write what you care about</b>.<br>The prefilled text is a generic template — <b>worth replacing with your own</b>.">关于「你」——这一份<b data-i18n-en="Her only">只有她</b>会看到。每轮都发给她、固定不变；写得越多越花 token，也会挤掉聊天记录的额度，<b data-i18n-en="Write what you care about">挑你在意的写</b>就够了。<br>预填那份是通用模板，<b data-i18n-en="Worth replacing with your own">建议换成你自己的</b>。</p>
+          <p class="profile-tip" data-i18n-en-html="About “you” — this part is <b>for the character alone</b>. It is sent every round and never changes; the more you write the more tokens it costs and the less room your chat history has, so <b>write what you care about</b>.<br>The prefilled text is a generic template — <b>worth replacing with your own</b>.">关于「你」——这一份<b data-i18n-en="The character only">只有角色</b>会看到。每轮都发给该角色、固定不变；写得越多越花 token，也会挤掉聊天记录的额度，<b data-i18n-en="Write what you care about">挑你在意的写</b>就够了。<br>预填那份是通用模板，<b data-i18n-en="Worth replacing with your own">建议换成你自己的</b>。</p>
           <textarea id="e-mine" rows="10" class="profile-box" data-i18n-en-ph="e.g. what to call you, your personality, what you care about..." placeholder="比如：叫我什么、我的性格、我在意的事、雷区……"></textarea>
           <div class="profile-foot" data-i18n-nodes>
             <span class="cnt" id="e-mine-count">—</span>
@@ -435,8 +431,8 @@
       </button>
       <div class="fold-wrap" id="e-home-wrap">
         <div class="fold-inner">
-          <p class="profile-tip" data-i18n-en-html="What your place looks like. Once written, she <b>follows it</b> when describing your home, your room or the view outside instead of making things up.<br>She should not invent what you did not write — so <b>the more specific the better</b>: layout, the view, the weather, what is nearby.">你住的地方长什么样。写上以后，她写到你家、房间、窗外时<b data-i18n-en="She will follow this">会照这个来</b>，不会自己编。<br>
-            没写到的地方她也不该乱加——所以<b data-i18n-en="The more specific the better">越具体越好</b>：房间布局、窗外的景色、天气、周边有什么。</p>
+          <p class="profile-tip" data-i18n-en-html="What your place looks like. Once written, the character <b>follows it</b> when describing your home, your room or the view outside instead of making things up.<br>It should not invent what you did not write — so <b>the more specific the better</b>: layout, the view, the weather, what is nearby.">你住的地方长什么样。写上以后，角色写到你家、房间、窗外时<b data-i18n-en="The character follows this">会照这个来</b>，不会自己编。<br>
+            没写到的地方也不该乱加——所以<b data-i18n-en="The more specific the better">越具体越好</b>：房间布局、窗外的景色、天气、周边有什么。</p>
           <textarea id="e-home" rows="8" class="profile-box" placeholder="比如：住在城南一栋老式居民楼六层，两室一厅。卧室朝南，窗台放着一排书和一个旧台灯……" data-i18n-en-ph="e.g. sixth floor of an old block in the south of town, two rooms. Bedroom faces south; a row of books and an old lamp on the sill…"></textarea>
           <div class="profile-foot" data-i18n-nodes>
             <span class="cnt" id="e-home-count">—</span>
@@ -473,23 +469,23 @@
          她以为你是谁、她知道你什么、她对你什么态度。两者不重复，可以只填这里。 -->
     <section class="group">
       <button class="fold-head" id="e-addr-fold">
-        <span data-i18n-en="How she sees you">她怎么看你</span>
+        <span data-i18n-en="How the character sees you">角色怎么看你</span>
         <em class="fold-num" id="e-addr-brief">—</em>
         <i class="fold-arrow">▾</i>
       </button>
       <div class="fold-wrap" id="e-addr-wrap">
         <div class="fold-inner">
-          <p class="profile-tip" data-i18n-en-html="This is <b>her</b> knowledge of you, not your self-description. Leave a field blank and she will not assume it — blank never means “nothing there”, it means <b>she does not know</b>.">这里是<b data-i18n-en="Her side">她那一边</b>对你的认知，不是你自述。留空的项她不会替你补——空着不等于「没有」，等于<b data-i18n-en="She does not know">她不知道</b>。</p>
-          <label class="addr-f"><span data-i18n-en="What she calls you">她怎么叫你</span>
+          <p class="profile-tip" data-i18n-en-html="This is <b>the character's</b> knowledge of you, not your self-description. Leave a field blank and it will not be filled in — blank never means “nothing there”, it means <b>the character does not know</b>.">这里是<b data-i18n-en="The character's side">角色那一边</b>对你的认知，不是你自述。留空的项不会替你补——空着不等于「没有」，等于<b data-i18n-en="The character does not know">角色不知道</b>。</p>
+          <label class="addr-f"><span data-i18n-en="What the character calls you">角色怎么称呼你</span>
             <input id="e-useraddr" class="addr-in" placeholder="比如：小同学 / 老板（不填就叫「你」）" data-i18n-en-ph="e.g. a nickname (blank = she just says “you”)">
           </label>
-          <label class="addr-f"><span data-i18n-en="Who she thinks you are">她以为你是谁</span>
+          <label class="addr-f"><span data-i18n-en="Who the character thinks you are">角色以为你是谁</span>
             <textarea id="e-userperc" class="addr-ta" rows="2" placeholder="比如：同一个班的同学，其实没见过几面" data-i18n-en-ph="e.g. a classmate she has barely met"></textarea>
           </label>
-          <label class="addr-f"><span data-i18n-en="What she knows / does not know">她知道你什么、不知道什么</span>
+          <label class="addr-f"><span data-i18n-en="What the character knows and does not">角色知道什么、不知道什么</span>
             <textarea id="e-userknow" class="addr-ta" rows="3" placeholder="比如：知道你名字，不知道你住哪；只知道你晚上会来" data-i18n-en-ph="e.g. knows your name, not where you live"></textarea>
           </label>
-          <label class="addr-f"><span data-i18n-en="How she feels about you">她对你什么态度</span>
+          <label class="addr-f"><span data-i18n-en="How the character feels about you">角色对你的态度</span>
             <textarea id="e-useratt" class="addr-ta" rows="2" placeholder="比如：客气，但一直有距离；不太信你说的话" data-i18n-en-ph="e.g. polite but distant; does not quite believe you"></textarea>
           </label>
         </div>
@@ -557,10 +553,10 @@
         </div>
         <p class="hint-text" id="e-pov-note">—</p>
 
-        <div class="field" data-i18n-nodes><span data-i18n-en="Style sample (write a passage, she copies the voice)">风格样例（写一段，让她照着这个腔调）</span>
+        <div class="field" data-i18n-nodes><span data-i18n-en="Style sample (write a passage; the character copies the voice)">风格样例（写一段，角色照这个腔调）</span>
           <textarea id="e-stylesample" rows="4" maxlength="800"
             data-i18n-en-ph="Paste any passage you like - how long the sentences are, how talk and action are arranged, where a part stops. She will follow it."
-            placeholder="贴一段你喜欢的写法就行 —— 句子多长、话和动作怎么排、一段停在哪儿，她都会照着来。"></textarea>
+            placeholder="贴一段你喜欢的写法：句子多长、话和动作怎么排、一段停在哪儿。" data-i18n-en-ph="Paste a passage you like — sentence length, how lines and actions alternate, where a paragraph stops."></textarea>
         </div>
         <div class="field" data-i18n-nodes><span data-i18n-en="Never use these (one per line)">这几样别用（一行一条）</span>
           <textarea id="e-styleban" rows="2"
@@ -572,7 +568,7 @@
         <div class="field" data-i18n-nodes><span data-i18n-en="Force chat mode">强制聊天模式</span>
           <div class="seg" id="e-think"></div>
         </div>
-        <p class="hint-text" data-i18n-en-html="What sits in parentheses is <b>not said out loud</b> - she can only guess it from how you act. Characters who <b>read minds</b> by design should have this off.">括号里是你<b data-i18n-en="What was not said aloud">没说出口的</b>，她只能靠观察猜。人设能<b data-i18n-en="Mind reading">读心</b>的角色建议关。</p>
+        <p class="hint-text" data-i18n-en-html="What sits in parentheses is <b>not said out loud</b> - the character can only guess it from how you act. Characters who <b>read minds</b> by design should have this off.">括号里是你<b data-i18n-en="What was not said aloud">没说出口的</b>，角色只能靠观察猜。人设能<b data-i18n-en="Mind reading">读心</b>的角色建议关。</p>
 
         <div class="field" data-i18n-nodes><span data-i18n-en="Web search">联网搜索</span>
           <div class="seg" id="e-search"></div>
@@ -658,11 +654,11 @@
       <label class="field row" data-i18n-nodes><span data-i18n-en="Remember important things automatically">自动记住重要的事</span>
         <input id="e-longmem" type="checkbox">
       </label>
-      <label class="field row" data-i18n-nodes><span data-i18n-en="Let her edit the ones I added">允许她整理时修改我加的</span>
+      <label class="field row" data-i18n-nodes><span data-i18n-en="Let tidying edit the ones I added">允许整理时修改我加的</span>
         <input id="e-allow-edit-mine" type="checkbox">
       </label>
       <button class="fold-head" id="e-mem-fold">
-        <span data-i18n-en="What she remembers">她记住的事</span>
+        <span data-i18n-en="What the character remembers">角色记住的事</span>
         <em class="fold-num" id="e-mem-count">—</em>
         <i class="fold-arrow">▾</i>
       </button>
@@ -670,7 +666,7 @@
         <div class="fold-inner">
           <div id="e-mem-list"></div>
           <div class="mem-add-row" data-i18n-nodes>
-            <input id="e-mem-input" type="text" data-i18n-en-ph="Add one for her..." placeholder="给她加一条…">
+            <input id="e-mem-input" type="text" data-i18n-en-ph="Add one..." placeholder="加一条…">
             <button class="ghost-btn sm" id="e-mem-add" data-i18n-en="Add">加</button>
           </div>
         </div>
@@ -700,42 +696,40 @@
   </header>
   <main class="scroll">
 
-    <p class="hint-text" style="margin:0 0 14px" data-i18n-en-html="Global things that apply to every character: expression, memory, web search, time of day.<br>API, your own avatar / appearance / tavern / data / character cards live in My settings. Each character's own temperament and parameters are under Characters → tap her → Edit.">这一页是<b>所有角色共用</b>的：描写、记忆、联网、时段。<br>
-      接口、你自己的头像 / 外观 / 酒馆 / 数据 / 角色卡在「我的设置」里。每个角色自己的脾气和参数，在「角色列表 → 点角色 → 编辑」里调。</p>
+    <p class="hint-text" style="margin:0 0 14px" data-i18n-en-html="Settings here apply to every character. Per-character parameters live on that character's edit page.">本页设置对所有角色生效。角色单独参数在角色编辑页。</p>
 
     <section class="group">
       <h3 data-i18n-en="Description & expression">描写与表达</h3>
-      <p class="hint-text" data-i18n-en-html="Three channels decide <b>where</b> things go — parentheses for the outside (what can be seen and heard), a pair of asterisks for what she doesn't say out loud, everything else for dialogue. The two settings below decide <b>how long</b> and <b>how close</b> the parentheses get.">三层通道决定<b data-i18n-en="where things go">写在哪里</b> —— 括号里写外面看得见、听得见的，一对 <b>*</b> 里写她没说出口的，<b>*</b> 外面才是台词。下面这两个设置决定括号里<b data-i18n-en="how long">写多长</b>、<b data-i18n-en="how close">镜头推到多近</b>。</p>
+      <p class="hint-text" data-i18n-en-html="Parentheses hold what can be seen and heard; a pair of <b>*</b> holds what the character does not say out loud; everything outside <b>*</b> is dialogue.">括号写看得见的，一对 <b>*</b> 写角色没说出口的，<b>*</b> 外面是台词。</p>
       <div class="field" data-i18n-nodes><span data-i18n-en="Parentheses length (the cap — how long they may get)">括号里写多长（上限）</span>
         <div class="seg" id="s-desc"></div>
       </div>
-      <p class="hint-text" data-i18n-en-html="This and the one below are <b>independent switches</b>: this one caps the <b>length</b>, that one sets <b>how close the lens gets</b>. Cranking both up means long <i>and</i> detailed.">它和下面那个是<b data-i18n-en="Two separate switches">两个独立开关</b>：这个管<b data-i18n-en="Length">写多长</b>，那个管<b data-i18n-en="Lens">镜头推到多近</b>。两个都拉高，括号里就是又长又细。</p>
       <button class="pick-row" id="s-drive">
         <span data-i18n-en="Description detail (lens)">描写详细程度（镜头 —— 推到多近）</span>
         <em id="s-drive-brief" data-i18n-en="No extra constraint">不额外约束</em>
         <i class="fold-arrow">›</i>
       </button>
-      <p class="hint-text" data-i18n-en-html="⚠️ Both can be overridden per character on the <b>character edit page</b>; choosing &quot;follow global&quot; there falls back to these. A message can also carry its own one-off request (<b>+ → This turn's change</b>) — when it conflicts with these fixed rules, its wording wins.">⚠️ 这两项都能在<b data-i18n-en="Character edit page">角色编辑页</b>单独覆盖；那边选「跟随全局」就回到这里的设置。某一轮想破例，用输入框「＋ → 本轮更改」写一句 —— 它和这些固定规则冲突时，以那一句为准。</p>
+      <p class="hint-text" data-i18n-en-html="⚠️ Both can be overridden on the <b>character edit page</b>; &quot;follow global&quot; there falls back to these. For a one-off, use <b>+ → This turn's change</b> in the input box.">⚠️ 角色编辑页可单独覆盖。本轮临时破例用「＋ → 本轮更改」。</p>
     </section>
 
     <!-- 活人感 v2 总开关（0.5.3.6）：用户 m02892 第 2 条 ——「开关做两档：开/关，直接管理全部」。
          放在【描写与表达】之后、【记忆】之前：它管的是「这一轮怎么想」，比记忆节奏更靠前。 -->
     <section class="group">
-      <h3 data-i18n-en="How she thinks">她怎么想</h3>
+      <h3 data-i18n-en="How the character thinks">角色怎么想</h3>
       <label class="look-switch" data-i18n-nodes>
         <input type="checkbox" id="s-livev2">
         <span data-i18n-en="Thinking pipeline (live feel v2)">活人感管线（v2）</span>
       </label>
-      <p class="hint-text" data-i18n-en-html="<b>On</b>: first she runs this turn through her head in her own words (an inner monologue) and decides how she will handle it - neither is sent. Then she writes only the line she says out loud. Three requests per turn, the first two in parallel, so the extra wait is basically however long it takes her to think.<br><b>Off</b>: back to 0.5.3.5 - one request, one stream, no waiting games. Cheap and fast, but no second layer.<br>Turning it off stops <b>all</b> of it: monologue, judgement, cadence, and her opening a conversation on her own.">
-        <b>开</b>：她先在脑子里过一遍这一轮（独白），同时判断这一轮该怎么应付 —— 这两样都不发出去；然后只写要说出口的那一条。一轮三次请求，前两次并行，多等的基本只有她「想」的那几秒；回复里会带上她没说出口的那一层。<br>
-        <b>关</b>：回到 0.5.3.5 的老路 —— 一次请求、一条流式、不用等。快、便宜，但没有那一层。<br>
-        关掉会把这一整套一起停：独白、判断、拟真节奏，以及她自己先开口。
+      <p class="hint-text" data-i18n-en-html="<b>On</b>: the character first runs this turn through its head (an inner monologue) and decides how to handle it — neither is sent. Then it writes only the line said out loud. Three requests per turn.<br><b>Off</b>: one request, one stream. Faster and cheaper, but no inner layer.<br>Turning it off also stops monologue, judgement, cadence and the character opening a conversation on its own.">
+        <b>开</b>：角色先独白再判断，都不发出去，只写说出口那条。一轮三次请求。<br>
+        <b>关</b>：一次请求、一条流式。更快更省，但没有内心层。<br>
+        关掉同时停用：独白、判断、拟真节奏、主动开场。
       </p>
     </section>
 
     <section class="group">
       <h3 data-i18n-en="Composer">写字台</h3>
-      <p class="hint-text" data-i18n-en-html="What the input box looks like. This page only changes the <b>input</b>; it never changes how she replies.">输入框长什么样。这一页只改<b data-i18n-en="Input">输入</b>，不影响她怎么回。</p>
+      <p class="hint-text" data-i18n-en-html="Only the <b>input box</b>. It never changes how the character replies.">只改输入框，不影响角色怎么回。</p>
       <div class="field" data-i18n-nodes><span data-i18n-en="Input box height">输入框高度（最高长到几行）</span>
         <div class="seg" id="s-input-h"></div>
       </div>
@@ -743,12 +737,12 @@
       <div class="field" data-i18n-nodes><span data-i18n-en="What Enter does">回车键做什么</span>
         <div class="seg" id="s-enter-send"></div>
       </div>
-      <p class="hint-text" data-i18n-en-html="With &quot;Enter makes a newline&quot;, the box shows <b>how many characters you have typed</b>; press the button on the right to send.">选「回车换行」时，输入框右下角会显示<b data-i18n-en="Length so far">已写多少字</b>；发送请按右边那个按钮。</p>
+      <p class="hint-text" data-i18n-en-html="With &quot;Enter makes a newline&quot;, send with the button on the right.">回车换行时，发送按右侧按钮。</p>
     </section>
 
     <section class="group">
       <h3 data-i18n-en="Memory">记忆管理</h3>
-            <p class="hint-text" data-i18n-en-html="Memories are kept <b>per character</b>. To add or remove what one of them remembers, go to the <b>character edit page - long-term memory</b>.">记忆<b data-i18n-en="Separate per character">按角色分开</b>记。想单独增删某个人记住的内容，去<b data-i18n-en="Character edit page → Long-term memory">角色编辑页 → 长期记忆</b>。</p>
+            <p class="hint-text" data-i18n-en-html="Memories are kept <b>per character</b>. Add or remove them on the <b>character edit page → long-term memory</b>.">记忆按角色独立。增删在角色编辑页 → 长期记忆。</p>
       <!-- 记忆健康状态（v1.21.35，P2-2）：把"静默失败"变成看得见。
            起因：用户踩的坑（3369 条被标记、12 个角色总结不触发）在界面上完全不可见，
            只能感觉到"她忘了"，无法区分是"总结没跑"还是"模型没提炼出来"。 -->
@@ -759,7 +753,7 @@
       </button>
       <div class="fold-wrap" id="mem-set-wrap">
         <div class="fold-inner">
-          <p class="hint-text" data-i18n-en-html="Three layers: summarize once enough messages pile up, merge duplicates once memories reach half the cap, drop dated items when they expire.<br>All three are <b>global</b>.">三层：攒够消息总结 → 记忆攒到上限的一半就合并重复 → 有时限的事过期自动删。<br>三项<b data-i18n-en="One global setting">全局统一</b>。</p>
+          <p class="hint-text" data-i18n-en-html="Three layers: summarize once enough messages pile up, merge duplicates at half the cap, drop expired items. <b>One global setting</b>.">三层：攒够总结 → 半数时合并 → 过期删除。全局统一。</p>
           <!-- v0.4.2.3 审计（F26）：这个总开关以前【不在全局页】—— 只有角色编辑页有。
                而 DEFAULTS.longMemory = false，新装用户全局值就是 false、界面上无处可改，
                新建角色又把这个 false 复制进角色对象 → 长期记忆整条链不跑，而且看不出原因。 -->
@@ -767,7 +761,7 @@
             <input type="checkbox" id="s-longmem">
             <span data-i18n-en="Long-term memory">长期记忆</span>
           </label>
-          <p class="hint-text" data-i18n-en="Turn this off and nothing runs at all (no summarizing, no tidying, no archiving). A single character can override it in the character editor.">关掉就完全不跑（不总结、不整理、不归档）。单个角色可以在角色编辑页里单独设，设过就以它为准。</p>
+          <p class="hint-text" data-i18n-en="Off means nothing runs at all. A single character can still override it in the character editor.">关掉则完全不跑。角色编辑页可单独设置。</p>
           <label class="field row" data-i18n-nodes><span data-i18n-en="Summarize after how many messages">攒够多少条消息总结一次</span>
             <input id="s-mem-sum" type="number" min="10" max="200" step="5">
           </label>
@@ -775,7 +769,7 @@
                2026-10-15 删掉：查重门槛早就不看轮次了 —— v1.21.28 起按「新增记忆条数」算
                （见 app.js dedupeIfNeeded 的 grownEnough），而那个框只被界面自己读写，
                改了不生效。留着一个改了没反应的旋钮，比没有旋钮更糟。 -->
-          <p class="hint-text" data-i18n-en-html="Merging has no knob of its own: the <b>cap</b> above decides it - once new entries reach half the cap (at least 3), or the list is nearly full, a tidy runs.">合并重复没有单独的旋钮：由上面的<b data-i18n-en="Max memories">记忆条数上限</b>说了算 —— 新增条数攒到上限的一半（至少 3 条），或总数快撑满时，各自动整理一次。</p>
+          <p class="hint-text" data-i18n-en-html="Merging has no knob of its own - the <b>cap</b> above decides it.">合并重复由「记忆条数上限」决定，无单独设置。</p>
           <label class="field row" data-i18n-nodes><span data-i18n-en="Max memories">记忆条数上限</span>
             <input id="s-mem-limit" type="number" min="5" max="60" step="1">
           </label>
@@ -788,16 +782,11 @@
           <button class="ghost-btn" id="btn-mem-audit" data-i18n-en="Memory write log">记忆写入记录</button>
           <button class="ghost-btn" id="btn-mem-audit-export" data-i18n-en="Export the log">导出记录</button>
           <button class="ghost-btn" id="btn-mem-audit-clear" data-i18n-en="Clear the log">清空记录</button>
-          <p class="hint-text" data-i18n-en-html="Every time long-term memory is written, a line is kept: <b>which path did it</b> (rolling summary / archive summary / tidy), and <b>what it changed into what</b>.<br> Only the first 40–80 characters are kept. Nothing leaves this phone unless you export it yourself.">每次往长期记忆里写东西，这里都会留一行：<b>哪条路干的</b>（滚动总结 / 归档总结 / 整理），
-            以及<b>把哪条改成了什么</b>。<br>只留前 40~80 字。除非你自己导出，否则它不会离开这台手机。</p>
-          <p class="hint-text" data-i18n-en-html="Tidying merges similar entries and squeezes them into a one-line gist.<br> It saves <b>a copy of how things looked before</b>, so you can undo from above if it comes out wrong.">整理会把意思相近的条目合并、再压成一句话大意。<br>
-            整理前会自动存一份<b data-i18n-en="Previous state">上次的样子</b>，压坏了可以点上面撤销。</p>
+          <p class="hint-text" data-i18n-en-html="Every write to long-term memory keeps a line: <b>where it came from</b> and <b>what it changed</b>. Stored on this phone only.">每次写入长期记忆都会留一行：来源、改了什么。只存本机。</p>
+          <p class="hint-text" data-i18n-en-html="Tidying merges similar entries and compresses them. A <b>snapshot is saved first</b>, so you can undo from above.">整理会合并相近条目并压缩。整理前自动存快照，可撤销。</p>
 
           <div class="redo-box">
-            <p class="hint-text" data-i18n-en-html="<b>Re-extract long-term memory</b><br> An old bug marked past conversations as &quot;already extracted&quot; while saving nothing at all.<br> Those conversations <b>are still there</b> (archived ones too) - the buttons below make her read through them again.<br> It restores content, not chat history - the history was never lost."><b data-i18n-en="Re-distill long-term memory">重新提炼长期记忆</b><br>
-              以前有个 bug 会把老对话标记成「提炼过了」，实际一条记忆都没留下。<br>
-              那些对话<b data-i18n-en="Originals are still there">原文还在</b>（归档的也在），点下面就能让它们重新读一遍、重新提炼。<br>
-              补的是内容，不是聊天记录 —— 聊天记录本来就没丢。</p>
+            <p class="hint-text" data-i18n-en-html="<b>Re-distill</b>: reads old conversations again and extracts memories. Only memories are added; chat history is untouched."><b data-i18n-en="Re-distill long-term memory">重新提炼</b>：重读旧对话并提炼。只补记忆，不动聊天记录。</p>
             <button class="ghost-btn" id="btn-mem-resum" data-i18n-en="Re-extract for this character">重新提炼当前角色</button>
             <button class="ghost-btn danger" id="btn-mem-resum-all" data-i18n-en="Re-extract for all characters">重新提炼全部角色</button>
             <p class="hint-text" id="resum-hint">—</p>
@@ -811,8 +800,7 @@
       </button>
       <div class="fold-wrap" id="arch-wrap">
         <div class="fold-inner">
-          <p class="hint-text" data-i18n-en-html="After a while, early conversations <b>get sent again every single round</b> - burning tokens for very little.<br> Archiving tucks them away (<b>the text is still there and can be expanded</b>) and folds them into long-term memory.">聊久了以后，早期的对话<b data-i18n-en="Sent again every round">每轮都会重复发出去</b>，既费 token 又没什么用。<br>
-            归档会把老对话收起来（<b data-i18n-en="Originals are kept and can be expanded">原文还在，能展开回看</b>），同时把它们整理进长期记忆。</p>
+          <p class="hint-text" data-i18n-en-html="Archiving tucks old conversations away (<b>the text can still be expanded</b>) and folds them into long-term memory, which saves tokens.">归档：收起旧对话（原文可展开），并整理进长期记忆。可省 token。</p>
           <label class="look-switch" id="auto-arch-switch" data-i18n-nodes>
             <input type="checkbox" id="s-arch-auto">
             <span data-i18n-en="Auto archive">自动归档</span>
@@ -838,10 +826,10 @@
         <em class="fold-num" id="search-hint">—</em>
         <i class="fold-arrow">▾</i>
       </button>
-      <div class="fold-wrap" id="search-wrap" data-i18n-en-html="<b>Local by default.</b> Things she already knows (common knowledge, principles, how to write something, what an object is) are answered without going online.<br>She only searches the web when you explicitly type <b>/search what you want to look up</b> in the input box.">
+      <div class="fold-wrap" id="search-wrap" data-i18n-en-html="<b>Local by default.</b> Things the character already knows (common knowledge, principles, how to write something, what an object is) are answered locally.<br>She only searches the web when you explicitly type <b>/search what you want to look up</b> in the input box.">
         <div class="fold-inner">
           <div class="search-tip">
-            <b data-i18n-en="Local by default.">默认是纯本地的。</b>她本来就知道的东西（常识、原理、怎么写、某个东西是什么）直接回答，不联网。<br><br>
+            <b data-i18n-en="Local by default.">默认是纯本地的。</b><span data-i18n-en="Things the character already knows (common knowledge, principles, how to write something, what an object is) are answered locally.">角色已知的常识直接回答，不联网。</span><br><br>
             只有你在输入框里<b>明确打 <code>/搜 要查的东西</code></b> 时，才会真的上网查一次。<br>
             比如：<code>/搜 今天北京天气</code>　　　<code>/搜 最近有什么新番</code><br><br>
             这样设计是为了<b data-i18n-en="Saves quota, no slowdown">省额度、也不变慢</b> —— 普通聊天完全不受影响。
@@ -869,11 +857,7 @@
             <input id="s-search-key" type="password" placeholder="tvly-...（不填就用不了 /搜）" data-i18n-en-ph="tvly-... (required for /搜)">
           </label>
 
-          <p class="hint-text" id="s-search-how" style="margin:0" data-i18n-en-html="Search uses <b>Tavily</b> — free to sign up, 1000 searches a month, no card needed: <b>tavily.com</b> → sign up → copy the key (starts with <b>tvly-</b>) → paste it above.">
-            搜索用的是 <b>Tavily</b>，注册免费、每月 1000 次，不用绑卡：<br>
-            <b>tavily.com</b> → 注册 → 复制 key（<code>tvly-</code> 开头）→ 粘到上面。<br>
-            key 只存在你这台手机里，不会上传到任何地方。
-          </p>
+          <p class="hint-text" id="s-search-how" style="margin:0" data-i18n-en-html="Search uses <b>Tavily</b> (free, 1000 searches a month): sign up at <b>tavily.com</b> and paste the key above. The key is stored on this phone only.">搜索用 <b>Tavily</b>（免费每月 1000 次）：<b>tavily.com</b> 注册后把 key 粘到上面。key 只存本机。</p>
 
           <div class="search-row" data-i18n-nodes>
             <span data-i18n-en="Results per search">每次取几条结果</span>
@@ -910,7 +894,7 @@
           <!-- 「她以为」开关只在事实卡视图里出现（记忆 OS §7.2）：
                她的看法和事实并排看，但绝不混成一条。默认关，免得一屏全是推断。 -->
           <label class="mem-belief-sw hidden" id="mem-belief-sw"><input type="checkbox" id="mem-belief-on">
-            <span>连「她以为」一起看</span></label>
+            <span data-i18n-en="Include what the character assumes">连「角色以为」一起看</span></label>
           <!-- 两层折叠：这里先按人物分组的按钮，每个角色展开后才是他自己的记忆列表 -->
           <div id="mem-groups"></div>
         </div>
@@ -935,19 +919,14 @@
           <label class="field row" data-i18n-nodes><span data-i18n-en="Follow the real clock">时间跟现实走</span>
             <input id="s-clock-mode" type="checkbox">
           </label>
-          <p class="hint-text" data-i18n-en-html="When on, time is no longer set by hand - it <b>follows the real phone clock</b>: whatever time it is, that is the time, and the season follows the month.<br> &quot;Day N&quot; counts from <b>the moment you switch it on</b>, then advances with real days.<br> Switching it off returns to manual; <b>switching it back on resumes from when you turned it off</b> (the off period does not count).<br> <b>While it is on, the time bar shrinks to a small read-only line</b> you cannot edit - turn it off first if you want to set time by hand.">打开后，时间不再手动调，而是<b data-i18n-en="Follows the phone clock">按手机真实时钟走</b> ——
-            现在是几点就是几点，季节也跟着月份变。<br>
-            「第几天」从<b data-i18n-en="The moment you open it">打开的那一刻</b>算第 1 天，往后按真实天数递增。<br>
-            关掉之后回到手动，<b data-i18n-en="Reopening continues from when you last closed it">再打开会接着上次关闭时的时间继续</b>（关掉期间不算）。<br>
-            <b data-i18n-en="While on, the time bar in chat shrinks to one read-only line">开着的时候聊天栏的时间条会缩成一行只读小字</b>，调不动 —— 想手动调就先去关掉它。</p>
+          <p class="hint-text" data-i18n-en-html="Follows the real phone clock; the season follows the month. &quot;Day N&quot; starts from the moment you switch it on. Switching it off returns to manual; switching it back on resumes from when you turned it off.">按手机真实时钟走，季节随月份变。「第几天」从打开时算第 1 天。关闭后回到手动，重新打开接着上次时间继续。</p>
 
           <button class="pick-row slim" id="s-ranges-open">
             <span data-i18n-en="Hours for each time of day">每个时段对应几点</span>
             <em id="ranges-brief">—</em>
             <i class="fold-arrow">›</i>
           </button>
-          <p class="hint-text" data-i18n-en-html="When the chat says &quot;morning&quot; or &quot;evening&quot;, this is how she maps it to real hours.<br> Eight slots in total, each with a start and an end.">聊天里说「早上」「傍晚」的时候，她按这里理解具体是几点。<br>
-            一共 8 个时段，各有开始和结束。</p>
+          <p class="hint-text" data-i18n-en-html="This is how the character maps words like &quot;morning&quot; or &quot;evening&quot; to real hours. Eight slots in total.">角色按这里理解「早上」「傍晚」等说法。共 8 个时段。</p>
         </div>
       </div>
     </section>
@@ -962,9 +941,7 @@
       </button>
       <div class="fold-wrap" id="diag-wrap" data-i18n-en-html="Something goes wrong (a button does nothing, a message will not send, the screen goes blank) - <b>look here first</b>.<br> It keeps the last 200 runtime log lines: exceptions, failed requests with their status codes, key actions.<br> <b>It never records your chat text or your API Key.</b>">
         <div class="fold-inner">
-          <p class="hint-text">出了问题（点了没反应、发不出去、白屏）<b>先来这里看</b>。<br>
-            它记着最近 200 条运行日志：异常、请求失败（带状态码）、关键动作。<br>
-            <b>不记聊天内容，也不记 API Key。</b></p>
+          <p class="hint-text" data-i18n-en="Check here first when something goes wrong. Keeps the last 200 log lines - no chat content, no API key.">出问题时先看这里。记录最近 200 条运行日志，不含聊天内容和 API Key。</p>
           <button class="ghost-btn" id="btn-diag-open" data-i18n-en="Open diagnostics">打开诊断信息</button>
           <!-- 诊断之后紧跟它：出问题时要么看日志、要么看她这轮到底被喂了什么，
                两个入口放在一起，找的时候不用翻两页。 -->
@@ -1025,7 +1002,7 @@
           <div class="field" data-i18n-nodes><span data-i18n-en="Your place in the story">你在故事里的位置</span>
             <div class="seg" id="s-uid"></div>
           </div>
-          <label class="field" data-i18n-nodes><span data-i18n-en="What she calls you by default">她默认怎么叫你</span>
+          <label class="field" data-i18n-nodes><span data-i18n-en="What the character calls you by default">角色默认怎么称呼你</span>
             <input id="s-uaddr" type="text" placeholder="不填就是「你」" data-i18n-en-ph="blank = “you”">
           </label>
         </div>
@@ -1042,7 +1019,7 @@
       </button>
       <div class="fold-wrap" id="mine-wrap">
         <div class="fold-inner">
-          <p class="profile-tip" data-i18n-en-html="A plain description of you (who you are, how your days go). Written from <b>your</b> side &mdash; she reads it as &quot;this is who I'm talking to&quot;. Leave it blank and she just won't get this section.">用你自己的话写「我是谁」—— 她是照着这段来认识你的。留空就没有这一段。</p>
+          <p class="profile-tip" data-i18n-en-html="A plain description of you (who you are, how your days go). Written from <b>your</b> side &mdash; the character reads it as &quot;this is who I'm talking to&quot;. Leave it blank and the character just won't get this section.">用你自己的话写「我是谁」—— 角色照着这段来认识你。留空就没有这一段。</p>
           <label class="field" data-i18n-nodes><span data-i18n-en="About me">我的设定</span>
             <textarea id="s-myprofile" rows="6" maxlength="8000" placeholder="比如：我是谁、做什么、作息、脾气、在意什么" data-i18n-en-ph="e.g. who you are, what you do, your hours, your temper"></textarea>
           </label>
@@ -1115,7 +1092,7 @@
           <div class="field" data-i18n-nodes><span data-i18n-en="Language">语言</span>
             <select id="s-lang"></select>
           </div>
-          <p class="hint-text" data-i18n-en="Interface language. It does not change what she says - she replies in whatever language you write to her.">界面语言。不影响她说什么 —— 你用哪种语言写，她就用哪种回。</p>
+          <p class="hint-text" data-i18n-en="Interface language. The character replies in whatever language you write in.">角色用你写作用的语言回复。</p>
           <div class="field" data-i18n-nodes><span data-i18n-en="Theme">主题</span>
             <select id="s-theme">
               <option value="dark" data-i18n-en="Dark">深色</option>
@@ -1151,16 +1128,16 @@
           <label class="field" data-i18n-nodes><span><span data-i18n-en="Bubble opacity">气泡不透明度</span> <b id="v-bubblealpha">100</b>%</span>
             <input id="s-bubblealpha" type="range" min="0" max="100" step="5" value="100">
           </label>
-          <p class="hint-text" data-i18n-en="Darkening dims the background, bubble opacity lets it show through. Want the image visible: lower both. Want text crispest: raise both. Darkening and blur need an image; bubble opacity always applies.">暗化压背景、气泡透明度放背景进来。想要图明显就把暗化调低、气泡调低；想要字最清楚就把两个都调高。暗化和模糊要有图才生效，气泡不透明度一直生效。</p>
+          <p class="hint-text" data-i18n-en="Darkening dims the background, bubble opacity lets it show through. Want the image visible: lower both. Darkening and blur need a background image; bubble opacity always applies.">暗化压暗背景，气泡透明度放背景透出。想要图明显就都调低。暗化和模糊需有背景图，气泡不透明度始终生效。</p>
           <label class="field row" data-i18n-nodes><span data-i18n-en="Show token usage">显示 token 使用量</span>
             <input id="s-showusage" type="checkbox">
           </label>
-          <p class="hint-text" data-i18n-en-html="<b>Off by default</b>: the ↑in ↓out badge is tuning information and clutters every bubble. Long-press any message and pick This message's usage to see its numbers."><b>默认关闭</b>：那行 ↑输入 ↓输出 是调参用的，挂在每条气泡上是干扰。想看某一条，长按它选「这条的用量」。聊天记录照常保存。</p>
+          <p class="hint-text" data-i18n-en-html="<b>Off by default</b>. To see one message's numbers, long-press it and pick This message's usage."><b>默认关闭</b>。查看单条用量：长按消息选「这条的用量」。</p>
           <!-- 朗读（v1.21.56）：用 Web Speech API，音色由系统 TTS 引擎决定 -->
-          <label class="field row" data-i18n-nodes><span data-i18n-en="Read her replies aloud">朗读她的回复</span>
+          <label class="field row" data-i18n-nodes><span data-i18n-en="Read replies aloud">朗读回复</span>
             <input id="s-tts" type="checkbox">
           </label>
-          <p class="hint-text" data-i18n-en-html="Only her <b>spoken lines</b> are read. Actions in brackets and thoughts in asterisks are skipped, so a reply made entirely of those has nothing to play.<br>It uses the phone's built-in speech engine (the voice depends on the system).">只念她<b>说出口的台词</b>。括号里的动作、星号里的心里话都不念 —— 所以整条都是动作的时候，不会有声音。用的是手机自带的语音引擎（音色取决于系统）。</p>
+          <p class="hint-text" data-i18n-en-html="Only <b>spoken lines</b> are read. Actions in brackets and thoughts in asterisks are skipped. The voice depends on the system speech engine.">只念角色<b data-i18n-en="Spoken lines">说出口的台词</b>，不念括号和星号内容。音色由系统语音引擎决定。</p>
         </div>
       </div>
     </section>
@@ -1176,28 +1153,19 @@
         <div class="fold-inner">
           <!-- 一、酒馆预设：解析 + 展示；转换动作由用户点了才发生 —— 见 app.js 的 describeStPreset。 -->
           <h4 class="sec-head"><span data-i18n-en="SillyTavern preset">酒馆预设</span></h4>
-          <p class="hint-text" data-i18n-en-html="Look inside a preset exported from SillyTavern. Nothing happens by itself - you pick what is worth keeping.<br> Regex rules can be imported (they only rewrite the prompt copy and the screen). A prompt segment can be turned into a world book entry or appended to her persona.">
-            导入酒馆导出的预设 JSON，看看里面有什么。<b data-i18n-en="It does not take effect by itself">它自己不会生效</b>，要什么由你点。<br>
-            里面的正则可以收进来（只改提示词和显示两处副本）；某一段提示词可以转成世界书条目或加进人设。
-          </p>
+          <p class="hint-text" data-i18n-en-html="Import a preset exported from SillyTavern. Nothing takes effect by itself - you pick what to keep.">导入酒馆预设。不会自动生效，由你逐项选择。</p>
           <button class="ghost-btn" id="btn-preset-import" data-i18n-en="Import a SillyTavern preset">导入酒馆预设 JSON</button>
           <input id="preset-import-file" type="file" accept=".json,application/json" hidden>
           <div id="preset-report"></div>
 
           <!-- 二、酒馆正则：从卡或预设带过来的 findRegex → replaceString，逐条开关 -->
           <h4 class="sec-head"><span data-i18n-en="Regex scripts">酒馆正则</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h4>
-          <p class="hint-text" data-i18n-en-html="Regex rules carried over from SillyTavern cards or presets. They only rewrite <b>the copy sent to the model</b> and <b>the text drawn on screen</b> - the saved messages are never touched, so turning one off shows you the original again.">从酒馆的角色卡或预设文件里带过来的正则（<code>findRegex</code> / <code>replaceString</code>）。<br>
-            它们只改两处<b data-i18n-en="Copy">副本</b>：送进模型的提示词、屏幕上显示的字。<b data-i18n-en="The saved original is never touched">存档原文一个字都不动</b> ——
-            关掉就能看到原样，删掉也不会丢任何聊天记录。</p>
+          <p class="hint-text" data-i18n-en-html="Regex rules from SillyTavern cards or presets. They only rewrite <b>the copy sent to the model</b> and <b>the text drawn on screen</b>; the saved original is never touched.">只改提示词和显示两处副本，存档原文不动。</p>
           <div id="stregex-list"></div>
 
           <!-- 三、酒馆聊天记录：.jsonl 导入 -->
           <h4 class="sec-head"><span data-i18n-en="SillyTavern chat logs">酒馆聊天记录</span></h4>
-          <p class="hint-text" data-i18n-en-html="Import a .jsonl exported from SillyTavern. Cards and world books can be re-downloaded, <b>chat logs cannot</b> - so this is the one piece of luggage worth carrying over. You pick which character it goes to; nothing is guessed.">
-            导入酒馆导出的聊天记录（<code>.jsonl</code>）。角色卡能重下、世界书能重下，
-            <b data-i18n-en="Chat logs, once gone, are gone">聊天记录没了就是没了</b> —— 这是最该接住的那件行李。<br>
-            导进哪个角色由你选，说话的人是谁也先摆给你看，<b data-i18n-en="No guessing">不猜</b>。
-          </p>
+          <p class="hint-text" data-i18n-en-html="Import chat logs exported from SillyTavern (<code>.jsonl</code>). <b>Chat logs cannot be rebuilt</b> - confirm the character before importing.">导入酒馆聊天记录（<code>.jsonl</code>）。聊天记录无法重建，导入前请确认角色。</p>
           <button class="ghost-btn" id="btn-stchat-import" data-i18n-en="Import SillyTavern chat log (.jsonl)">导入酒馆聊天记录（.jsonl）</button>
           <input id="stchat-file" type="file" accept=".jsonl,.json,application/json" hidden>
           <div id="stchat-report"></div>
@@ -1218,19 +1186,15 @@
         <div class="seg" id="s-backup-every"></div>
       </div>
       <p class="hint-text" id="s-backup-every-note">—</p>
-      <p class="hint-text" data-i18n-en-html="<b>Auto backup</b> writes on the schedule picked above, as plain-text JSON, in “Documents → 梦弦居备份”, keeping the latest 7. It goes to a public folder so it can <b>survive uninstall and “clear data”</b>."><b data-i18n-en="Auto backup">自动备份</b>按上面选的频率写，明文 JSON，放在「文档 → 梦弦居备份」里、留最近 7 份。
-        写公共目录是为了让它能<b data-i18n-en="Survives uninstall and &quot;clear data&quot;">活过卸载和「清除数据」</b>——放进应用专属目录的话，卸载时会被系统连包一起删掉，那备份就白做了。
-        代价是这份文件<b data-i18n-en="Plain text — other apps may see it">是明文、别的 App 也可能看到</b>：介意就备份完自己挪走，或改用下面的「导出全部数据」自己保管。</p>
+      <p class="hint-text" data-i18n-en-html="<b>Auto backup</b> writes plain-text JSON on the schedule above to “Documents → 梦弦居备份”, keeping the latest 7. A public folder is what lets it <b>survive uninstall and “clear data”</b>. The cost: it is plain text, so other apps may read it."><b data-i18n-en="Auto backup">自动备份</b>按上面频率写明文 JSON 到「文档 → 梦弦居备份」，留最近 7 份。写在公共目录才能<b data-i18n-en="Survives uninstall and &quot;clear data&quot;">活过卸载和清除数据</b>。代价：明文，其他 App 可能读到，介意就自己挪走。</p>
       <div id="backup-health" class="bh"></div>
       <button class="ghost-btn" id="btn-backup-drill" data-i18n-en="Check whether my latest backup is usable">检查我最近那份备份能不能用</button>
-      <p class="hint-text" data-i18n-en="Reads the newest automatic backup and tells you what is inside. Read-only - nothing is changed.">
-        点一下会真的把最近那份自动备份读出来，告诉你里面有多少角色 / 记录。<b data-i18n-en="Read-only, changes nothing">只读，什么都不改</b>。</p>
+      <p class="hint-text" data-i18n-en="Reads the newest automatic backup. Read-only - nothing is changed.">读取最近一份备份，只读不改。</p>
       <div id="backup-drill-out"></div>
     </section>
     <section class="group">
       <h3><span data-i18n-en="Character cards">角色卡</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h3>
-      <p class="hint-text" data-i18n-en-html="Interoperates with SillyTavern / chub.ai cards. Importing <b>creates a new</b> character.<br> Name - name, description - persona, first message - greeting, the lorebook on the card - her world book.">和 SillyTavern / chub.ai 的卡片互通，导入会<b data-i18n-en="New">新建</b>一个角色。<br>
-        名字 → 名字，人物设定 → 人物设定，开场白 → 开场白，卡里的世界书 → 该角色的世界书。</p>
+      <p class="hint-text" data-i18n-en-html="Interoperates with SillyTavern / chub.ai cards. Importing <b>creates a new</b> character.">兼容 SillyTavern / chub.ai 卡片，导入会新建角色。</p>
       <button class="ghost-btn" id="btn-cc-import" data-i18n-en="Import character card (.json / .png / .charx)">导入角色卡（.json / .png / .charx）</button>
       <input id="cc-import-file" type="file" accept=".json,.png,.charx,application/json,image/png" hidden>
       <button class="ghost-btn" id="btn-cc-export-png" data-i18n-en="Export as PNG card">把当前角色导出为 PNG 卡</button>
@@ -1290,10 +1254,9 @@
          唯一的解法就是那个 JSON 文件。写在这里是因为出事时人才会翻关于页。 -->
     <section class="group">
       <h3 data-i18n-en="New phone or reinstall">换手机 / 重装</h3>
-      <p class="hint-text" data-i18n-en-html="Everything lives on this phone - there is no account and no server, so nobody can restore it for you. Before switching phones, open <b>My settings - Data - Export everything</b> and keep that JSON somewhere off the phone (a computer, a drive, a cloud folder). On the new phone, install the app, then use <b>Import data</b> to pick that file. <b>Keep at least two copies in different places</b> - one file on one phone is not a backup.">数据全部在这台手机里 —— 没有账号、没有服务器，
+      <p class="hint-text" data-i18n-en-html="Everything lives on this phone - there is no account and no server, so nobody can restore it for you. Before switching phones, open <b>My settings - Data - Export everything</b> and keep that JSON somewhere off the phone (a computer, a drive, a cloud folder). On the new phone, install the app, then use <b>Import data</b> to pick that file.">数据全部在这台手机里 —— 没有账号、没有服务器，
         <b data-i18n-en="Nobody else can restore it for you">没有人能替你恢复</b>。换机前先到<b>「我的设置 → 数据 → 导出全部数据」</b>，
-        把那个 JSON 存到手机以外的地方（电脑、网盘、U 盘都行）。新手机装好后在同一处点<b>「导入数据」</b>选它。<br>
-        建议<b data-i18n-en="Keep at least two copies in two places">至少留两份、放在两个不同的地方</b> —— 只在手机里存一份，不算备份。</p>
+        把那个 JSON 存到手机以外的地方（电脑、网盘、U 盘都行）。新手机装好后在同一处点<b>「导入数据」</b>选它。</p>
     </section>
 
     <section class="group">
@@ -1389,7 +1352,7 @@
         <input type="checkbox" id="s-wb-on">
         <span data-i18n-en="World book enabled">是否启用世界书</span>
       </label>
-      <p class="hint-text wb-tip" data-i18n-en="Lore is injected by keyword only while this is on. When off, nothing below applies (and costs no tokens).">开着才会把设定按关键词注入。关着的时候，下面所有内容都不生效（也不会花 token）。</p>
+      <p class="hint-text wb-tip" data-i18n-en="Lore is injected by keyword only while this is on. Off means it does not apply and costs no tokens.">开启后才按关键词注入。关闭时不生效、不耗 token。</p>
     </section>
 
     <section class="group" id="wb-entry-group">
@@ -1417,8 +1380,7 @@
 
     <section class="group">
       <h3 data-i18n-en="Import / Export">导入 / 导出</h3>
-      <p class="hint-text" style="margin:0 0 12px" data-i18n-en-html="You can back the world book up to a file, or import a set someone else wrote.<br> Importing <b>appends</b> - it never wipes what you already have.">可以把世界书存成文件备份，或者导入别人写好的设定包。<br>
-        导入是<b data-i18n-en="Append">追加</b>，不会清掉你已有的内容。</p>
+      <p class="hint-text" style="margin:0 0 12px" data-i18n-en-html="You can back the world book up to a file, or import a set someone else wrote. Importing <b>appends</b> - it never wipes what you already have.">导入为追加，不会覆盖已有内容。</p>
       <button class="ghost-btn" id="btn-wb-import" data-i18n-en="Import a world book file">导入世界书文件</button>
       <button class="ghost-btn" id="btn-wb-export" data-i18n-en="Export world book">导出世界书</button>
       <input id="wb-import-file" type="file" accept=".json,application/json" hidden>
@@ -1459,8 +1421,7 @@
     <div style="width:40px"></div>
   </header>
   <main class="scroll">
-    <p class="hint-text" data-i18n-en-html="One set of lore shared by a batch of characters. Characters in no group are <b>unaffected by this</b>.<br> <b>Long-press a group to drag and reorder</b> (the order saves automatically).">一组设定给一批角色共用。没被加进任何组的角色<b data-i18n-en="Not affected by this">不受这里影响</b>。<br>
-      <b data-i18n-en="Long-press a group to reorder">长按组可以拖动排序</b>（拖动后的顺序会自动保存）。</p>
+    <p class="hint-text" data-i18n-en-html="One set of lore shared by a batch of characters. Characters in no group are <b>unaffected by this</b>. <b>Long-press a group to reorder</b> (saves automatically).">没加进任何组的角色<b data-i18n-en="Not affected by this">不受影响</b>。长按组可拖动排序，自动保存。</p>
     <div id="wb-group-list" class="wb-group-list"></div>
     <button class="ghost-btn" id="btn-wb-newgroup" data-i18n-en="+ New character group">＋ 新建角色组</button>
     <div class="gap"></div>
@@ -1533,7 +1494,7 @@
 <div id="phase-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box">
     <h4 data-i18n-en="What hours each time of day covers">每个时段对应几点</h4>
-    <p data-i18n-en-html="When the chat says &quot;morning&quot; or &quot;evening&quot;, this is how she understands the actual hours.<br>24-hour clock: left is the start, right is the end; put 24 as the end to mean midnight.<br><b>Nothing is saved until you press OK.</b>">聊天里说「早上」「傍晚」的时候，她按这里理解具体是几点。<br>
+    <p data-i18n-en-html="When the chat says &quot;morning&quot; or &quot;evening&quot;, this is how the character understands the actual hours.<br>24-hour clock: left is the start, right is the end; put 24 as the end to mean midnight.<br><b>Nothing is saved until you press OK.</b>">聊天里说「早上」「傍晚」的时候，角色按这里理解具体是几点。<br>
       24 小时制：左边是开始、右边是结束，结束填 24 表示到午夜。<br>
       <b>点「确定」才会存下来。</b></p>
     <div id="clock-ranges"></div>
@@ -1565,7 +1526,7 @@
 <div id="clock-modal" class="modal hidden">
   <div class="modal-box">
     <h4 data-i18n-en="Story time">剧情时间</h4>
-    <p class="clock-hint" data-i18n-en="This is the time inside your story. She uses it to tell which day it is and what time it is.">这是你们对话里的时间。她会按这个判断"今天是哪天、现在是什么时候"。</p>
+    <p class="clock-hint" data-i18n-en="The in-story time; the character uses it to tell the day and time.">这是对话里的时间，角色据此判断日期与时刻。</p>
     <!-- 年和日是【同一个 day 的两个分量】（v1.21.45），不是两种独立操作。
          合成公式：day = (年-1) × 365 + 日。日填超过 365 会自动折进年
          （第 1 年 400 天 → 第 2 年 35 天），这正是"设定年日"该有的样子。
@@ -1591,10 +1552,10 @@
     </div>
     <div class="field" data-i18n-nodes><span data-i18n-en="Season">季节</span><div class="seg" id="clock-season"></div></div>
     <div class="field" data-i18n-nodes><span data-i18n-en="Weather">天气</span><div class="seg" id="clock-weather"></div></div>
-    <label class="field row" data-i18n-nodes><span data-i18n-en="Use the time I set (she will not change it on her own)">以我设定的时间为准（她自己不擅自改）</span>
+    <label class="field row" data-i18n-nodes><span data-i18n-en="Use the time I set">以我设定的时间为准</span>
       <input id="clock-lock" type="checkbox">
     </label>
-    <p class="hint-text" data-i18n-en-html="While it is off, writing &quot;(next morning)&quot; in your parentheses moves time along by itself.<br>Once it is on, only the value you set here counts - the chat can no longer drag it around.">关着的时候，你括号里写「（第二天早上）」，时间会自己跟着走。<br>打开之后只认你在这里设的值，不会再被聊天内容带跑。</p>
+    <p class="hint-text" data-i18n-en-html="Once it is on, only the value you set here counts - the chat can no longer drag it around.">开启后只认这里设的值，不再被聊天内容改变。</p>
     <div class="modal-btns" data-i18n-nodes>
       <button class="ghost-btn" id="clock-cancel" data-i18n-en="Cancel">取消</button>
       <button class="send-btn" id="clock-ok" data-i18n-en="OK">确定</button>
@@ -1639,7 +1600,7 @@
 <div id="arc-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box arc-box">
     <h4 data-i18n-en="Where this story is going">剧情往哪走</h4>
-    <p class="arc-sub">写出方向，她自己往下演；不用写台词，也不用写完整大纲。<br>
+    <p class="arc-sub" data-i18n-en-html="Write the direction and the character plays it out; no dialogue or outline needed.<br> <b>Only the current segment is injected</b> — later segments are not in the prompt, and nothing asks it to play them all at once.">写方向即可，角色往下演；不用写台词或大纲。<br>
        <b>只注入当前这一段</b> —— 后面几段不进提示词，也不会被要求一次演完。</p>
 
     <!-- v0.5.0.4：关掉的卡在这里明说，并且只给一条重开的路。
@@ -1736,7 +1697,7 @@
 <div id="def-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box def-box">
     <h4 data-i18n-en="What was cleaned">洗掉了什么</h4>
-    <p class="arc-sub" data-i18n-en-html="Only the message she <b>just wrote</b> is cleaned before saving. History is untouched — that copy is washed only when it goes to the model, so exports and bubbles keep the original.">只洗她<b>新写出来</b>的那一条（入库前）。历史一个字不动 —— 喂模型时用的是另一份副本，导出和气泡里都还是原文。</p>
+    <p class="arc-sub" data-i18n-en-html="Only the message <b>just written</b> is cleaned before saving. History is untouched — that copy is washed only when it goes to the model, so exports and bubbles keep the original.">只洗<b>新写出来</b>的那一条（入库前）。历史一个字不动 —— 喂模型时用的是另一份副本，导出和气泡里都还是原文。</p>
     <div class="diag-meta" id="def-meta"></div>
     <div id="def-list" class="def-list"></div>
     <div class="arc-foot">
@@ -1852,7 +1813,7 @@
 <div id="drive-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box">
     <h4 id="drive-title" data-i18n-en="Description detail">描写详细程度</h4>
-    <p class="drive-sub" id="drive-sub">控制她括号里的动作描写<b data-i18n-en="Must be written as">必须写成什么样</b>。<br>
+    <p class="drive-sub" id="drive-sub"><span data-i18n-en="Controls the shape of action descriptions in parentheses.">控制括号里的动作描写</span><b data-i18n-en="Must be written as">必须写成什么样</b>。<br>
        和「非对话描写」是两个独立开关：那个管<b data-i18n-en="Cap">上限</b>（最多写多长），这个管<b data-i18n-en="Structure">结构</b>（必须写成什么形状）。</p>
     <div id="drive-list" class="drive-list"></div>
     <div class="modal-btns" data-i18n-nodes>
@@ -1952,7 +1913,7 @@
     <div class="demo-say" id="demo-say"></div>
     <div class="modal-btns">
       <button class="ghost-btn" id="demo-cancel" data-i18n-en="Cancel">取消</button>
-      <button class="send-btn" id="demo-go" data-i18n-en="Start with her">就用她开始</button>
+      <button class="send-btn" id="demo-go" data-i18n-en="Start with the character">就用角色开始</button>
     </div>
   </div>
 </div>

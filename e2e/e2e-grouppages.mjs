@@ -184,7 +184,7 @@ t('写清了只影响这个群', String(await txt('gm-sub')).includes('只影响
 for (const id of ['gm-persona-open','gm-note-open','gm-views-open','gm-params-open','gm-talk','gm-muted','gm-full','gm-reset']) {
   t('二级页有 #' + id, await page.evaluate((x) => !!document.getElementById(x), id), '');
 }
-t('群内人设默认写「跟随她本人」', (await txt('gm-persona-brief')) === '跟随她本人', await txt('gm-persona-brief'));
+t('群内人设默认写「跟随角色本身」', (await txt('gm-persona-brief')) === '跟随角色本身', await txt('gm-persona-brief'));
 t('群内补充默认写「没写」', (await txt('gm-note-brief')) === '没写', '');
 
 console.log('=== 4. 群内补充：上限 300（原来存 500 / 注入 200，静默丢字） ===');
@@ -320,7 +320,7 @@ await click('btn-gm-back');
 await sleep(500);
 t('九宫格上标了「少开口」', await page.evaluate(() => document.querySelector('#g-members [data-gm="ga"]').textContent.includes('不参与')), '');
 
-console.log('=== 11. 恢复成跟随她本人 / 长按移出 ===');
+console.log('=== 11. 恢复成跟随角色本身 / 长按移出 ===');
 await page.evaluate(() => document.querySelector('#g-members [data-gm="ga"]').click());
 await sleep(600);
 await click('gm-reset');

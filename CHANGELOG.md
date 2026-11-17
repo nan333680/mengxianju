@@ -110,7 +110,7 @@
 - `e2e-settings` 55 / 0（含「温度说明里点明温度设置无效」，断言字面量里的「是」字没动）
 - `e2e-i18n` 31 / 0（切英文逐字还原、标签逐步还原）
 - 受影响的 11 套先串行单跑：`e2e-grouppages` 111 / 0、`e2e-group3` 86 / 0、`e2e-groupmem` 24 / 0、`e2e-memui` 25 / 0、`e2e-memedit` 19 / 0、`e2e-memkeep` 20 / 0、`e2e-memory` 16 / 0、`e2e-ccsync` 42 / 0、`e2e-firstrun` 32 / 0
-- 全量回归见 PROGRESS.md
+- 全量回归 **175 套 / 4665 项 / 0 失败 / 64.2 分钟**（第一次跑时 `e2e-setfold` 红过一条阈值断言，改完整轮复跑全绿）
 
 ### 0.5.7.6（versionCode 198 · 逐字上屏每帧一次 + 上滑不被拽回底部 + 设置页文案精简）
 

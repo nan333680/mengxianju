@@ -12,6 +12,8 @@ r"""
   MXJ_SERVE_PORT     端口，默认 8899
   MXJ_SHUTDOWN_GRACE 下载完成后延迟多少秒关机，默认 60
   MXJ_SHUTDOWN_IDLE  兜底：多少秒无人下载也关机，默认 14400（4h）；设 0 = 永不兜底
+  MXJ_NO_SHUTDOWN    设 1 = 只送包、绝不关机。构建脚本默认走这个模式；
+                     只有显式加了 -Shutdown 才会关。
 """
 import ctypes
 import http.server
@@ -26,6 +28,7 @@ ROOT     = Path(os.environ.get('MXJ_SERVE_DIR') or (Path.home() / 'Desktop' / 'm
 PORT     = int(os.environ.get('MXJ_SERVE_PORT') or 8899)
 GRACE    = int(os.environ.get('MXJ_SHUTDOWN_GRACE') or 60)
 IDLE_MAX = int(os.environ.get('MXJ_SHUTDOWN_IDLE') or 14400)
+NO_SHUTDOWN = os.environ.get('MXJ_NO_SHUTDOWN', '').strip().lower() not in ('', '0', 'false', 'no')
 LOG      = Path(os.environ.get('TEMP') or '.') / 'mxj-serve.log'
 
 STATE = {'fired': False}
@@ -53,6 +56,9 @@ def keep_awake():
 
 
 def do_shutdown(reason):
+    if NO_SHUTDOWN:
+        log('不关机模式：跳过关机（%s）' % reason)
+        return
     try:
         # ⚠️ 先撤销可能已经挂着的关机（比如睡前设的 1 小时兜底）。
         #    Windows 同时只允许一个挂起安排，不撤销的话 shutdown 会以
@@ -108,12 +114,18 @@ def main():
         log('共享目录不存在：%s' % ROOT)
         return 1
     keep_awake()
-    threading.Thread(target=watchdog, daemon=True).start()
+    if NO_SHUTDOWN:
+        log('不关机模式：不设任何关机，服务一直开到你手动停')
+    else:
+        threading.Thread(target=watchdog, daemon=True).start()
 
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(('0.0.0.0', PORT), Handler) as httpd:
         log('服务就绪，端口 %d，共享 %s' % (PORT, ROOT))
-        log('下载完成后 %d 秒关机；%d 秒无人下载则兜底关机' % (GRACE, IDLE_MAX))
+        if NO_SHUTDOWN:
+            log('下载完成后不关机，服务常驻')
+        else:
+            log('下载完成后 %d 秒关机；%d 秒无人下载则兜底关机' % (GRACE, IDLE_MAX))
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

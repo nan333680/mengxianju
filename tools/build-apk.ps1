@@ -1,4 +1,4 @@
-﻿<#
+<#
   一键构建签名 Release APK。
 
   用法：
@@ -13,10 +13,12 @@
        debug 包签名不同，装上去会【覆盖失败】或丢数据。
 #>
 
+# -Shutdown：手机下载完就让电脑关机（睡前那一套，60 秒倒计时）。
+# 默认【不关机】：包照样生成、服务照样起，但绝不设关机 —— 白天构建不会把你机器关掉。
 # -CleanOld：构建完把桌面上【别的版本】的包删掉，只留这一个。
 # 默认【保留】：本地迭代的四段版本号（0.3.0 -> 0.3.0.1 -> 0.3.0.2）要并排放着对比，
 # 每构建一次就删掉上一个会很碍事。想清干净时显式加这个开关。
-param([switch]$CleanOld)
+param([switch]$CleanOld, [switch]$Shutdown)
 
 $ErrorActionPreference = 'Continue'
 
@@ -246,7 +248,9 @@ Write-Host ("   ASCII 副本  : " + $assetDest + "   <- 发 GitHub Release 时�
 & (Join-Path $PSScriptRoot "archive-release.ps1") -Version $vn -Apk $dest
 
 # ============================================================
-# 睡前送达：构建完人就走，手机自己下、电脑自己关
+# 送达：构建完手机自己下
+#   默认只送包、不关机（服务常驻到你手动停，或下次构建清端口）
+#   加 -Shutdown 才是「人走、电脑自己关」那套
 # ============================================================
 # ⚠️ 三条硬规矩，写错了会出事：
 #  1) 必须 Start-Process 脱离，不能同步调用 —— 否则构建永远不返回；
@@ -265,6 +269,23 @@ try {
   Write-Host ("   ⚠️ 生成固定别名失败：" + $_.Exception.Message) -ForegroundColor Yellow
 }
 
+# ---- 下载页脚注：关不关机是两套话，别写死 ----
+if ($Shutdown) {
+$dlNote = @'
+  下载完成后电脑会在 60 秒内自动关机。<br>
+  反悔就在电脑上敲 shutdown /a。
+'@
+$shutdownHint = "   下载完成后 60 秒自动关机（反悔敲 shutdown /a）"
+$serveNote    = '已启动（下载完成即关机）'
+} else {
+$dlNote = @'
+  下载完成后电脑不会关机，这个服务会一直开着。<br>
+  不想再送了就停掉那个 python 进程。
+'@
+$shutdownHint = "   下载后【不】关机；服务常驻，停掉 python 进程才结束"
+$serveNote    = '已启动（不关机，常驻）'
+}
+
 # ---- 下载页：链接带版本号，避开浏览器对同名文件的启发式缓存 ----
 $dlHtml = @"
 <!doctype html><meta charset="utf-8">
@@ -279,8 +300,7 @@ $dlHtml = @"
   下载安装包（约 52 MB）
 </a>
 <p style="opacity:.4;font-size:13px;margin-top:22px;line-height:1.6">
-  下载完成后电脑会在 60 秒内自动关机。<br>
-  反悔就在电脑上敲 shutdown /a。
+$dlNote
 </p>
 "@
 try {
@@ -317,7 +337,7 @@ if ($lanIp) {
   ) | Set-Content -Path $addrFile -Encoding UTF8
   Write-Host ""
   Write-Host ("   手机打开：http://" + $lanIp + ":" + $servePort + "/latest.html") -ForegroundColor Green
-  Write-Host  "   下载完成后 60 秒自动关机（反悔敲 shutdown /a）" -ForegroundColor Green
+  Write-Host  ($shutdownHint) -ForegroundColor Green
   Write-Host ("   地址也写进了：" + $addrFile)
 } else {
   Write-Host "   ⚠️ 没探测到局域网 IP，手机可能连不上" -ForegroundColor Yellow
@@ -341,10 +361,16 @@ try {
     }
     Start-Sleep -Milliseconds 400
   }
+  # 关不关机由这里决定：默认给子进程 MXJ_NO_SHUTDOWN=1，只有 -Shutdown 才撤掉
+  if ($Shutdown) {
+    Remove-Item Env:\MXJ_NO_SHUTDOWN -ErrorAction SilentlyContinue
+  } else {
+    $env:MXJ_NO_SHUTDOWN = '1'
+  }
   Start-Process $pyw `
     -ArgumentList @((Join-Path $PSScriptRoot 'serve-and-shutdown.py')) `
     -WindowStyle Hidden
-  Write-Host "   送达服务    : 已启动（下载完成即关机）"
+  Write-Host ("   送达服务    : " + $serveNote)
 } catch {
   Write-Host ("   ⚠️ 送达服务没起来：" + $_.Exception.Message) -ForegroundColor Yellow
   Write-Host  "      包已经生成好了，只是没送到手机；可以手动跑 tools\serve-apk.ps1" -ForegroundColor Yellow

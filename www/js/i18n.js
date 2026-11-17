@@ -1315,4 +1315,13 @@ function _applyI18n(root) {
     if (el.dataset.i18nZhHtml === undefined) el.dataset.i18nZhHtml = el.innerHTML;
     el.innerHTML = _lang === 'en' ? el.dataset.i18nEnHtml : el.dataset.i18nZhHtml;
   }
+  // 无障碍名跟着 title 走（v0.5.7.6）。
+  // ⚠️ 必须放在整个函数【最后】：上面 1313 那段是整块 innerHTML 重建，
+  //    里面的子元素会被销毁 —— 放在它前面设的 aria-label 会跟着一起没。
+  // 也刻意不依赖 data-i18n-en-title：新加的按钮（比如「回到最新」）漏写那套属性时，
+  // 照样能拿到无障碍名，而不是变成一颗读屏器念不出名字的图标。
+  for (const el of box.querySelectorAll('[title]')) {
+    const t = el.getAttribute('title');
+    if (t) el.setAttribute('aria-label', t);
+  }
 }

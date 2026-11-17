@@ -43,13 +43,18 @@ const none = await page.evaluate(() => ({
   imgVar: getComputedStyle(document.documentElement).getPropertyValue('--bg-img').trim(),
   dimVar: getComputedStyle(document.documentElement).getPropertyValue('--bg-dim').trim(),
   blurVar: getComputedStyle(document.documentElement).getPropertyValue('--bg-blur').trim(),
-  sliders: ['s-bgdim','s-bgblur','s-bg-clear'].map(id => { const e = document.getElementById(id); return e ? e.hasAttribute('disabled') : null; })
+  sliders: ['s-bgdim','s-bgblur','s-bg-clear'].map(id => { const e = document.getElementById(id); return e ? e.hasAttribute('disabled') : null; }),
+  alphaDisabled: (() => { const e = document.getElementById('s-bubblealpha'); return e ? e.hasAttribute('disabled') : null; })(),
+  dimOpacity: (() => { const e = document.querySelector('#chat-bg .bg-dim'); return e ? getComputedStyle(e).opacity : 'no-el'; })()
 }));
 t('#chat-bg 挂在 #view-chat 里（不是 body）', none.parent === 'view-chat', '父节点=' + none.parent);
 t('没图时 --bg-img 是 none', none.imgVar === 'none', none.imgVar);
-t('暗化默认 50%', none.dimVar === '0.5', none.dimVar);
+t('没图时遮罩不透明度是 0（否则清除背景后一片发黑）', none.dimVar === '0', none.dimVar);
 t('模糊默认 0px', none.blurVar === '0px', none.blurVar);
-t('没图时两个滑杆和「清除」都是灰的', none.sliders.every(x => x === true), JSON.stringify(none.sliders));
+t('没图时暗化 / 模糊 / 清除都是灰的', none.sliders.every(x => x === true), JSON.stringify(none.sliders));
+t('没图时气泡不透明度仍然可调（v0.5.7.6）', none.alphaDisabled === false, String(none.alphaDisabled));
+// 这条是用户报的那个 bug 的护栏：遮罩层还在、opacity 却是 0 → 画面不会被压黑
+t('没图时遮罩层实际不透明度是 0（清除后不发黑）', none.dimOpacity === '0', none.dimOpacity);
 
 console.log('=== 塞一张图进库，重载 ===');
 const dataUrl = await page.evaluate(() => {
@@ -137,7 +142,8 @@ t('图那一层的背景也清掉了', afterClear.bgImage === 'none' || afterCle
 t('kv 里的 bgImg 真的删了', !afterClear.inDb, String(afterClear.inDb));
 t('清除后按钮自己变灰', afterClear.clearDisabled === true, String(afterClear.clearDisabled));
 const a4 = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bubble-alpha').trim());
-t('清除背景后 alpha 回到 1（没图就不透）', a4 === '1', a4);
+// v0.5.7.6：不再锁回 1 —— 用户调到 70 就一直是 70，清除背景不该改他设的气泡
+t('清除背景后气泡不透明度仍按滑杆（0.7）', a4 === '0.7', a4);
 
 t('页内没有 JS 异常', errs.length === 0, errs.join(' | '));
 console.log('');

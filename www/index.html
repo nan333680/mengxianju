@@ -82,6 +82,10 @@
   <main id="messages" class="messages"></main>
 
   <footer class="composer">
+    <!-- 回到最新（v0.5.7.6）：用户上滑看历史时，输出不再把他拽回底部 ——
+         这是回来的路。贴 composer 上沿（bottom:100%），不用算消息区高度。 -->
+    <button class="back-bottom hidden" id="btn-back-bottom" title="回到最新"
+            data-i18n-en-title="Jump to newest"><span data-i18n-en="Newest">最新</span> ↓</button>
     <div id="attach-preview" class="attach-preview hidden"></div>
     <!-- 挂在输入行【上方】的功能参数槽（v0.4.4）——
          每从「＋」里选一个功能，这里就多一行它自己的输入框（要搜什么 / 这一轮怎么演）。 -->
@@ -497,7 +501,7 @@
       <label class="field" data-i18n-nodes><span><span data-i18n-en="Temperature">温度</span> <b id="e-v-temp">1.0</b><span data-i18n-en=" (low = calm, high = lively)">（低=沉稳，高=活泼）</span></span>
         <input id="e-temp" type="range" min="0" max="2" step="0.05">
       </label>
-      <p class="hint-text" data-i18n-en="DeepSeek uses fixed sampling: its docs say temperature and top_p are ignored there. This slider only does anything on providers that honour them.">DeepSeek 是固定采样，官方文档写明温度、top_p 都不生效；这个滑杆只对认温度的服务商有用。</p>
+      <p class="hint-text" data-i18n-en="DeepSeek uses fixed sampling: temperature is ignored there. Other providers honour the slider.">DeepSeek 是固定采样，温度设置无效；其他服务商按滑杆生效。</p>
       <label class="field" data-i18n-nodes><span><span data-i18n-en="Max reply length">最大回复长度</span> <b id="e-v-maxtok">2048</b></span>
         <input id="e-maxtok" type="range" min="256" max="8192" step="128">
       </label>
@@ -532,19 +536,18 @@
             <option value="3" data-i18n-en="3 segments total">连写 3 段</option>
             <option value="4" data-i18n-en="4 segments total">连写 4 段</option>
           </select>
-          <p class="hint-text" data-i18n-en="Every segment is a separate request and bills separately. Turn this on only when she should keep writing without you clicking again.">每一段都是独立请求、分别计费。只有想让她不用你再点「继续」时才开。</p>
+          <p class="hint-text" data-i18n-en="Every segment bills separately. On, and she keeps writing without another tap.">每段单独计费。开启后无需手动继续。</p>
         </div>
         <div class="field" data-i18n-nodes><span data-i18n-en="Parentheses length (how long the parentheses may get)">括号里写多长（上限）</span>
           <div class="seg" id="e-desc"></div>
         </div>
-        <p class="hint-text" data-i18n-en-html="Two separate switches: the first caps <b>how long</b> parentheses may get, the second sets <b>how close the lens gets</b>. Both default to following the global setting; tap in to override for this character only.">这两个<b data-i18n-en="two separate switches">各管各的</b>：上面那个管括号里<b>能写多长</b>，下面那个管<b>镜头推到多近</b>（越近越往下拆一层具体的：动作、手感、身上变化、声音、周围动静）。默认<b data-i18n-en="follow global">跟随全局</b>；想给这个角色单独定，点进去选。</p>
+        <p class="hint-text" data-i18n-en-html="Two separate switches: the first caps <b>how long</b> parentheses may get, the second sets <b>how close the lens gets</b>. Both follow the global setting by default.">两个<b data-i18n-en="two separate switches">各管各的</b>：上面管括号<b>能写多长</b>，下面管<b>镜头推到多近</b>。默认<b data-i18n-en="follow global">跟随全局</b>。</p>
         <div class="field" data-i18n-nodes><span data-i18n-en="Narration detail (how close the lens gets)">描写详细程度（镜头推到多近）</span>
           <button class="pick-row slim" id="e-drive">
             <em id="e-drive-brief" data-i18n-en="Follow global">跟随全局</em>
             <i class="fold-arrow">›</i>
           </button>
         </div>
-        <p class="hint-text" data-i18n-en-html="Controls <b>how close the lens gets</b> (a different thing from the length cap above): the closer, the more it has to break one thing down into concrete layers.">控制她括号里的<b data-i18n-en="How close the lens gets">镜头推到多近</b>（和上面那个「写多长」是两回事）：越近，越要把一件事往下拆成具体的层。</p>
         <div class="field" data-i18n-nodes><span data-i18n-en="Presets (fill everything below in one tap)">表达预设（点一下，把下面这些一次填好）</span>
           <div class="seg" id="e-mode"></div>
         </div>
@@ -564,28 +567,22 @@
             data-i18n-en-ph="One per line, e.g. smooth filler lines, ending every message on the same word"
             placeholder="一行一条，比如：太顺的套话、每句都收在同一个词上"></textarea>
         </div>
-        <p class="hint-text" data-i18n-en="A sample beats a rule: she copies something real instead of a ban you wrote.">样例比规则管用 —— 她仿的是一段真东西，不是一串禁令。留空就完全不进提示词。</p>
+        <p class="hint-text" data-i18n-en="A sample beats a ban: she copies something real instead of a list of noes. Leave it empty and it is not used.">样例比禁令管用。留空则不生效。</p>
 
         <div class="field" data-i18n-nodes><span data-i18n-en="Force chat mode">强制聊天模式</span>
           <div class="seg" id="e-think"></div>
         </div>
-        <p class="hint-text" data-i18n-en-html="When you send a message, what sits in parentheses is <b>not said out loud</b> - normally she should not know it.<br> With this on she <b>only hears what you actually say</b>; the rest she has to read from your behaviour, not answer like a mind reader.<br> ⚠️ Characters who are <b>mind readers</b> by design do not need this (it would hold them back).">你现在发消息时，括号里的内容是<b data-i18n-en="What was not said aloud">没被说出口的</b>——她本来不该知道。<br>
-          开着这个，她就<b data-i18n-en="Only what you actually said">只听你说出口的话</b>，括号里的只能靠观察去猜，不会像读心一样直接回应。<br>
-          ⚠️ 人设里本身有<b data-i18n-en="Mind reading">读心能力</b>的角色，不用开（会限制她发挥）。</p>
+        <p class="hint-text" data-i18n-en-html="What sits in parentheses is <b>not said out loud</b> - she can only guess it from how you act. Characters who <b>read minds</b> by design should have this off.">括号里是你<b data-i18n-en="What was not said aloud">没说出口的</b>，她只能靠观察猜。人设能<b data-i18n-en="Mind reading">读心</b>的角色建议关。</p>
 
         <div class="field" data-i18n-nodes><span data-i18n-en="Web search">联网搜索</span>
           <div class="seg" id="e-search"></div>
         </div>
-        <p class="hint-text" data-i18n-en-html="Defaults to <b>following the global setting</b> (the main switch is under Settings - Web search).<br> Only typing <b data-i18n-en="/search something">/搜 something</b> actually goes online; ordinary chat is untouched.<br> To let just a few characters search, set <b>force on</b> for them individually.">默认<b data-i18n-en="Follow global">跟随全局</b>（在 ⚙ → 联网搜索 里总开关）。<br>
-          打 <b data-i18n-en="/search what you want to look up">/搜 要查的东西</b> 才会真的上网，普通聊天不受影响。<br>
-          想只让某几个角色能搜，就单独给她们设<b data-i18n-en="Forced on">强制开</b>。</p>
+        <p class="hint-text" data-i18n-en-html="Defaults to <b>following the global setting</b> (Settings - Web search). Only messages starting with <b>/search</b> go online.">默认<b data-i18n-en="Follow global">跟随全局</b>（⚙ → 联网搜索）。只有 <b data-i18n-en="/search something">/搜</b> 开头的消息会联网。</p>
 
         <div class="field" data-i18n-nodes><span data-i18n-en="Follow the real clock">时间跟现实走</span>
           <div class="seg" id="e-clock"></div>
         </div>
-        <p class="hint-text" data-i18n-en-html="Defaults to <b>following the global setting</b> (under Settings - Time of day).<br> Force <b>off</b> = this character always uses manual time, even when the global switch is on.<br> Force <b>on</b> = this character always follows the phone clock, even when the global switch is off.">默认<b data-i18n-en="Follow global">跟随全局</b>（在 ⚙ → 时段划分 里）。<br>
-          强制<b data-i18n-en="Off">关</b> = 这个角色永远手动调时间，哪怕全局开着。<br>
-          强制<b data-i18n-en="On">开</b> = 这个角色永远跟手机走，哪怕全局关着。</p>
+        <p class="hint-text" data-i18n-en-html="Defaults to <b>following the global setting</b> (Settings - Time of day). Force on/off overrides it for this character.">默认<b data-i18n-en="Follow global">跟随全局</b>（⚙ → 时段划分）。强制开/关优先于全局。</p>
         </div>
       </div>
     </section>
@@ -602,7 +599,7 @@
             <input type="checkbox" id="e-look-on">
             <span data-i18n-en="Enabled">是否启用</span>
           </label>
-          <p class="hint-text" data-i18n-en-html="Her outfit and state <b>right now</b>. Switching it off keeps the text but stops applying it.">她<b data-i18n-en="Right now">此刻</b>的穿着和状态。关掉之后内容还留着，但暂时不生效。</p>
+          <p class="hint-text" data-i18n-en-html="Her outfit and state <b>right now</b>. Off keeps the text but stops applying it.">当前穿着与状态。关闭后内容保留，暂不生效。</p>
           <textarea id="e-look" rows="4" class="profile-box look-box"
             placeholder="二十来字就够，比如：穿着紫色连衣裙，外套脱了搭在椅背上" data-i18n-en-ph="Twenty words is plenty. e.g. purple dress, coat off and over the back of the chair."></textarea>
           <div class="profile-foot" data-i18n-nodes>
@@ -678,7 +675,7 @@
           </div>
         </div>
       </div>
-      <p class="hint-text" data-i18n-en-html="Memories are kept <b>per character</b>, and you can add or remove them yourself.<br>The cadence settings (how many messages before summarizing) are under Settings - Memory.">记忆<b data-i18n-en="Each character keeps her own">每个角色各记各的</b>，可以自己增删。<br>节奏参数（攒多少条总结一次等）在 ⚙ → 记忆管理。</p>
+      <p class="hint-text" data-i18n-en-html="Memories are kept <b>per character</b>; add or remove them yourself. Summarizing cadence is under Settings - Memory.">每个角色<b data-i18n-en="Each character keeps her own">独立记忆</b>，可增删。总结节奏在 ⚙ → 记忆管理。</p>
     </section>
 
     <section class="group">
@@ -686,7 +683,7 @@
       <label class="field row" data-i18n-nodes><span data-i18n-en="Apply this page's settings to every character">把这一页的参数同步给所有角色</span>
         <input id="e-override-global" type="checkbox">
       </label>
-      <p class="hint-text" data-i18n-en-html="Once ticked and saved, this page overwrites <b>every other character</b>. Overwrite again later and they all move to the new set.">勾选并保存后，这一页的参数会<b data-i18n-en="Override every other character">覆盖其他所有角色</b>。以后再覆盖一次，所有人跟着变成新的那套。</p>
+      <p class="hint-text" data-i18n-en-html="Once ticked and saved, this overwrites <b>every other character</b>; overwrite again and they all move to the new set.">勾选保存后<b data-i18n-en="Override every other character">覆盖全部角色</b>；再覆盖一次，所有人跟着变。</p>
     </section>
 
     <button class="danger-btn" id="btn-del-char" data-i18n-en="Delete this character">删除此角色</button>
@@ -1148,12 +1145,13 @@
           <label class="field" data-i18n-nodes><span><span data-i18n-en="Blur">模糊</span> <b id="v-bgblur">0</b>px</span>
             <input id="s-bgblur" type="range" min="0" max="20" step="1" value="0">
           </label>
-          <!-- 气泡不透明度（v0.5.7.5）：下限 50 —— 再低浅色文字的对比度会明显掉。
-               只有在设了背景图时才生效；没图时 applyChatBg 把 alpha 强制写回 1。 -->
+          <!-- 气泡不透明度（v0.5.7.5／v0.5.7.6 放开）：下限 0，没图时也生效。
+               ⚠️ 它【不】跟着其它滑杆一起禁用 —— 用户调的是气泡，不是背景。
+               代价是拉到很低时文字对比度会掉，那是用户自己的选择。 -->
           <label class="field" data-i18n-nodes><span><span data-i18n-en="Bubble opacity">气泡不透明度</span> <b id="v-bubblealpha">100</b>%</span>
-            <input id="s-bubblealpha" type="range" min="50" max="100" step="5" value="100">
+            <input id="s-bubblealpha" type="range" min="0" max="100" step="5" value="100">
           </label>
-          <p class="hint-text" data-i18n-en="Darkening dims the background, bubble opacity lets it show through. Want the image visible: lower both. Want text crispest: raise both. None of these sliders do anything until you pick an image.">暗化压背景、气泡透明度放背景进来。想要图明显就把暗化调低、气泡调低；想要字最清楚就把两个都调高。没选图时这些滑杆都不生效。</p>
+          <p class="hint-text" data-i18n-en="Darkening dims the background, bubble opacity lets it show through. Want the image visible: lower both. Want text crispest: raise both. Darkening and blur need an image; bubble opacity always applies.">暗化压背景、气泡透明度放背景进来。想要图明显就把暗化调低、气泡调低；想要字最清楚就把两个都调高。暗化和模糊要有图才生效，气泡不透明度一直生效。</p>
           <label class="field row" data-i18n-nodes><span data-i18n-en="Show token usage">显示 token 使用量</span>
             <input id="s-showusage" type="checkbox">
           </label>

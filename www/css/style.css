@@ -19,7 +19,10 @@
   --fs:15px;
   /* 聊天背景（v0.5.7.4）：图挂在一个真实 div 上（不是伪元素，因为 .view.active::after
      已经被左缘投影占着）。遮罩单独一层，让 filter:blur 只作用于图、不吃遮罩。 */
-  --bg-img:none; --bg-dim:0.5; --bg-dim-color:#000; --bg-blur:0px;
+  /* v0.5.7.6：--bg-dim 的首帧兜底必须是 0（以前 0.5）——
+     JS 还没跑的那一下会先盖一层半透明黑，没设过背景图的人看到的就是「打开先黑一下」。
+     有图时由 applyChatBg 写真实值。 */
+  --bg-img:none; --bg-dim:0; --bg-dim-color:#000; --bg-blur:0px;
   /* 系统栏占位。CSS 里能直接用 env()，但 JS 读不到 —— 长按菜单要靠它避让，
      所以在这里落成变量给 JS 取（见 placeMenu）。 */
   --sat:env(safe-area-inset-top, 0px);
@@ -218,9 +221,21 @@ body{
 
 /* ===== 输入区 ===== */
 .composer{
+  position:relative;   /* v0.5.7.6：回底按钮贴在它的上沿（bottom:100%） */
   padding:8px 10px; padding-bottom:calc(8px + env(safe-area-inset-bottom));
   background:var(--bg2); border-top:1px solid var(--line); flex-shrink:0;
 }
+/* 回到最新（v0.5.7.6）：只在「用户离开底部」时出现，点击恢复跟随。
+   z-index 必须有 —— 它浮在消息区上，不给就会钻到最后一条气泡底下。 */
+.back-bottom{
+  position:absolute; right:12px; bottom:100%; margin-bottom:8px;
+  display:inline-flex; align-items:center; gap:5px;
+  height:30px; padding:0 12px; border-radius:15px;
+  border:1px solid var(--line); background:var(--bg3); color:var(--fg2);
+  font-size:12.5px; font-family:inherit; cursor:pointer; z-index:3;
+  box-shadow:0 4px 14px rgba(0,0,0,.28);
+}
+.back-bottom:active{ transform:scale(.96); }
 .composer-row{ display:flex; gap:8px; }
 #input{
   flex:1; resize:none; max-height:var(--input-max,120px); min-height:42px;

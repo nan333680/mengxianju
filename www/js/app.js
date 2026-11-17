@@ -1643,10 +1643,19 @@ async function applyChatBg(force) {
   }
   const img = _bgImg;
   st.setProperty('--bg-img', img ? 'url("' + img + '")' : 'none');
-  // ⚠️ 没图时强制 1 —— 否则气泡会半透明叠在纯色底上，比现在难看。
-  //    这一行是整条功能「只在有背景图时生效」的开关。
-  st.setProperty('--bubble-alpha', String(img ? (Number(S.bubbleAlpha) || 100) / 100 : 1));
-  st.setProperty('--bg-dim', String((Number(S.bgDim) || 0) / 100));
+  // ⚠️ v0.5.7.6：这两个的方向【相反】，写反就白改。
+  //
+  //   --bubble-alpha：没图也要按设置生效（0-100 全放开）。
+  //     以前没图写死 1 —— 用户把滑杆拧到 0 再清除背景，气泡永远回不去；
+  //     可他调的是「气泡」，不是「背景」。下限也别再卡 50。
+  //     ⚠️ 别写 Number(S.bubbleAlpha) || 100：0 是合法值，|| 会把它吞成 100。
+  //
+  //   --bg-dim：没图必须归 '0'（不是 1）。它是遮罩层的不透明度 ——
+  //     留着 0.5 等于在纯色底上盖一层半透明黑，那就是「清除背景后一片发黑」。
+  //     img ? x : 1 是最容易犯的错：那个 1 属于 alpha，不属于 dim。
+  const _ba = Number(S.bubbleAlpha);
+  st.setProperty('--bubble-alpha', String(Number.isFinite(_ba) ? Math.max(0, Math.min(100, _ba)) / 100 : 1));
+  st.setProperty('--bg-dim', img ? String((Number(S.bgDim) || 0) / 100) : '0');
   st.setProperty('--bg-blur', (Number(S.bgBlur) || 0) + 'px');
 
   const th = document.getElementById('s-bg-thumb');
@@ -1661,7 +1670,9 @@ async function applyChatBg(force) {
   const d3 = document.getElementById('v-bubblealpha');
   if (d3) d3.textContent = String(S.bubbleAlpha ?? 100);
   // 没选图时这些控件全灰着 —— 否则用户会对着一个没反应的控件调半天
-  for (const id of ['s-bgdim', 's-bgblur', 's-bubblealpha', 's-bg-clear']) {
+  // ⚠️ 气泡不透明度【不在】这份名单里（v0.5.7.6）：它没图时也生效，
+  //    跟着灰掉会让用户以为自己调不了，其实是控件被禁了。
+  for (const id of ['s-bgdim', 's-bgblur', 's-bg-clear']) {
     const el = document.getElementById(id);
     if (el) { if (img) el.removeAttribute('disabled'); else el.setAttribute('disabled', ''); }
   }
@@ -2168,7 +2179,7 @@ async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
     $('messages').insertAdjacentHTML('beforeend', msgHtml(added[0]));
     markFresh($('messages').lastElementChild);
     attachMsgActions();
-    scrollBottom();
+    followScroll();
   }
   // 第一条已经由占位消化过了：plan 里还留着它（cadence 不知道屏幕上有什么），跳过。
   // ⚠️ 认它用 inserted 标记，不用文本比对（0.5.3.6 复查）：前插的极短语气条
@@ -2202,7 +2213,7 @@ async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
       if (curCharId !== myCharId) break;
       if (stopNow()) break;          // 逐字打到一半被停：这一条停在半截，收尾整段重绘
       if (span) span.textContent = step.text.slice(0, p);
-      scrollBottom();
+      followScroll();
       if (p + per <= step.text.length) await sleepMs(step.typingMs / n);
     }
     if (curCharId !== myCharId) break;
@@ -2217,7 +2228,7 @@ async function paintFlow(added, myChar, myCharId, lifeNow, phEl) {
       // 极短语气条只留在屏幕上，下次重绘就没了 —— 它本来就不进库（见 cadence.js 文件头）
       tmpIds.push(tmpId);
     }
-    scrollBottom();
+    followScroll();
   }
   // ⚠️ 收尾（v2 新增）：任何一处 break 都会让屏幕只剩前几段，而库里是全的 ——
   //    用户看到的是「她话没说完」，其实只是没画完。所以这里【无条件】对齐一次：
@@ -4411,14 +4422,84 @@ async function regenerate(keepPrefix) {
 // rAF —— 一帧来 3 个 chunk 就是 3 次「读 scrollHeight → 写 scrollTop」的
 // 强制同步布局，逐字输出掉帧就是这儿来的。
 let _scrollPending = false;
+
+/* ---------------- 跟上最新 / 别拽人（v0.5.7.6） ---------------- */
+
+/** 程序最后一次写 scrollTop 的时刻 —— 给滚动事件里的「这大概是程序滚的」用。 */
+let _progAt = 0;
+/** true = 跟到底；false = 用户在看历史，输出中的滚动不再拽他。 */
+let _autoFollow = true;
+/**
+ * 流式上屏的「这一轮」编号（v0.5.7.6）。
+ * 每进一次生成就 ++；排队的 rAF 回调靠它认自己是不是已经过期。
+ * 光靠 _paintPending 不行 —— 那个标志只挡「同一轮里别排两次」，
+ * 挡不住「上一轮排的那一帧」在下一轮 send 之后才执行。
+ */
+let _paintSeq = 0;
+/**
+ * 这一次触摸里手指是不是真的滑过。
+ * ⚠️ 只在 touchstart 重置，**touchend / touchcancel 绝不能清**：
+ *    快速甩一下松手之后惯性还在滚，scroll 事件会继续来；清掉就等于「用户松手了，
+ *    那就当他在跟」—— 而流式时程序每帧都在写 _progAt，80ms 的时间窗口会把那次
+ *    惯性滚动当成程序滚动放过去，于是人又被拽回底部。
+ *    清它的地方只有一处：下一次 touchstart。
+ */
+let _touchMoved = false;
+
 function scrollBottom() {
   if (_scrollPending) return;
   _scrollPending = true;
   requestAnimationFrame(() => {
     _scrollPending = false;
     const box = $('messages');
-    if (box) box.scrollTop = box.scrollHeight;
+    if (!box) return;
+    _progAt = performance.now();
+    box.scrollTop = box.scrollHeight;
   });
+}
+
+/**
+ * 输出中用的滚动：用户在看历史就不动他的位置。
+ * 只有**正在上屏**的那几处该用它（逐字 / 逐条 / 老节奏贴条）；
+ * 发送、切角色、重新渲染仍然是 scrollBottom() 强制到底 —— 那些是「他要看最新」，
+ * 跟「她还在写」不是一回事。
+ */
+function followScroll() { if (_autoFollow) scrollBottom(); }
+
+/** 回底按钮：不跟随时出现。点击 = 恢复跟随 + 到底。 */
+function updateBackBottom() {
+  const b = $('btn-back-bottom');
+  if (b) b.classList.toggle('hidden', _autoFollow);
+}
+
+/**
+ * 滚动跟随的监听（v0.5.7.6）。
+ * 三层判断，顺序不能换：
+ *   ① 离底 < 40px → 恢复跟随。程序只滚到底，所以程序滚动天然落进这一条，
+ *      「程序滚的会不会被当成用户离开」在这里根本不存在 —— 不需要任何豁免标志。
+ *   ② 手指真滑动过 → 用户在看历史。
+ *   ③ 非触摸设备兜底（鼠标滚轮 / 拖滚动条）：离上次程序写入太近就当程序滚的。
+ */
+const _FOLLOW_GAP = 40;
+function bindScrollFollow() {
+  const box = $('messages');
+  if (!box || box._sfBound) return;
+  box._sfBound = true;
+  box.addEventListener('touchstart', () => { _touchMoved = false; }, { passive: true });
+  box.addEventListener('touchmove', () => { _touchMoved = true; }, { passive: true });
+  box.addEventListener('scroll', () => {
+    const d = box.scrollHeight - box.scrollTop - box.clientHeight;
+    if (d < _FOLLOW_GAP) { if (!_autoFollow) { _autoFollow = true; updateBackBottom(); } return; }
+    if (_touchMoved) { if (_autoFollow) { _autoFollow = false; updateBackBottom(); } return; }
+    if (performance.now() - _progAt < 80) return;
+    if (_autoFollow) { _autoFollow = false; updateBackBottom(); }
+  }, { passive: true });
+  const btn = $('btn-back-bottom');
+  if (btn) btn.onclick = () => {
+    _autoFollow = true;
+    updateBackBottom();
+    scrollBottom();
+  };
 }
 
 /**
@@ -8713,6 +8794,23 @@ let namedInText = false;
         {
           // 0.5.3.5 的单条流式，边流边打（用户熟悉的那条老路）。
           let acc = '';
+          // v0.5.7.6：逐字上屏改成每帧最多一次。
+          // 以前每个 chunk 都 textContent 全量重建 + 全量 replace(/\*/g)：一帧来 5 个
+          // chunk 就重写 5 遍，3000 字输出约 300 次节点重建 + 45 万字符处理。
+          // scrollBottom 那边早就是每帧一次了，这里是漏掉的另一半。
+          //
+          // ⚠️ 快照 + token 两样都要，只判 bubble 非空挡不住这个：
+          //    bubble 是模块级变量（上面 querySelector 那行赋的），下一轮 send 会重赋；
+          //    上一轮排队的 rAF 一旦在新一轮之后执行，就会把旧文本写进新气泡。
+          const _paintEl = bubble;
+          const _paintTok = ++_paintSeq;
+          let _paintPending = false, _paintText = '';
+          const _paint = () => {
+            if (_paintTok !== _paintSeq) return;   // 已经换了一轮：这一帧作废
+            _paintPending = false;
+            if (_paintEl && _paintEl.isConnected) _paintEl.textContent = _paintText;
+            followScroll();
+          };
           const st1 = streamChat({
             apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model,
             messages: apiMsgs, temperature: P.temperature,
@@ -8731,7 +8829,15 @@ let namedInText = false;
             //    都以为【一个字都没收到】：半截不落库、只弹一句「已停止生成」，
             //    屏幕上刚吐出来的那半句当场消失。
             full = acc;
-            if (bubble) { bubble.textContent = String(acc).replace(/\*/g, ''); scrollBottom(); }
+            _paintText = String(acc).replace(/\*/g, '');
+            if (!_paintPending) { _paintPending = true; requestAnimationFrame(_paint); }
+          }
+          // ⚠️ 循环结束必须补最后一帧：最后一个 chunk 刚写进 _paintText，排队的那帧
+          //    可能还没跑。不补的话「最后几个字永远不上屏」只在按了停止之后才露馅。
+          //    （中断那条路不用管：它会 remove 占位气泡、用 full 重建一条正式消息。）
+          if (_paintPending && _paintTok === _paintSeq) {
+            _paintPending = false;
+            if (_paintEl && _paintEl.isConnected) _paintEl.textContent = _paintText;
           }
           // 包成单元素池：下面 take / 重写 / 落库全按「第 0 条」走。
           // usage 传 null —— 它已经由 onUsage 记过一次了，再给一份会被加两遍。
@@ -9124,7 +9230,7 @@ let namedInText = false;
           $('messages').insertAdjacentHTML('beforeend', msgHtml(added[i]));
           if (i > 0) markFresh($('messages').lastElementChild);
           attachMsgActions();
-          scrollBottom();
+          followScroll();
           if (i < added.length - 1) await new Promise(r => setTimeout(r, 350));
         }
       }
@@ -9246,7 +9352,10 @@ let namedInText = false;
     $('btn-send').classList.remove('hidden');
     $('btn-stop').classList.add('hidden');
     abortCtl = null;
-    scrollBottom();
+    // v0.5.7.6：收尾【不再】强制到底。用户上滑看历史时，她把最后一段写完
+    // 也不该把屏幕拽下去 —— 这一处和逐字流式是同一件事，漏了它前面就白改。
+    // （出错那张卡片仍然强制滚：那不是"新内容"，是必须被看见的东西，见上面 scrollBottom。）
+    followScroll();
 
     // 自动续一幕（v0.4.1.4，默认关）：你不说话时，她们自己往下再演几幕。
     // ⚠️ 每一幕都是一次完整请求，【token 成倍】—— 所以默认 0（关），界面上写明代价。
@@ -22044,7 +22153,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.7.5';
+const WEB_VERSION_FALLBACK = '0.5.7.6';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';
@@ -22362,6 +22471,8 @@ async function init() {
     if (S.theme === 'system') applyTheme();
   });
   bindEvents();
+  // 滚动跟随（v0.5.7.6）：输出中用户上滑看历史时不再被拽回底部。
+  bindScrollFollow();
   // 小说层（v0.5.2）：书架/阅读页/开戏弹窗的绑定。
   // 和 bindEvents 分开是为了让这块能独立复跑（E2E 会重复进 init 的路径）。
   bindSceneUI();

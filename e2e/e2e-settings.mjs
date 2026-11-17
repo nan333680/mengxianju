@@ -469,11 +469,13 @@ console.log('');
 console.log('=== 9. 温度滑杆下面那句说明 ===');
 // DeepSeek 官方文档写明：非思考模式 temperature / top_p 都不生效（值被忽略，不报错）。
 // 滑杆还在、但对 DeepSeek 无效，不说一句就是骗人 —— 所以设置页有一行 hint 必须留着。
+// v0.5.7.6 文案精简：界面上没有 top_p 滑杆，那半句属于技术细节，压掉；
+// 断言跟着改成「点明温度设置无效」，防的还是同一件事（别看错成"删了那行"）。
 const HTML_IDX = fs.readFileSync(path.join(WWW, 'index.html'), 'utf8');
 t('设置页有温度说明', HTML_IDX.includes('DeepSeek 是固定采样'), 'index.html');
-t('说明里点明 top_p 也不生效', /温度、top_p 都不生效/.test(HTML_IDX), 'index.html');
+t('说明里点明温度设置无效', /温度设置无效/.test(HTML_IDX), 'index.html');
 t('滑杆本身没被删掉', /id="e-temp"/.test(HTML_IDX), 'index.html');
-t('说明带英文翻译钩子', /data-i18n-en="[^"]*temperature and top_p are ignored/.test(HTML_IDX), 'index.html');
+t('说明带英文翻译钩子', /data-i18n-en="[^"]*temperature is ignored/.test(HTML_IDX), 'index.html');
 
 console.log('');
 t('全程无 JS 错误', errs.length === 0, errs.slice(0,3).join(' | '));

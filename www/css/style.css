@@ -27,6 +27,12 @@
      所以在这里落成变量给 JS 取（见 placeMenu）。 */
   --sat:env(safe-area-inset-top, 0px);
   --sab:env(safe-area-inset-bottom, 0px);
+  /* v0.5.7.8：「最新 ↓」和版本箭头要跟着气泡不透明度淡，但【文字不能淡】——
+     所以底色走 rgba(r,g,b,alpha)，绝不能吃 opacity。
+     --bg3 只在 :root / [data-theme=light] 两处定义，applyTheme 不写它
+     （写的是 --pri/--pri2/--pri-text/--btn/--btn-fg/--bubble-me/--bubble-me-rgb/--bubble-fg/--fs），
+     所以这里硬编码成 rgb 是安全的。⚠️ 改 --bg3 那行必须同步这一行。 */
+  --bg3-rgb:35,38,53;
 }
 [data-theme="light"]{
   --bg:#f5f6fa; --bg2:#ffffff; --bg3:#eef0f6; --line:#e0e3ec;
@@ -36,6 +42,7 @@
   --bubble-me:#6d5ce0; --bubble-ai:#ffffff;
   --bubble-ai-rgb:255,255,255;
   --line-rgb:224,227,236;
+  --bg3-rgb:238,240,246;   /* v0.5.7.8：见 :root 同名变量，两处必须一起改 */
 }
 
 html,body{ height:100%; overflow:hidden; }
@@ -231,9 +238,14 @@ body{
   position:absolute; right:12px; bottom:100%; margin-bottom:8px;
   display:inline-flex; align-items:center; gap:5px;
   height:30px; padding:0 12px; border-radius:15px;
-  border:1px solid var(--line); background:var(--bg3); color:var(--fg2);
+  /* v0.5.7.8：底色 / 边框 / 阴影跟着 --bubble-alpha 淡，「最新」两个字和 ↓ 保持原亮度 ——
+     所以只能逐层走 rgba(…, var(--bubble-alpha))，绝不能给整块加 opacity。
+     border 留着（只是颜色透明），alpha=0 时尺寸和位置才一点不变。 */
+  background:rgba(var(--bg3-rgb), var(--bubble-alpha));
+  border:1px solid rgba(var(--line-rgb), var(--bubble-alpha));
+  color:var(--fg2);
   font-size:12.5px; font-family:inherit; cursor:pointer; z-index:3;
-  box-shadow:0 4px 14px rgba(0,0,0,.28);
+  box-shadow:0 4px 14px rgba(0,0,0,calc(0.28 * var(--bubble-alpha)));
 }
 .back-bottom:active{ transform:scale(.96); }
 .composer-row{ display:flex; gap:8px; }
@@ -1763,7 +1775,10 @@ input[type="range"] { touch-action: pan-y; }
 }
 .msg .swipe button{
   width:26px; height:22px; line-height:20px; text-align:center; border-radius:6px;
-  background:var(--bg3); border:1px solid var(--line); color:var(--fg2); font-size:13px;
+  /* v0.5.7.8：同 .back-bottom —— 底色和边框跟着淡，‹ › 保持原亮度。 */
+  background:rgba(var(--bg3-rgb), var(--bubble-alpha));
+  border:1px solid rgba(var(--line-rgb), var(--bubble-alpha));
+  color:var(--fg2); font-size:13px;
 }
 .msg .swipe button:active{ opacity:.6; }
 

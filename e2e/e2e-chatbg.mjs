@@ -145,6 +145,40 @@ const a4 = await page.evaluate(() => getComputedStyle(document.documentElement).
 // v0.5.7.6：不再锁回 1 —— 用户调到 70 就一直是 70，清除背景不该改他设的气泡
 t('清除背景后气泡不透明度仍按滑杆（0.7）', a4 === '0.7', a4);
 
+console.log('=== 回底按钮 / 版本箭头跟着气泡不透明度淡（v0.5.7.8） ===');
+// 两个控件在测试里不一定存在（.back-bottom 没离开底部时 display:none，
+// .swipe button 只有多版本消息才有）。按真实结构临时插一对，量完就删 ——
+// 这里要量的是 CSS 规则本身，不是某个实例。
+const probeAlpha = async (pct) => {
+  await page.evaluate(v => { const el = document.getElementById('s-bubblealpha'); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); }, pct);
+  await sleep(350);
+  return await page.evaluate(() => {
+    const bb = document.createElement('button'); bb.className = 'back-bottom'; bb.textContent = '最新';
+    const wrap = document.createElement('div'); wrap.className = 'msg';
+    const sw = document.createElement('div'); sw.className = 'swipe';
+    const b = document.createElement('button'); b.textContent = '‹';
+    sw.appendChild(b); wrap.appendChild(sw);
+    document.body.appendChild(bb); document.body.appendChild(wrap);
+    const pick = (el) => { const cs = getComputedStyle(el); return { bg: cs.backgroundColor, fg: cs.color }; };
+    const out = { back: pick(bb), swipe: pick(b) };
+    bb.remove(); wrap.remove();
+    return out;
+  });
+};
+const alphaOf = (c) => { const m = /rgba?\(([^)]+)\)/.exec(c); if (!m) return null; const p = m[1].split(',').map(s => s.trim()); return p.length === 4 ? Number(p[3]) : 1; };
+const p100 = await probeAlpha(100);
+t('100%：回底按钮底色不透明', alphaOf(p100.back.bg) === 1, p100.back.bg);
+t('100%：版本箭头底色不透明', alphaOf(p100.swipe.bg) === 1, p100.swipe.bg);
+const fg100 = p100.back.fg;
+const p40 = await probeAlpha(40);
+t('40%：回底按钮底色 alpha=0.4', Math.abs(alphaOf(p40.back.bg) - 0.4) < 0.01, p40.back.bg);
+t('40%：版本箭头底色 alpha=0.4', Math.abs(alphaOf(p40.swipe.bg) - 0.4) < 0.01, p40.swipe.bg);
+t('40%：文字颜色没跟着淡', p40.back.fg === fg100 && p40.swipe.fg === fg100, p40.back.fg + ' / ' + p40.swipe.fg);
+const p0 = await probeAlpha(0);
+t('0%：回底按钮只剩文字', alphaOf(p0.back.bg) === 0, p0.back.bg);
+t('0%：版本箭头只剩符号', alphaOf(p0.swipe.bg) === 0, p0.swipe.bg);
+t('0%：文字颜色仍没变', p0.back.fg === fg100, p0.back.fg);
+
 t('页内没有 JS 异常', errs.length === 0, errs.join(' | '));
 console.log('');
 console.log('通过 ' + pass + ' 项 / 失败 ' + fail + ' 项');

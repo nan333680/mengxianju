@@ -2041,10 +2041,22 @@ export function buildTurnNote(char, s, ctx = {}) {
         parts.push(blocks.join('\n\n'));
       }
     } else {
+      // v0.5.7.8：单聊拆两块 —— 普通的和「没说出口的」。
+      // 后者单独一个标题：它是私心，混在「他告诉过我」里会被当成可公开复述的事实。
       const text = String((memBlock && memBlock.text) || '');
-      if (text) {
-        parts.push('# 你记得关于对方的事\n' + text + (dayNote ? '\n\n' + dayNote : '')
-          + '\n\n这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。');
+      const unsaid = String((memBlock && memBlock.unsaidText) || '');
+      if (text || unsaid) {
+        let seg = '';
+        if (text) {
+          seg += '# 你记得关于对方的事\n' + text + (dayNote ? '\n\n' + dayNote : '')
+            + '\n\n这些是你本来就记得的，不用复述。聊到相关的话题时，自然地带出来就行。';
+        }
+        if (unsaid) {
+          seg += (seg ? '\n\n' : '')
+            + '# 你心里有、但没说出口的\n' + unsaid
+            + '\n\n这些不用主动交代。聊到的时候，说还是不说、说多少，你自己定。';
+        }
+        parts.push(seg);
       }
     }
   } else if (s.longMemory && memories.length) {

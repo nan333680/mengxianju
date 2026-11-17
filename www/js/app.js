@@ -8328,8 +8328,20 @@ let namedInText = false;
           estimate: memEst,
           userText: visibleText
         });
+        // v0.5.7.8：「没说出口的」单独成块。
+        // ⚠️ 判 x.text 不判 x.line —— line 前面挂着「第 N 天记下：」和
+        //   「（你突然想起来）」，用 includes 会把正文中间误写的一处也认成这一类。
+        const _isUnsaid = (x) => /^（没说）/.test(String((x && x.text) || '').trim());
         memBlock = {
-          text: memoryBlockText(pick.used),
+          text: memoryBlockText(pick.used.filter(x => !_isUnsaid(x))),
+          // 剥掉那四个字：小标题已经说了。不剥会叠成
+          // 「（你以为，不一定真）第 3 天记下：（你突然想起来）（没说）…」四个前缀。
+          // ⚠️ 先判 includes 再 replace：event 类且放久了的记忆，line 走的是 fogLine()
+          //    （mempick.js:248-251），里面根本没有那四个字，直接 replace 是空转。
+          unsaidText: memoryBlockText(pick.used.filter(x => _isUnsaid(x)).map(x => {
+            const l = String(x.line || '');
+            return { ...x, line: l.includes('（没说）') ? l.replace('（没说）', '') : l };
+          })),
           hasDay: pick.used.some(x => /第 \d+ 天记下/.test(x.line))
         };
         memPick = pick;
@@ -9722,15 +9734,32 @@ const MEM_DONT_REMEMBER =
  * 只有一处按路不同：这条路允许输出几条 —— 口号那句要引用它的数字，
  * 所以做成参数（总结路 5 条、归档路 12 条）。
  * @param {number} max
+ * @param {number} memLimit 记忆条数上限，用来算「一轮通常记几条」
  */
-function memQualityGuards(max) {
+function memQualityGuards(max, memLimit) {
+  // v0.5.7.8：一轮记几条【不写死】—— 它跟记忆上限挂钩。
+  // 写死 3~5 条会把默认 memLimit=20 的用户打爆：4 轮就撑满，之后每轮都触发
+  // tidyNow 全删重写，成本暴涨且每次都冒丢东西的险。
+  // 按 max 等比缩放：cap=50（拿满）时总结路给 5、归档路给 12。
+  //
+  // ⚠️ 这是【行为改变】，别写成「默认用户零影响」：
+  //   · 总结路 cap=20 → 2 条，和改之前一样（那句原来写的是 0~2 条）
+  //   · 归档路 cap=20 → 5 条，是【新的】—— 归档一次 40 条对话，原来被
+  //     「超过 2 条就删」压到 0~2 条。实测小恶魔 461 条消息只产出 12 条记忆，
+  //     正是产率太低、记忆从没撑满过，也就从没触发过整理。
+  //     放开之后 cap=20 的用户 4 次归档（约 160 条对话）撑满一次，然后才开始整理 ——
+  //     方向是对的，但它真的会变。
+  const cap = Number(memLimit) || 20;
+  const target = Math.max(2, Math.min(max, Math.ceil(max * cap / 50)));
   return `【宁缺毋滥 —— 这条最重要】\n`
-    + `  上面「最多 ${max} 条」是上限，不是指标。绝大多数轮次里，值得长期记住的只有 0~2 条。\n`
+    + `  上面「最多 ${max} 条」是上限，不是指标。一轮里通常能记下 ${Math.max(1, target - 1)}~${target} 条。\n`
     + `  以下这些【不要记】：\n`
     + `  · 这一轮具体发生了什么（发生了"吵架""抱了一下"这类过程，不记；\n`
     + `    但如果是关于他的稳定偏好或关系变化，那要记）\n`
-    + `  · 你自己当时的心情、想法、反应（"我觉得他……"、"我有点……"）\n`
-    + `  · 你能看出来但没人说出口的推测（"他好像喜欢……"、"他可能不想……"）\n`
+    + `  · 你自己当时的心情、想法、反应 —— 不许写成 fact；\n`
+    + `    真值得留下的，写成下面「你没说出口的」那一条。\n`
+    + `  · 你能看出来但没人说出口的推测 —— 同上，只能进「你没说出口的」，\n`
+    + `    不许进 fact。\n`
     + `  · 把一句话换个说法重记一遍\n`
     + `  宁可这次输出 []，也不要用不重要的事把记忆撑满 ——\n`
     + `  记忆满了就得丢掉旧的，丢掉的往往比新记的更有用。\n\n`
@@ -9752,7 +9781,7 @@ function memQualityGuards(max) {
     + `    有没有一条和它讲的是同一件事？有就【不要写】——\n`
     + `    合并是整理那一步的活，不是在这里再记一条。\n\n`
     + `  【输出前的自查】数一下你准备写的条数：\n`
-    + `    如果超过 2 条，逐条再问一遍"这条真的过得了三关吗"。\n`
+    + `    如果超过 ${target} 条，逐条再问一遍"这条真的过得了三关吗"。\n`
     + `    说得出"删了也没什么"的，删掉。\n`
     // ⚠️ 人称自查（v0.5.3.7 用户实测）：这一关原来只有「三条硬标准」，没有人称。
     //    结果几十轮之后开始出现主客对调，而记忆是永久注入的 —— 写反一条就一直是反的。
@@ -9838,6 +9867,28 @@ function memSchemaBlock(day, withTime) {
     + `     人味不是温柔，是这个人对这件事有立场。\n`
     + `  ⚠️ 离开这段对话自己什么都说不上来的（住三楼、今年二十八），\n`
     + `     就别硬编一句态度。宁短不凑。\n\n`
+    // v0.5.7.8：§4 只留「没说出口的」这一类。原清单里「你心里认定的」整段删掉 ——
+    // 注入层（memory.js:430）早就会给 belief 自动加「（你以为，不一定真）」，
+    // 而自动摘下来的 belief 一律被 shouldAutoCommit 拦到 draft、不进提示词，
+    // 写进去只会在记忆列表里堆着。真正缺的是【你那一笔】的产出率，那条走 fact、能自动提交。
+    + `【你没说出口的】\n`
+    + `  记下来、当时没说、以后也未必会说的 —— 包括你当时的心情、\n`
+    + `  你看出来但没说出口的推测。\n`
+    + `  写法：正文最开头加「（没说）」，后面照常写：\n`
+    + `    「（没说）我知道你其实不想走，问了一句你就顺着应了。」\n`
+    + `    「（没说）你说不怕，我不信。」\n`
+    + `  ⚠️ 「我」永远是你自己，「你」永远是他 —— 和大段正文一个规矩（见上面【你那一笔】）。\n`
+    + `  ⚠️ 「（没说）」这四个字只许出现在正文最开头，正文里不许再出现，\n`
+    + `     程序靠它把这一类挑出来。\n`
+    // ⚠️ v0.5.7.8：必须钉死 kind=fact。不写这一条，模型会把它归到 belief，
+    //    而 shouldAutoCommit（memory.js:301）对 belief 无条件返回 ok:false —
+    //    整条落 draft、不进提示词，等于这一整段白写。
+    + `  ⚠️ 这一类的 kind 固定写 "fact"，不要写 "belief" ——\n`
+    + `     写成 belief 会被当成"还没确认的看法"，卡在收件箱里，\n`
+    + `     而这一类恰恰是你心里已经确定的。\n`
+    + `  ⚠️ 这类是你心里确定的，不是猜测 —— 别用「好像/可能/也许/大概/似乎/或许/应该是」，\n`
+    + `     直接写你怎么想的。用了那些词会被当成没确认的，卡在收件箱里。\n`
+    + `  ⚠️ 不用写成「我瞒着他」—— 你不是在跟他聊天，你是把话咽回去了。\n\n`
     + `【两个可选字段 —— 不填也行，填了下一轮检索会准一点】\n`
     + `  heat   这条有多重：0~5。5 = 吵翻了、伤到了；3 = 明显带着情绪；0 = 平铺直叙。\n`
     + `         只有真的带着情绪才给高分，别因为"觉得重要"就写 5 —— 那样所有记忆都会变成 5。\n`
@@ -10257,7 +10308,7 @@ async function summarizeIfNeeded(charId = null) {
           + `· 只提过一次的 → freq 填 "once"。\n`
           + `· 他明确说过"记住这个""别忘"的 → freq 填 "pinned"，并且要写得具体。\n\n`
           + `【去重】下面给你已经记得的。只写新的；意思重复的不要写。\n\n`
-          + memQualityGuards(5)
+          + memQualityGuards(5, S.memLimit)
           + `【输出】只输出 JSON 数组，不要别的话。最多 5 条（通常更少）；没有值得记的就输出 []。\n`
           + MEM_OUTPUT_SHAPE
           // ⚠️ 小时/分钟要写进格式里（v1.21.29 修，复审 新4）——
@@ -11362,7 +11413,7 @@ async function summarizeChunk(charId, chunk) {
         + `【频次】反复出现或他说过"经常/总是/每天"的填 "often"；提过两三次填 "normal"；`
         + `只提过一次填 "once"；他明确说过"记住这个"的填 "pinned" 并写具体。\n\n`
         + `【去重】下面给你已经记得的。只写新的；意思重复的不要写。\n\n`
-        + memQualityGuards(12)
+        + memQualityGuards(12, S.memLimit)
         + `【输出】只输出 JSON 数组，最多 12 条；没有新的就输出 []。\n`
         + MEM_OUTPUT_SHAPE
         + `（untilHour / untilMinute 只在 kind="event" 且你知道具体钟点时填，不知道就留 null）\n\n`
@@ -21702,12 +21753,12 @@ $('btn-new-char').onclick = () => openPresetPicker();
   // 这里只负责"把弹窗打开、确定后写回源框"，保存链路（saveCharEdit）不用知道。
   $('e-greeting-open').onclick = () => openTextEditor({
     title: '开场白',
-    hint: '新建对话时她说的第一句。留空的话，她会等你先开口。',
+    hint: '新对话里角色的第一句话。留空的话，角色会等你先开口。',
     srcId: 'e-greeting',
   });
   $('e-persona-open').onclick = () => openTextEditor({
     title: '人设',
-    hint: '写下她是谁、什么性格、怎么说话。这一段每一轮都会发给她 —— 写得越长，能留给聊天记录的额度就越少。',
+    hint: '写清角色是谁、什么性格、怎么说话。这段每轮都会带上 —— 写得越长，留给聊天记录的额度越少。',
     srcId: 'e-persona',
   });
   $('txt-input').oninput = updateTxtCount;
@@ -22153,7 +22204,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.7.7';
+const WEB_VERSION_FALLBACK = '0.5.7.8';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

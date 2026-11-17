@@ -102,6 +102,11 @@ await page.evaluate(async (id) => {
     kaomojiFreq: 0.15, kaomojiStyle: 'jp-soft', emojiFreq: 0.1, contextRounds: 20 });
   // 一条记忆：用来验 longMemory 开关
   await put('memories', { id: 'm1', charId: id, text: '他喜欢喝咖啡', ts: Date.now() });
+  // v0.5.7.8：「没说出口的」是另一类 —— 注入时要单独一截。
+  // 这句特意跟提示词里那个例子（「（没说）我知道你其实不想走…」）零重叠：
+  // 用一句处处唯一的文本断言「剥干净了」，红了就能直接指认是这条记忆；
+  // 换成一个到处都有的短语，失败信息就分不清是剥离没生效、还是别处也带着它。
+  await put('memories', { id: 'm2', charId: id, text: '（没说）那晚我其实一直在等你先开口', ts: Date.now() });
   db.close();
 }, CHAR_ID);
 await enterChat();
@@ -120,6 +125,9 @@ console.log('=== 1. 基线：该有的段在，不该有的段不在 ===');
   t('没写「他是谁」→ 没有「# 关于对方」', !sys.includes('# 关于对方'));
   t('longMemory 开着且有记忆 → 有「# 你记得关于对方的事」', sys.includes('# 你记得关于对方的事'));
   t('记忆内容进去了', sys.includes('他喜欢喝咖啡'));
+  t('「没说出口的」单独成块', sys.includes('# 你心里有、但没说出口的'));
+  t('注入时剥掉了「（没说）」', !sys.includes('（没说）那晚我其实一直在等你先开口'));
+  t('正文还在', sys.includes('那晚我其实一直在等你先开口'));
 }
 
 console.log('');

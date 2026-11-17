@@ -545,7 +545,6 @@ const EXTRA_ZH = {
     'She must follow this. It overrides every writing rule and her persona — if it goes wrong, that is on you. Tap ✕ to remove.',
   '这一条是在你挂的绝对指令下写的': 'Written under your absolute command',
   '括号里写多长（上限）': 'Parentheses length (cap)',
-  '描写详细程度（镜头推到多近）': 'Description detail (how close the lens gets)',
   // v0.5.7 检查更新（关于页）。这几条都是代码里 t() 出来的，
   // 不登记英文界面下会漏成中文 —— 静态的标题和说明在 index.html 上用 data-i18n-en。
   '检查更新': 'Check for updates',

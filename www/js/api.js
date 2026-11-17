@@ -521,7 +521,7 @@ export async function onceChat(opts) {
     if (signal.aborted) onOuterAbort();
     else if (typeof signal.addEventListener === 'function') signal.addEventListener('abort', onOuterAbort, { once: true });
   }
-  let res;
+  let res, j;
   try {
     // ⚠️ 必须显式关掉思考模式（2026-09-26 修）
     //
@@ -550,19 +550,26 @@ export async function onceChat(opts) {
       ...(eff ? { reasoning_effort: eff } : {}),
       ...(thinkOff || {}),
     }, ctl.signal);
+    // ⚠️ v0.5.8：这两个读取都必须在超时保护【之内】。
+    // 原来的位置在 finally 之后 —— 而 finally 在 postChat 一返回就执行了：
+    // 定时器清掉、外部中断也解绑了，可 body 一个字节都还没读。
+    // 服务端发完响应头就卡住（连接不断、也不结束）时，res.json() 永不返回，
+    // 而 ctl 已经没人管 → onceChat 永远挂着 → _summarizing 恒为 true →
+    // 此后所有记忆任务静默不再执行，直到重启 App。按「停止」也救不回来，
+    // 因为 abort 监听在同一个 finally 里一起解绑了。
+    if (!res.ok) {
+      // 同 streamChat：400/422 的 body 已被 postChat 读走，取缓存那份；
+      // 这里以前只报状态码，服务端说了什么一概看不到（v1.21.54 修）。
+      // v0.5.3.2：附带 status / detail / kind，界面才能翻成人话（清单 §3.1）。
+      throw apiErr(res.status, await readErrDetail(res));
+    }
+    j = await res.json();
   } finally {
     clearTimeout(t);
     if (signal && typeof signal.removeEventListener === 'function') {
       try { signal.removeEventListener('abort', onOuterAbort); } catch { /* 无所谓 */ }
     }
   }
-  if (!res.ok) {
-    // 同 streamChat：400/422 的 body 已被 postChat 读走，取缓存那份；
-    // 这里以前只报状态码，服务端说了什么一概看不到（v1.21.54 修）。
-    // v0.5.3.2：附带 status / detail / kind，界面才能翻成人话（清单 §3.1）。
-    throw apiErr(res.status, await readErrDetail(res));
-  }
-  const j = await res.json();
   // v2（活人感）：评审这一趟也要能记用量 —— 它是一次实打实的 700 上限请求，
   // 不记的话「这一轮到底花了多少」永远少一笔。回调出错不该影响正文。
   if (j && j.usage && typeof onUsage === 'function') {
@@ -611,6 +618,12 @@ export async function testConnection(opts) {
       stream: false,
       ...(spec.thinkOff || {}),
     }, ctl.signal);
+    // ⚠️ v0.5.8：和 onceChat 同一处坑 —— body 要在超时保护之内读。
+    // 这里读的是错误详情，卡住的表现是「测试中…」永远转。
+    const ms = Date.now() - t0;
+    if (res.ok) return { ok: true, kind: '', msg: '通了', ms };
+    const detail = await readErrDetail(res);
+    return { ok: false, kind: kindOfStatus(res.status, detail), status: res.status, msg: detail, ms };
   } catch (e) {
     const aborted = !!(e && (e.name === 'AbortError' || ctl.signal.aborted));
     return {
@@ -620,31 +633,35 @@ export async function testConnection(opts) {
       ms: Date.now() - t0,
     };
   } finally { clearTimeout(timer); }
-  const ms = Date.now() - t0;
-  if (res.ok) return { ok: true, kind: '', msg: '通了', ms };
-  const detail = await readErrDetail(res);
-  return { ok: false, kind: kindOfStatus(res.status, detail), status: res.status, msg: detail, ms };
 }
 
 export async function fetchBalance(opts) {
-  const { apiKey, baseUrl, provider } = opts;
+  const { apiKey, baseUrl, provider, timeoutMs = 15000 } = opts;
   if (!apiKey) throw new Error('还没填 API Key');
   if (!providerSpec(provider).balance) {
     throw new Error('这个服务商没有余额查询接口（只有 DeepSeek 有）');
   }
-  const res = await fetch(joinUrl(baseUrl, '/user/balance'), {
-    headers: { 'Authorization': 'Bearer ' + apiKey }
-  });
-  if (!res.ok) throw new Error('查询失败 ' + res.status);
-  const j = await res.json();
-  const info = (j.balance_infos || [])[0];
-  return {
-    available: !!j.is_available,
-    currency: info ? info.currency : '',
-    total: info ? info.total_balance : '',
-    granted: info ? info.granted_balance : '',
-    toppedUp: info ? info.topped_up_balance : '',
-  };
+  // ⚠️ v0.5.8：这里原来【既没有超时、也没有 signal】——
+  // 服务端接了连接就不回时，按钮永远停在「查询中…」，没有任何自愈路径，
+  // 用户只能杀掉 App。和 onceChat 是同一类坑，只是这条连保险丝都没有。
+  const ctl = new AbortController();
+  const timer = setTimeout(() => { try { ctl.abort(); } catch { /* 已结束 */ } }, timeoutMs);
+  try {
+    const res = await fetch(joinUrl(baseUrl, '/user/balance'), {
+      headers: { 'Authorization': 'Bearer ' + apiKey },
+      signal: ctl.signal,
+    });
+    if (!res.ok) throw new Error('查询失败 ' + res.status);
+    const j = await res.json();   // body 也在超时保护之内
+    const info = (j.balance_infos || [])[0];
+    return {
+      available: !!j.is_available,
+      currency: info ? info.currency : '',
+      total: info ? info.total_balance : '',
+      granted: info ? info.granted_balance : '',
+      toppedUp: info ? info.topped_up_balance : '',
+    };
+  } finally { clearTimeout(timer); }
 }
 
 /**
@@ -714,7 +731,7 @@ function searchHttpError(provider, res, detail) {
 
 async function searchTavily({ apiKey, query, max, signal }) {
   const { ctl, done } = searchTimeout(signal);
-  let res;
+  let res, j;
   try {
     res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
@@ -728,12 +745,15 @@ async function searchTavily({ apiKey, query, max, signal }) {
       }),
       signal: ctl.signal
     });
+    // ⚠️ v0.5.8：body 也必须在搜索超时之内（同 onceChat 那处坑）。
+    // 原来 done() 在 fetch 一返回就执行，body 还没读 —— 服务端发完头就挂着时，
+    // 「正在搜…」永远不结束，只能靠用户按停止。
+    if (!res.ok) {
+      let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 拿不到就算了 */ }
+      throw searchHttpError('tavily', res, detail);
+    }
+    j = await res.json();
   } finally { done(); }
-  if (!res.ok) {
-    let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 拿不到就算了 */ }
-    throw searchHttpError('tavily', res, detail);
-  }
-  const j = await res.json();
   return {
     answer: String(j.answer || '').trim(),
     results: (j.results || []).slice(0, max).map(r => ({
@@ -744,7 +764,7 @@ async function searchTavily({ apiKey, query, max, signal }) {
 
 async function searchExa({ apiKey, query, max, signal }) {
   const { ctl, done } = searchTimeout(signal);
-  let res;
+  let res, j;
   try {
     res = await fetch('https://api.exa.ai/search', {
       method: 'POST',
@@ -752,12 +772,12 @@ async function searchExa({ apiKey, query, max, signal }) {
       body: JSON.stringify({ query, numResults: max, contents: { text: { maxCharacters: 1200 } } }),
       signal: ctl.signal,
     });
+    if (!res.ok) {
+      let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
+      throw searchHttpError('exa', res, detail);
+    }
+    j = await res.json();   // body 在超时保护内（v0.5.8）
   } finally { done(); }
-  if (!res.ok) {
-    let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
-    throw searchHttpError('exa', res, detail);
-  }
-  const j = await res.json();
   return {
     // Exa 不返回"摘要"，交给模型自己看片段
     answer: '',
@@ -773,18 +793,18 @@ async function searchBrave({ apiKey, query, max, signal }) {
   const { ctl, done } = searchTimeout(signal);
   const url = 'https://api.search.brave.com/res/v1/web/search?count=' + Math.max(1, Math.min(20, max))
     + '&q=' + encodeURIComponent(query);
-  let res;
+  let res, j;
   try {
     res = await fetch(url, {
       headers: { 'Accept': 'application/json', 'X-Subscription-Token': apiKey },
       signal: ctl.signal,
     });
+    if (!res.ok) {
+      let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
+      throw searchHttpError('brave', res, detail);
+    }
+    j = await res.json();   // body 在超时保护内（v0.5.8）
   } finally { done(); }
-  if (!res.ok) {
-    let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
-    throw searchHttpError('brave', res, detail);
-  }
-  const j = await res.json();
   const list = ((j.web && j.web.results) || []).slice(0, max);
   return {
     answer: String((j.summarizer && j.summarizer.text) || '').trim(),
@@ -798,7 +818,7 @@ async function searchBrave({ apiKey, query, max, signal }) {
 
 async function searchZhipu({ apiKey, query, max, signal }) {
   const { ctl, done } = searchTimeout(signal);
-  let res;
+  let res, j;
   try {
     res = await fetch('https://open.bigmodel.cn/api/paas/v4/web_search', {
       method: 'POST',
@@ -810,12 +830,12 @@ async function searchZhipu({ apiKey, query, max, signal }) {
       }),
       signal: ctl.signal,
     });
+    if (!res.ok) {
+      let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
+      throw searchHttpError('zhipu', res, detail);
+    }
+    j = await res.json();   // body 在超时保护内（v0.5.8）
   } finally { done(); }
-  if (!res.ok) {
-    let detail = ''; try { detail = (await res.text()).slice(0, 200); } catch { /* 同上 */ }
-    throw searchHttpError('zhipu', res, detail);
-  }
-  const j = await res.json();
   const list = (j.search_result || []).slice(0, max);
   return {
     answer: '',

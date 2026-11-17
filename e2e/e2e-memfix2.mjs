@@ -158,7 +158,12 @@ for (let i=0;i<30;i++){ const m=await memTexts(); if(m.length) break; await slee
 console.log('\n=== ② 撤销整理：备份带 id，写回用原 id ===');
 {
   const src = readCode(path.join(WWW, 'js/app.js'));
-  t('备份里存了 id', /items: before\.map\(m => \(\{ id: m\.id/.test(src));
+  // v0.5.8：备份改成整条快照（snapshotMemory），断言跟着改名 ——
+  // 它验的已经不是「某一行里有没有 id」，而是「备份是不是整条拷贝」。
+  // 后半截补偿正则保住原意：光换成一个不认识的函数名不算过，
+  // 得确认那个函数真的是展开整条记录（改成 Object.assign 之类会红）。
+  t('备份是整条快照（含 id）', src.includes('items: before.map(snapshotMemory)')
+    && /function snapshotMemory\(m\)[\s\S]{0,300}?\.\.\.\(?m/.test(src));
   t('写回时用原 id', src.includes('id: it.id || uid()'));
   t('删除按 id 比对', src.includes('const keepIds = hasIds ? new Set(bk.items.map(x => x.id)) : null'));
   t('保留了老备份的文本兜底', src.includes('const keepTexts = hasIds ? null : new Set(bk.items.map(x => x.text))'));

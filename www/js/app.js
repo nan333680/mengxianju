@@ -6541,11 +6541,14 @@ async function openWbSolo(charId, entryId, entryIdx) {
   if (entryId || Number.isInteger(entryIdx)) wbJumpInto($('wbs-list'), entryId, entryIdx);
 }
 
-async function renderWbEntries() {
-  if (!_wbCtx) return;
-  const target = _wbCtx.kind === 'group' ? $('wbe-list') : $('wbs-list');
+async function renderWbEntries(ctx) {
+  // v0.5.8：可选 ctx —— 从群成员那条路进来时，要按【那个成员】重画，
+  // 不能顺手用全局（那可能是别的角色/组）。
+  const C = ctx || _wbCtx;
+  if (!C) return;
+  const target = C.kind === 'group' ? $('wbe-list') : $('wbs-list');
   if (!target) return;
-  const entries = await wbLoadEntries(_wbCtx);
+  const entries = await wbLoadEntries(C);
   if (!entries.length) {
     target.innerHTML = '<div class="wb-list-empty">还没有条目。<br>点下面的按钮加一条，写上「什么时候用」和「内容」。</div>';
     return;
@@ -6590,7 +6593,7 @@ async function renderWbEntries() {
       + '</div>';
   }).join('');
   target.querySelectorAll('[data-wb-e]').forEach(el => {
-    el.onclick = () => openEntryEditor(Number(el.dataset.wbE));
+    el.onclick = () => openEntryEditor(Number(el.dataset.wbE), C);
   });
   // ⚠️ 这两个按钮在卡片【内部】，必须 stopPropagation —— 不然点「丢弃」会顺手把编辑弹窗也打开
   target.querySelectorAll('[data-rv]').forEach(b => {
@@ -6651,9 +6654,21 @@ const WBP_HINT = {
   always: '不看触发词、每轮都注入，并且进「稳定前缀」——她会当成铁律。这一档可以不填触发词。',
 };
 const WBP_ORDER = ["front", "tail", "always"];
-async function openEntryEditor(index) {
-  if (!_wbCtx) return;
-  const entries = await wbLoadEntries(_wbCtx);
+async function openEntryEditor(index, ctx) {
+  // ⚠️ v0.5.8：ctx 必须【传进来】，不能再靠全局 _wbCtx。
+  //
+  // 起因（群成员世界书那条路）：editMemberWbEntry 设好全局、await 这个函数，
+  // 然后在 finally 里立刻还原 —— 可这个函数只挂按钮就返回了，用户还没点保存。
+  // 等他点的时候 _wbCtx 已经还原成上一个角色/组（或者 null）：
+  //   · 没进过世界书页 → null → wbSaveEntries 里 ctx.kind 抛 TypeError，
+  //     弹窗关掉、一个字没存、也没有任何提示
+  //   · 之前进过别家 → 写进上一个角色/组的世界书
+  // 同一条路上的「删除这条」「加一条」一起中招。
+  //
+  // 不传就退回全局，其它调用点行为不变。
+  const C = ctx || _wbCtx;
+  if (!C) return;
+  const entries = await wbLoadEntries(C);
   const isNew = index < 0 || index >= entries.length;
   const e = isNew ? { title: '', keys: [], content: '', on: true } : entries[index];
   let keys = (e.keys || []).slice();
@@ -6806,9 +6821,9 @@ async function openEntryEditor(index) {
     delete rec.needsReview; delete rec.reviewWhy;
     const next = entries.slice();
     if (isNew) next.push(rec); else next[index] = rec;
-    await wbSaveEntries(_wbCtx, next);
+    await wbSaveEntries(C, next);
     done();
-    await renderWbEntries();
+    await renderWbEntries(C);
     await refreshWbSubs();
     toast(isNew ? '已添加' : '已保存');
   };
@@ -6835,9 +6850,9 @@ async function openEntryEditor(index) {
   const del = $('we-del');
   if (del) del.onclick = async () => {
     const next = entries.slice(); next.splice(index, 1);
-    await wbSaveEntries(_wbCtx, next);
+    await wbSaveEntries(C, next);
     done();
-    await renderWbEntries();
+    await renderWbEntries(C);
     await refreshWbSubs();
     toast('已删除');
   };
@@ -6934,9 +6949,9 @@ function bindWorldbook() {
   const newG = $('btn-wb-newgroup');
   if (newG) newG.onclick = () => openGroupCreator();
   const newE = $('btn-wb-newentry');
-  if (newE) newE.onclick = () => openEntryEditor(-1);
+  if (newE) newE.onclick = () => openEntryEditor(-1, _wbCtx);
   const newE2 = $('btn-wb-newentry2');
-  if (newE2) newE2.onclick = () => openEntryEditor(-1);
+  if (newE2) newE2.onclick = () => openEntryEditor(-1, _wbCtx);
   const impBtn = $('btn-wb-import');
   if (impBtn) impBtn.onclick = () => $('wb-import-file').click();
   // 酒馆预设：解析 + 展示，转换动作【由用户点】才发生。理由见 describeStPreset 的注释。
@@ -8102,6 +8117,13 @@ let namedInText = false;
       abortCtl = null;
       $('btn-send').classList.remove('hidden');
       $('btn-stop').classList.add('hidden');
+      // ⚠️ v0.5.8：活动叶子也必须推到最后这一条，和正常路径（send 末尾的 setLeaf）、
+      //    中断路径（半截回复那条）保持一致。漏了这一句的后果很隐蔽：
+      //    落库了、DOM 也插了，但 activePath 从旧叶子回溯 —— 下一次任何全量重绘
+      //    （切角色再切回来 / 进阅读模式 / 取消归档）会让【用户刚发的那条】
+      //    和这条「（没人接话）」一起从屏幕上消失，长按也弹不出菜单，
+      //    而下一轮新消息会变成兄弟分支。
+      try { await setLeaf(myCharId, am.id); } catch { /* 钉不上还有 pickLeaf 兜底 */ }
       // 记忆任务这一轮不跑：它挂在下面那个 try 的 finally 上。
       // 代价是这条用户消息要等下一轮才进总结窗口 —— 冷场本来就没内容可提炼，可以接受。
       return;
@@ -8313,9 +8335,11 @@ let namedInText = false;
         }
         pick = { used: mp.used.concat(sp.used), dropped, tokens: mp.tokens + sp.tokens, limit: 24 };
         memPick = pick;
+        // v0.5.8：群聊虽然不分块（视角过滤才是这里的重点），但「（没说）」四个字
+        // 必须剥掉 —— 这一路没有小标题解释它，模型只会看到一串不认识的标记。
         memBlock = {
-          mineText: memoryBlockText(mp.used),
-          sharedText: memoryBlockText(sp.used),
+          mineText: memoryBlockText(mp.used.map(stripUnsaidPrefix)),
+          sharedText: memoryBlockText(sp.used.map(stripUnsaidPrefix)),
           hasDay: pick.used.some(x => /第 \d+ 天记下/.test(x.line))
         };
       } else {
@@ -8328,20 +8352,12 @@ let namedInText = false;
           estimate: memEst,
           userText: visibleText
         });
-        // v0.5.7.8：「没说出口的」单独成块。
-        // ⚠️ 判 x.text 不判 x.line —— line 前面挂着「第 N 天记下：」和
-        //   「（你突然想起来）」，用 includes 会把正文中间误写的一处也认成这一类。
-        const _isUnsaid = (x) => /^（没说）/.test(String((x && x.text) || '').trim());
+        // v0.5.7.8：「没说出口的」单独成块。判定与剥离见 isUnsaidMem / stripUnsaidPrefix。
+        // ⚠️ 剥掉那四个字是因为小标题已经说了；不剥会叠成
+        // 「（你以为，不一定真）第 3 天记下：（你突然想起来）（没说）…」四个前缀。
         memBlock = {
-          text: memoryBlockText(pick.used.filter(x => !_isUnsaid(x))),
-          // 剥掉那四个字：小标题已经说了。不剥会叠成
-          // 「（你以为，不一定真）第 3 天记下：（你突然想起来）（没说）…」四个前缀。
-          // ⚠️ 先判 includes 再 replace：event 类且放久了的记忆，line 走的是 fogLine()
-          //    （mempick.js:248-251），里面根本没有那四个字，直接 replace 是空转。
-          unsaidText: memoryBlockText(pick.used.filter(x => _isUnsaid(x)).map(x => {
-            const l = String(x.line || '');
-            return { ...x, line: l.includes('（没说）') ? l.replace('（没说）', '') : l };
-          })),
+          text: memoryBlockText(pick.used.filter(x => !isUnsaidMem(x))),
+          unsaidText: memoryBlockText(pick.used.filter(isUnsaidMem).map(stripUnsaidPrefix)),
           hasDay: pick.used.some(x => /第 \d+ 天记下/.test(x.line))
         };
         memPick = pick;
@@ -9341,7 +9357,12 @@ let namedInText = false;
         // 切角色导致的中断不弹这个提示，不然会莫名其妙跳一下
         toast('已停止生成');
       }
-    } else if (ph) {
+    } else if (ph && ph.isConnected) {
+      // ⚠️ v0.5.8：必须判 isConnected。
+      // 走到这里还有一种情况：上面「有半截 + 非中断错误」那条分支已经 ph.remove() 过，
+      // 而 ph 这个引用还在 —— 于是错误卡被画在一个已经不在文档里的节点上，
+      // 用户只看到半截文字 +「（已中断）」，没有原因、没有重试按钮，
+      // 连下面那个兜底 toast 也永远走不到。
       // 保留气泡并写明原因，方便定位；不再让现场凭空消失
       const bub = ph.querySelector('.bub');
       if (bub) {
@@ -9488,7 +9509,8 @@ function parseMemJson(s) {
     throw new Error('记忆总结的 ' + arr.length + ' 个元素里没有 text 字段（模型没按格式回）');
   }
   return kept.map(x => {
-      // 类型（记忆 OS §3）：七类。模型给了表外的值就当 fact —— 绝不把它写进去，
+      // 类型（记忆 OS §3）：八类（promise 是后加的，标题一直没跟）。
+      // 模型给了表外的值就当 fact —— 绝不把它写进去，
       // 否则 normalizeMemory 会把它原样留在库里，注入时 kind 判定全失效。
       const kind = MEMORY_KINDS.includes(String(x.kind || '').trim()) ? String(x.kind).trim() : 'fact';
       // 槽位（记忆 OS）：中文白名单 + 点号前缀都认，其它一律当没给。
@@ -9638,7 +9660,7 @@ async function pruneMemories(charId = null) {
   const list = await mem.list(cid);
   const nowMin = clockToMin(clockOf);
   for (const m of list) {
-    // 只看有没有限期，不再看 kind（记忆 OS）：v2 的七类里 state / goal 也可以带限期，
+    // 只看有没有限期，不再看 kind（记忆 OS）：v2 的八类里 state / goal 也可以带限期，
     // 老判据只认 event，用户给一条 state 填了「第 5 天之后不算数」会永远不过期。
     if (typeof m.untilDay !== 'number') continue;
     // ⚠️ 只处理还在生效的（v0.5.2.2，外部评审 P0-2）。
@@ -9726,6 +9748,26 @@ const MEM_DONT_REMEMBER =
   `【不要记】今天在哪、什么天气、这一轮聊了什么这类【跟人无关的临时信息】。\n`
   + `  注意：这里说的是"不值得记的内容"，不是"只提过一次的内容"——\n`
   + `  只提过一次但关于他本人的事（老家在哪、养的猫叫什么），是要记的。\n\n`;
+
+/**
+ * 「没说出口的」那一类记忆的判定与剥离（v0.5.8）。
+ *
+ * 这一类靠正文开头那四个字认出来（见 memSchemaBlock 的【你没说出口的】）。
+ * 它有三个注入出口：单聊（单独成块）、群聊、场景卡。原来只有单聊剥了前缀，
+ * 另外两个出口把「（没说）」原样喂给模型 —— 而那两个出口【没有小标题】解释它。
+ * 场景卡尤其伤：它生成的是正文，模型会把那四个字当成一句普通的事实写进去。
+ *
+ * ⚠️ 判定必须用 text 而不是 line：line 前面挂着「第 N 天记下：」和
+ *   「（你突然想起来）」，用 includes 会把正文中间误写的一处也认成这一类。
+ * ⚠️ 剥离要 includes 守卫：event 类放久了 line 走的是 fogLine()，里面根本没有那四个字。
+ */
+function isUnsaidMem(x) {
+  return /^（没说）/.test(String((x && x.text) || '').trim());
+}
+function stripUnsaidPrefix(x) {
+  const l = String((x && x.line) || '');
+  return { ...x, line: l.includes('（没说）') ? l.replace('（没说）', '') : l };
+}
 
 /**
  * 【宁缺毋滥】+ 三关 + 输出前自查（v0.4.2.3 审计 F23，两条路共用）。
@@ -9832,14 +9874,14 @@ const MEM_OUTPUT_SHAPE =
  *
  * 为什么不再各写一份：以前 summarizeIfNeeded 和 summarizeChunk 各写一套
  * 【分两类】+【槽位】，两处历史上各漏过一次同样的坑。这一版要加的东西
- * （七类 kind / 点号槽位 / 原话 quote）在三处都必须一致，再各写各的必错。
+ * （八类 kind / 点号槽位 / 原话 quote）在三处都必须一致，再各写各的必错。
  *
  * 只讲"输出什么"，不讲"该不该记" —— 后者在 memQualityGuards 里。
  * @param {number} day 当前剧情第几天（留给「失效日」那一句引用，本函数不直接用）
  * @param {boolean} withTime 是否允许填到小时（只归档那条路允许；false 时提示词不提小时）
  */
 function memSchemaBlock(day, withTime) {
-  return `【分七类（kind）—— 选最贴的那个】\n`
+  return `【分八类（kind）—— 选最贴的那个】\n`
     + `  · fact         关于他本人的稳定事实：喜好、习惯、经历、忌讳、在意的东西。不会过期。\n`
     + `  · event        有时限的事：假期、约定、某段时间的打算。要给出失效的那一天。\n`
     + `  · state        他这一阵的处境或身体状态（"正在找工作""腿伤还没好"）。会变，新说法顶旧的。\n`
@@ -10480,6 +10522,25 @@ async function clearNeedTidy(cid) {
   try { await kv.set('memNeedTidy:' + cid, false); } catch { /* 清不掉不影响正确性 */ }
 }
 
+/**
+ * 整理前的记忆快照（v0.5.8）。
+ *
+ * 「撤销上次整理」的承诺是【还原成整理之前的样子】，所以快照必须一个字段都不落。
+ * 原来两条备份路径各自手写字段清单，而且漏得还不一样：
+ *   · 自动路径（dedupeFor）漏 scope / subject / pinned / heat / open / quote / sinceDay
+ *   · 手动路径（设置页那个按钮）连 who / key / 取代链都漏
+ * 于是撤销之后：分支专属的记忆变成全局（跨支泄漏）、钉住的掉钉、
+ * 没兑现的承诺变已兑现、群记忆的视角被抹平成"大家都知道"。
+ *
+ * 直接整条浅拷贝，不再挑 —— 挑字段这件事已经被证明一定会漏。
+ * 只剥掉 supersedes：它是"这次写入顶掉了哪些旧条目"的瞬时记录，不属于记忆本身。
+ */
+function snapshotMemory(m) {
+  const o = { ...(m || {}) };
+  delete o.supersedes;
+  return o;
+}
+
 async function dedupeIfNeeded(force = false, charId = null, noTick = false, reason = '') {
   // ⚠️ 被挡下来时【必须记一笔】，不能静默 return 0（2026-09-28 修）。
   // 见 _dedupePending 的注释：调用方在进来之前已经把被删内容写进 memDeleted 队列了，
@@ -10704,8 +10765,12 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
 
           + `【第三步：该丢的丢掉】\n`
           + `  · 已经被后来说的内容覆盖掉的旧状态（说了「改喝拿铁」，「喜欢美式」就不必再单独留）\n`
-          + `  · 你自己当时的心情、想法、反应（「我觉得他……」）\n`
-          + `  · 你能看出来但没人说出口的推测\n`
+          // ⚠️ v0.5.8：下面两条原本会把她刚写下的「没说出口的」整类删掉 ——
+          //    那一类正是「当时的心情、想法、反应」，也正是「没人说出口的推测」。
+          //    整理是全删重写，一触发就等于把这一类清空。所以这里必须豁免，
+          //    并在下面的【规则】里钉死前缀。
+          + `  · 你自己当时的心情、想法、反应（「我觉得他……」）—— 正文以「（没说）」开头的除外\n`
+          + `  · 你能看出来但没人说出口的推测 —— 同上，带「（没说）」的除外\n`
           + `  条数目标 ${limit} 条以内，但这是参考不是硬指标 ——\n`
           + `  真正重要的是【合并和压缩到位】。宁可 12 条精炼的，不要 20 条啰嗦的。\n`
           + `  pinned 和 often 的不要丢。\n\n`
@@ -10746,6 +10811,12 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
           + `  · 输入里的 day 是「记下这条时的剧情天数」；正文里的「第 N 天」是绝对天数，\n`
           + `    不要改回「今天/明天/昨天」。合并时 day 取更早的那个。\n`
           + `  · freq 保留原样；合并时取优先级更高的那个（pinned > often > normal > once）。\n`
+          // ⚠️ v0.5.8（配合上面第三步的豁免）：这一类的唯一标识就是正文开头那四个字，
+          //    丢了它，那条会从「她咽回去的私心」掉回普通段落，被当成可以复述的事实说出口 ——
+          //    比删掉它更糟。所以合并只许并正文，前缀必须留在最前面、且只有一个。
+          + `  · 【正文以「（没说）」开头的那一类，一条都不许删】\n`
+          + `    那不是"当时的心情"那种废话，是「没说出口的」—— 它单独算一类，要留着。\n`
+          + `    合并或压缩它的时候，「（没说）」这四个字必须留在正文最前面，而且只能有一个。\n`
           + `  · 【字段只有这六个】text / kind / untilDay / untilHour / untilMinute / freq。\n`
           + `    不要加 isNew、id、reason、note 之类的额外字段 —— 没用，还占输出长度。\n`
           + `  · 只输出 JSON 数组，格式同输入，不要别的话。`
@@ -11099,14 +11170,8 @@ async function dedupeIfNeeded(force = false, charId = null, noTick = false, reas
           // 语义上「撤销 = 回到整理前的样子」，本来就该存全量。
           // ⚠️ who 也要存（v0.4.1.4）：这是"整理前快照"，漏了它，「撤销上次整理」
           //    就会把群记忆的视角一起抹掉 —— 而撤销的承诺是"还原成整理之前的样子"。
-          items: listAll.map(m => ({ id: m.id, text: m.text, kind: m.kind, untilDay: m.untilDay,
-                                    untilHour: m.untilHour, untilMinute: m.untilMinute,
-                                    who: m.who || '',
-                                    day: m.day ?? null, sourceMsgIds: m.sourceMsgIds || [],
-                                    status: m.status || 'active', legacy: m.legacy === true,
-                                    key: m.key || '', supersededBy: m.supersededBy || null,
-                                    supersededDay: m.supersededDay ?? null, supersededAt: m.supersededAt || 0,
-                                    freq: m.freq, mine: !!m.mine })),
+          // v0.5.8：整条快照，见 snapshotMemory。这里原来逐个挑字段，漏了七个。
+          items: listAll.map(snapshotMemory),
         });
         }
       } catch { /* 备份失败不该挡住整理本身 */ }
@@ -11483,7 +11548,19 @@ async function summarizeChunk(charId, chunk) {
   // 起因：我第一版把 curWritable 算成常量，但它在【压缩前】就定值了 ——
   // dedupeFor 腾完位置后 cur 更新了，curWritable 还是旧值 → room 恒为 0 →
   // 归档永远"记忆已满"。e2e-archive2 场景 2 直接挂（归档 0 条）。
-  const writableOf = (arr) => _protectMine ? arr.filter(m => !m.mine).length : arr.length;
+  // ⚠️ v0.5.8：只数【还在算数】的（active）。
+  //
+  // 原因：删除是软删（status='deleted'）、取代/过期也都留着记录，所以
+  // mem.list 是全量、只增不减。而这些记录一条都不进提示词 —— 拿它们占名额，
+  // 等于每删一条记忆，可用名额就少一格。
+  //
+  // 真实后果（定时炸弹，不是理论）：用户用几个月后库里堆满 superseded/deleted，
+  // writableOf 冲到 totalCap → 走 dedupeFor('makeRoom')，而那条路只处理 active
+  // （见上面 list 的 filter）→ 压缩完一个有效记录都没少 → curWritable 不变 →
+  // room 恒 0 → 抛「记忆已满（23/20）」，此后归档【永久停摆】，
+  // 而且每轮还白花一次模型调用。
+  const writableOf = (arr) => (_protectMine ? arr.filter(m => !m.mine) : arr)
+    .filter(m => isActiveMemory(m)).length;
   if (writableOf(cur) >= totalCap) {
     try { await dedupeFor(charId, 'makeRoom'); cur = await mem.list(charId); } catch { /* 压不动就按下面的来 */ }
   }
@@ -14473,24 +14550,25 @@ async function openGroupMemberWb(gid, memberId) {
 
 /** 借现有的条目编辑弹窗改她的某一条（改完回到三级窗口） */
 async function editMemberWbEntry(gid, memberId, index) {
-  const prevCtx = _wbCtx;
-  _wbCtx = { kind: 'solo', id: memberId };   // openEntryEditor 认的是这个全局
-  try {
-    await openEntryEditor(index);
-    // ⚠️ 条目编辑弹窗用的是同一个 #modal：这里把它的两个按钮包一层，
-    //    存/取消之后自动回到三级窗口，用户不会掉进"世界书总列表"那一页。
-    const ok0 = $('modal-ok').onclick, cancel0 = $('modal-cancel').onclick;
-    $('modal-ok').onclick = async () => {
-      if (ok0) await ok0();
-      await openGroupMemberWb(gid, memberId);
-    };
-    $('modal-cancel').onclick = async () => {
-      if (cancel0) await cancel0();
-      await openGroupMemberWb(gid, memberId);
-    };
-  } finally {
-    _wbCtx = prevCtx;
-  }
+  // ⚠️ v0.5.8：ctx 走参数，不再「设全局 → finally 还原」。
+  //
+  // 那个模式在这里必然失效：openEntryEditor 只挂按钮就返回，用户还没点保存，
+  // finally 早就把 _wbCtx 还原了。等他点的时候，保存用的是还原后的上下文 ——
+  // 要么写进上一个角色/组，要么直接抛 TypeError（因为 prevCtx 多半是 null），
+  // 而两种表现都【没有任何提示】：弹窗照常关掉，改动一个字没存。
+  const ctx = { kind: 'solo', id: memberId };
+  await openEntryEditor(index, ctx);
+  // ⚠️ 条目编辑弹窗用的是同一个 #modal：这里把它的两个按钮包一层，
+  //    存/取消之后自动回到三级窗口，用户不会掉进"世界书总列表"那一页。
+  const ok0 = $('modal-ok').onclick, cancel0 = $('modal-cancel').onclick;
+  $('modal-ok').onclick = async () => {
+    if (ok0) await ok0();
+    await openGroupMemberWb(gid, memberId);
+  };
+  $('modal-cancel').onclick = async () => {
+    if (cancel0) await cancel0();
+    await openGroupMemberWb(gid, memberId);
+  };
 }/**
  * 新建一个群。
  * ⚠️ 群不是"角色的复制品"，它自己的角色级参数一律【不设】——
@@ -15865,7 +15943,9 @@ async function buildSceneContext(charId, sceneId, scene) {
       estimate: t => estimateMsgTokens({ content: t })
     });
     // 同样整行装入（memoryBlockText 一行一条）
-    const txt = memoryBlockText(picked.used);
+    // v0.5.8：场景卡同样要剥「（没说）」—— 这一路连小标题都没有，
+    // 而它产出的是【正文】，那四个字被当成事实写进去就直接说漏了。
+    const txt = memoryBlockText(picked.used.map(stripUnsaidPrefix));
     if (txt) {
       const ls = [];
       let mn = 0;
@@ -18216,12 +18296,9 @@ function bindSettings() {
         // 但整理本来就会改措辞（合句、压缩），改完之后旧文本对不上，
         // 于是【备份的写回来 + 当前的没删干净】= 记忆里出现重复条目。
         // id 是稳定的，用它比对，不依赖文本有没有被改过。
-        items: before.map(m => ({ id: m.id, text: m.text, kind: m.kind,
-                                  untilDay: m.untilDay,
-                                  untilHour: m.untilHour, untilMinute: m.untilMinute,
-                                  day: m.day ?? null, sourceMsgIds: m.sourceMsgIds || [],
-                                  status: m.status || 'active', legacy: m.legacy === true,
-                                  freq: m.freq, mine: !!m.mine })),
+        // v0.5.8：同自动路径，整条快照。这条原来漏得更狠 ——
+        // who 和 key 都没存，撤销后群记忆的视角和槽位一起丢。
+        items: before.map(snapshotMemory),
       });
       _lastDedupeStat = null;
       _lastMemError = null;   // 清掉上一次的残留，否则这次成功也会报出上次的错
@@ -18401,23 +18478,37 @@ function bindSettings() {
       // 刚写回的这批自己也会被当成"新增的"删掉，等于撤销完一片空白。
       // （老备份没存 id，才退回 uid()。）
       for (const it of bk.items) {
-        // ⚠️ 同样要带上 untilHour/untilMinute（v1.21.25 修，复审 ★4）——
-        // 撤销如果丢了字段，用户点"撤销上次整理"反而把到期时刻改错，等于没救回来。
-        await mem.add({ id: it.id || uid(), charId: curCharId, text: it.text, kind: it.kind || 'fact',
-                        who: String(it.who || ''),   // 群记忆的视角（v0.4.1.4）
-                        untilDay: typeof it.untilDay === 'number' ? it.untilDay : null,
-                        untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
-                        untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
-                        day: typeof it.day === 'number' ? it.day : null,
-                        sourceMsgIds: it.sourceMsgIds || [],
-                        status: it.status === 'superseded' ? 'superseded' : 'active',
-                        // 槽位与取代链（v0.5.1.1）：撤销一次整理要把它们一起还回去，
-                        // 否则旧说法会重新变成 active，记忆里同时出现两个互相矛盾的状态。
-                        key: it.key || '', supersededBy: it.supersededBy || null,
-                        supersededDay: typeof it.supersededDay === 'number' ? it.supersededDay : null,
-                        supersededAt: typeof it.supersededAt === 'number' ? it.supersededAt : 0,
-                        legacy: it.legacy === true,
-                        freq: it.freq, mine: !!it.mine, ts: Date.now() });
+        // ⚠️ v0.5.8：整条还原，不再手写字段清单。
+        //
+        // 原来逐个挑字段，挑漏了 scope / subject / pinned / heat / open / quote / sinceDay
+        // —— 撤销之后分支专属的记忆变成全局（跨支泄漏）、钉住的掉钉、
+        // 没兑现的承诺变已兑现。备份端现在存的是整条快照，这里照样整条还回去。
+        //
+        // status 也必须【照原样】还回去。原来只保留 superseded，其余一律变 active ——
+        // 而删除是软删（deleted 还在库里）、草稿按设计不注入、过期的不该重新算数，
+        // 于是「撤销上次整理」会把用户亲手删掉的、收件箱里没确认的、已经过期的一起复活。
+        // 备份里确实有它们（快照取的是全量），所以这里必须原样带回去。
+        const _st = Object.values(MEMORY_STATUS).includes(it.status) ? it.status : 'active';
+        await mem.add({
+          ...it,
+          id: it.id || uid(),
+          charId: curCharId,
+          kind: it.kind || 'fact',
+          who: String(it.who || ''),   // 群记忆的视角（v0.4.1.4）
+          untilDay: typeof it.untilDay === 'number' ? it.untilDay : null,
+          untilHour: typeof it.untilHour === 'number' ? it.untilHour : null,
+          untilMinute: typeof it.untilMinute === 'number' ? it.untilMinute : 0,
+          day: typeof it.day === 'number' ? it.day : null,
+          sourceMsgIds: it.sourceMsgIds || [],
+          status: _st,
+          // 槽位与取代链（v0.5.1.1）：撤销一次整理要把它们一起还回去，
+          // 否则旧说法会重新变成 active，记忆里同时出现两个互相矛盾的状态。
+          key: it.key || '', supersededBy: it.supersededBy || null,
+          supersededDay: typeof it.supersededDay === 'number' ? it.supersededDay : null,
+          supersededAt: typeof it.supersededAt === 'number' ? it.supersededAt : 0,
+          legacy: it.legacy === true,
+          ts: Date.now(),
+        });
       }
       // 删掉【备份之外新增的】—— 用 id 比对（2026-09-27 修）。
       //
@@ -22204,7 +22295,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.7.8';
+const WEB_VERSION_FALLBACK = '0.5.8';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

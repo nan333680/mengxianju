@@ -2055,6 +2055,12 @@ export function buildTurnNote(char, s, ctx = {}) {
           seg += (seg ? '\n\n' : '')
             + '# 你心里有、但没说出口的\n' + unsaid
             + '\n\n这些不用主动交代。聊到的时候，说还是不说、说多少，你自己定。';
+          // ⚠️ v0.5.8：日期说明原来只拼在【上面那个 if (text) 里】。
+          //   这一轮如果一条普通记忆都没挑中、全挑中的是「没说出口的」，
+          //   text 为空 → 整句「今天是第 N 天」消失，而 unsaid 里那些行照样
+          //   带着「第 3 天记下：」—— 模型拿到了绝对天数，却不知道今天是几号。
+          //   dayNote 本身是按 hasDay（全部 used）算的，所以这里补上不会多话。
+          if (!text && dayNote) seg += '\n\n' + dayNote;
         }
         parts.push(seg);
       }

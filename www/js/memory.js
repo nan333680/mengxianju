@@ -109,7 +109,8 @@ export function keyWasDropped(v) {
  *   · 两边 key 都合法且相同（空槽位不参与取代）
  *   · subject 相同（说的是同一个人）
  *   · kind 相同（事实不会被一条带限期的安排顶掉）
- *   · belief 只和同 who 的 belief 冲突 —— 她以为 A 和她以为 B 可以并存
+ *   · who 相同（视角不同不算同一个槽位 —— 她以为 A 和她以为 B 可以并存，
+ *     群聊里甲的事和乙的事也一样，v0.5.8 起对全部 kind 生效）
  *   · mine 相同（他自己写的，不会被模型抽出来的顶掉；反之亦然）
  *   · 正文不完全一样（一模一样的交给去重，不叫取代）
  *
@@ -141,9 +142,12 @@ export function planSupersede(rec, list) {
     // 没兑现的承诺不该被新的顶掉：一个人可以同时答应过好几件事，
     // 用「同槽位」那套去取代，等于她答应第二件事的那一秒就把第一件忘了。
     if (kind === 'promise' && old.open === true) continue;
-    if (kind === 'belief') {
-      if (String(old.who || '').trim() !== who) continue;
-    }
+    // 视角不同不算同一个槽位（v0.5.8）。
+    // 原来这条只有 belief 有 —— 而她以为 A 和她以为 B 可以并存，这个理由
+    // 对其他 kind 一样成立：群聊里甲记的「职业」和乙记的「职业」共用一个
+    // identity.job，写乙的会把甲那条标成「已被取代」，甲从此忘了自己的事。
+    // 单聊时两边 who 都是空串，判断恒成立，行为和以前完全一样。
+    if (String(old.who || '').trim() !== who) continue;
     if ((old.mine === true) !== mine) continue;
     if (sameMemory(old, rec)) continue;
     out.push(old.id);
@@ -169,6 +173,9 @@ export function planExpire(rec, list) {
   const subject = String((rec && rec.subject) || 'char');
   const mine = (rec && rec.mine) === true;
   const scope = String((rec && rec.scope) || 'character');
+  // 视角（v0.5.8）：群聊里同一个 key 可能分别属于甲和乙两个成员，
+  // 「甲正在找工作」不该被「乙正在找工作」顶成过期。单聊时两边都是空串。
+  const who = String((rec && rec.who) || '').trim();
   const out = [];
   for (const old of (Array.isArray(list) ? list : [])) {
     if (!old || !old.id || old.id === rec.id) continue;
@@ -181,6 +188,7 @@ export function planExpire(rec, list) {
     if (String(old.subject || 'char') !== subject) continue;
     if ((old.mine === true) !== mine) continue;
     if (String(old.scope || 'character') !== scope) continue;
+    if (String(old.who || '').trim() !== who) continue;   // 视角不同不互斥（v0.5.8）
     if (sameMemory(old, rec)) continue;
     const oSince = memoryDay(old.sinceDay) || memoryDay(old.day) || 0;
     const oUntil = memoryDay(old.untilDay);

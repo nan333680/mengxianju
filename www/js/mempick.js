@@ -65,7 +65,7 @@ const KIND_ORDER_SCENE = { relationship: 0, state: 1, goal: 2, belief: 3, item: 
 /**
  * 选择性遗忘的天数门槛。
  *
- * 方案 §记忆七类：「核心钉住、琐事模糊、遗忘不是删库」。
+ * 方案 §记忆八类：「核心钉住、琐事模糊、遗忘不是删库」。
  * 45 天是"过了季"的量级 —— 一周前的琐事当事人还记得，两个月前的细节本来就该糊。
  * ⚠️ 只模糊 event（琐事），不模糊 fact：事实一模糊她就会答错
  *    （"你上次说你在哪儿上班"答成别的地方，那是 bug 不是人味）。
@@ -371,6 +371,14 @@ export function pickMemories(opts = {}) {
   if (!forScene && used.length >= 4) {
     const cbPool = used.filter(x =>
       x.cb !== true && x.pinned !== true && !x.legacy &&
+      // ⚠️ v0.5.8：链接进来的那条不算「突然想起来」。
+      //    它的 sem 恒为 0（见上面 link 段的字面量），所以 (x.sem||0) < 0.34 必然成立，
+      //    只要够老、有情绪就会被抽中；而 memoryBlockText 的前缀优先级是
+      //    cb ? 突然想起来 : link ? 和上面那条是一路的 : '' —— cb 会盖掉 link，
+      //    于是一条【顺着当前话题联想出来】的记忆被标成无关旧事，语气整个跑偏。
+      //    memoryBlockText 上面那段注释早就写着"链接来的一条不该再说突然想起来"，
+      //    这里补上，让两处终于一致。
+      !x.link &&
       x.day && nowDay && (nowDay - x.day) >= 3 &&
       (x.heat >= 3 || x.open === true) &&
       (x.sem || 0) < 0.34
@@ -380,7 +388,16 @@ export function pickMemories(opts = {}) {
     for (let i = 0; i < Math.min(want, cbPool.length); i++) cbPool[i].cb = true;
   }
 
-  return { used, dropped, tokens, limit, budget, nowDay };
+  // v0.5.8：同一条不能既在「用了」又在「没进来」。
+  //
+  // 轻链接那一段会从 candidates 里把被 limit 挤掉的条目捡回 used（链接本来就是
+  // 锦上添花、不受主选名额限制），但 dropped 里那条一直没删。于是「这一轮用了什么」
+  // 面板里同一条出现两遍、还报「条数已满」，用户据此判断"她到底看没看到这条"
+  // 会得到相反答案 —— 而那个面板存在的全部意义就是回答这个问题。
+  // 收口在 return 前统一过滤：dropped 有三个 push 点，逐处删一定会漏。
+  const _usedIds = new Set(used.map((x) => x && x.id));
+  const droppedClean = dropped.filter((d) => d && !_usedIds.has(d.id));
+  return { used, dropped: droppedClean, tokens, limit, budget, nowDay };
 }
 
 /** 把 used 拼成提示词里那一段（不带标题，标题由 persona.js 加） */

@@ -145,7 +145,9 @@ console.log('=== 其余静态确认 ===');
   const src = readCode(WWW + '/js/app.js');
   const api = readCode(WWW + '/js/api.js');
   const per = readCode(WWW + '/js/persona.js');
-  t('#1a 备份存全量', src.includes('items: listAll.map(m => ({ id: m.id'));
+  // v0.5.8：备份改成整条快照（snapshotMemory），字段清单不再手写。
+  // 「全量」这个意图由 listAll 保证，所以这里锁 listAll + snapshotMemory 两截。
+  t('#1a 备份存全量', src.includes('items: listAll.map(snapshotMemory)'));
   t('#1b 撤销保护 mine', src.includes('const removable = _guardMine ? nowList.filter(m => !m.mine) : nowList;'));
   // ⚠️ 断言更新（v0.4.2.2 审计 F25）：原来的比例下限是 25% —— 8 条回 2 条、20 条回 6 条都算
   //    「正常」，审计实测「记忆越整理越少」就是这个判据放行的（146 条消息的西瓜最后剩 1 条）。

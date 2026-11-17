@@ -1,4 +1,4 @@
-﻿<#
+<#
   发版：把仓库根的 version.json 指向【已经上传好的】那个 Release。
 
   用法：
@@ -144,7 +144,18 @@ if (-not $SkipUrlCheck) {
     throw ("资产地址没有返回 200（拿到的是「" + $last + "」）：" + $Url + [Environment]::NewLine +
            "  这就是这个脚本存在的理由 —— 先把这个 Release 和资产传上去，再回来发版。")
   }
-  $clm = [regex]::Match($txt, '(?im)^content-length:\s*(\d+)')
+  # ⚠️ v0.5.8 修：必须只解析【最后一个响应】的头。
+  #
+  #   curl -I -L 的输出里，302 中转那一跳也带 content-length: 0。上面取状态码
+  #   用的是最后一个（200），这里原来却用 Match 取第一个 —— 两者不是同一个响应，
+  #   于是「远端 0 字节 vs 本地 54MB」直接判失败。
+  #
+  #   真实事故：v0.5.8 发布时 release 资产刚传完，走代理这一跳就是 302 中转，
+  #   脚本连着两次报「远端那份和本地不是同一个包：远端 0 字节」，
+  #   而手动 HEAD 明明拿到 200 + 54022837。
+  $lastHdr = $txt.LastIndexOf('HTTP/')
+  $tailTxt = if ($lastHdr -ge 0) { $txt.Substring($lastHdr) } else { $txt }
+  $clm = [regex]::Match($tailTxt, '(?im)^content-length:\s*(\d+)')
   if ($clm.Success) {
     $remote = [int64]$clm.Groups[1].Value
     if ($remote -ne [int64]$f.Length) {

@@ -219,7 +219,7 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | T11 | 测试版转公开 | **等你明确要求** | 见 R12；不建议我催 |
 | T12 | `PROGRESS.md` 落盘 | 已完成 | 本文件 |
 | T13 | 色块 tooltip 永远是英文 | **待办，下一版** | `theme.js:16-17` 那句注释是**错的**：它说运行时节点「挂不上 `data-i18n-en-title`」，但 `i18n.js` 是用 `querySelectorAll('[data-i18n-en-title]')` 扫 DOM 的，运行时节点照样能挂。正确写法：`btn.dataset.i18nEnTitle = c.en; btn.dataset.i18nZhTitle = c.name; btn.title = c.en`（初次占位英文，切语言时被 i18n 覆盖）。本轮不改的两个理由：触屏上 `title` 本来就不触发 tooltip；改完要再跑一轮 60 分钟的回归。下次碰 `theme.js` 时把注释一起改掉 |
-| T14 | 背景那条 hint 与放开的自由度不自洽 | 记下，下一版 | `index.html:1154` 的说明仍写着「气泡不透明度让背景透出来」「想让图看得清就把两个都调低」—— 没设背景图时这两句不成立（气泡滑杆可拖、暗化是灰的，拖了只是气泡变淡）。两种改法：加「仅在设置背景图后适用」，或让气泡滑杆也跟着灰掉（否定 0.5.7.6 的放开，不建议）。 |
+| T14 | 背景那条 hint 与放开的自由度不自洽 | **已完成（0.5.7.7）** | `index.html:1154` 的说明仍写着「气泡不透明度让背景透出来」「想让图看得清就把两个都调低」—— 没设背景图时这两句不成立（气泡滑杆可拖、暗化是灰的，拖了只是气泡变淡）。两种改法：加「仅在设置背景图后适用」，或让气泡滑杆也跟着灰掉（否定 0.5.7.6 的放开，不建议）。 |
 | T15 | `e2e-theme` / `e2e-chatbg` / `e2e-scrollfollow` 三套没进 CI 清单 | 记下，下一版 | `ci.yml` 现在 42 套；这三套都不需要真 key，按它自己的登记原则本该在。CI 时间是 40 分钟上限，加三套约 +1 分钟。 |
 
 ---
@@ -342,16 +342,16 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | 项 | 值 |
 | --- | --- |
 | 线上最新公开版 | **0.5.7 / versionCode 192**（Release `v0.5.7`，asset `739203945`，53,991,314 字节，sha256 `97703B7F…`） |
-| 本地工作版本 | **0.5.7.6 / versionCode 198**（测试版，未上传；逐字上屏每帧一次 + 上滑不被拽回底部 + 设置页文案批 1） |
-| 最后一次全量回归 | **0.5.7.6 这版：175 套 / 4665 项 / 0 失败 / 64 分钟** ← 全绿，R7 满足<br>✅ 跑的就是最终代码（构建前 HEAD），中途因并入背景遮罩修复作废过一轮（跑到 14 套时停的）<br>上一版 0.5.7.5：174 套 / 4645 项 / 0 失败 / 64.5 分钟；再上 0.5.7.4：174 套 / 4635 项 / **1 失败**<br>上一版 0.5.7.4：174 套 / 4635 项 / **1 失败** / 63.2 分钟（失败的是 `e2e-greetswipe` 的旧断言 —— 它无条件点「更多…」，改完单跑 17/0）；再上一版 0.5.7.3：172 套 / 4599 项 / 0 失败 / 62.8 分钟 |
+| 本地工作版本 | **0.5.7.7 / versionCode 199**（测试版，未上传；设置页说明文字全量精简 + 人称中性化（说明/标签/动态文本三组）+ 描写详细程度统一 + 构建脚本默认不关机） |
+| 最后一次全量回归 | **0.5.7.7 这版：175 套 / 4664 通过 + 1 失败 / 63.2 分钟**，唯一红项 `e2e-setfold` 是**阈值过时**（文案精简后展开态变矮，差值 260px 没过原来 300px 的线），改断言后单跑 **29/0** ⇒ 等效全绿<br>⚠️ 上一轮（第 9 节标签还没并进来时）跑到第 62 套被我主动 kill —— 那轮跑的不是最终代码，作废<br>上一版 0.5.7.6：175 套 / 4665 项 / 0 失败 / 64 分钟；再上 0.5.7.5：174 套 / 4645 项 / 0 失败 / 64.5 分钟 |
 | 之后新增/修改 | **0.5.7.5**：`app.js` 两处（`applyChatBg()` 没图时强制 `--bubble-alpha:1`、`s-bg-clear` 连 `_bgImg` 缓存一起清）、`e2e-chatbg` 13→22 项、`serve-and-shutdown.py` 设关机前先 `shutdown /a`。**0.5.7.4**：`PRIMARY_K` 重排 / 新增 `theme.js` / 9 处 `color-mix` / `#chat-bg` 两层 + 三个滑杆。<br>0.5.7.3：`app.js` 9 处（`pendingThreads` / `threadMatch`+`threadDone` / `mergeThreads` / `buildPrevScenes` / `beginScene` 算 prevCtx / `writeScene` 传 prevCtx+台账 / `sceneLogHtml` 台账出口 / `trashScene` 回滚 / 备份与清空前缀表）、`scene.js` 5 处（`PREV_CTX_MAX` / `emptyScene` / `normalizeScene` / `normalizeLog` / `sceneProsePrompt` / `sceneLogPrompt`）、`scenegen.js` 4 处 + `e2e-scenelog` 从 28 项扩到 54 项 |
 | 本版跑过的 e2e | **全量 175 套 / 4665 项 / 0 失败** ✅（64 分钟，2026-11-17 15:20）<br>`e2e-scrollfollow` 18（新）/ `e2e-chatbg` 24 / `e2e-theme` 22 / `e2e-settings` 55，滚动与背景相关套件全绿 |
 | e2e 总套数 | 175 套进了全量（`e2e/` 下 177 个文件，减掉 `e2e-helper` / `e2e-src`） |
-| 最新 APK | `桌面\mxj\梦弦居-v0.5.7.6.apk`（ASCII 副本 `mengxianju-v0.5.7.6.apk`），54,020,473 字节，sha256 `8B699CB584EEA5716EB329A164F13F6A6BEB71B55D64F7B030743BA076113D07`，2026-11-17 15:21，签名验证通过（apksigner 退出码 0，签名 `e986da9d…`）；归档 `releases/v0.5.7.6`（**含** `_regress-0.5.7.6.log`）<br>上一版 0.5.7.5：54,018,001 字节，sha256 `1EC69BBE96C16F5E…`<br>再上一版 0.5.7.4：54,016,825 字节，sha256 `8E7B10F676CC2856…`，归档不含回归日志（脚本判「跑完后改过代码」）<br>再上一版 0.5.7.3：`桌面\mxj\梦弦居-v0.5.7.3.apk`（ASCII 副本 `mengxianju-v0.5.7.3.apk` 才是上传用的），54,009,706 字节，sha256 `3F1356E077596E90892DF0EA4AEF9F12BB9221A0A71FA5B4119462D29DCF2FDE`，2026-11-16 21:11，签名验证通过（apksigner 退出码 0）；归档在 `releases/v0.5.7.3`（**不含回归日志**，脚本自己检测到 `_regress.log` 比 `app.js` 旧） |
+| 最新 APK | `桌面\mxj\梦弦居-v0.5.7.7.apk`（ASCII 副本 `mengxianju-v0.5.7.7.apk`），54,016,085 字节，sha256 `DE87DCC27A1A5BB538A6A6EABF8815D440DCAB40CCB056E9B2EAEFEF846FA7CE`，2026-11-17 17:52，签名验证通过（apksigner 退出码 0，签名 `e986da9d…`）；归档 `releases/v0.5.7.7`（**含** `_regress-0.5.7.7.log`，那份里带着 e2e-setfold 的 1 条阈值失败）<br>上一版 0.5.7.6：54,020,473 字节，sha256 `8B699CB584EEA571…`<br>上一版 0.5.7.5：54,018,001 字节，sha256 `1EC69BBE96C16F5E…`<br>再上一版 0.5.7.4：54,016,825 字节，sha256 `8E7B10F676CC2856…`，归档不含回归日志（脚本判「跑完后改过代码」）<br>再上一版 0.5.7.3：`桌面\mxj\梦弦居-v0.5.7.3.apk`（ASCII 副本 `mengxianju-v0.5.7.3.apk` 才是上传用的），54,009,706 字节，sha256 `3F1356E077596E90892DF0EA4AEF9F12BB9221A0A71FA5B4119462D29DCF2FDE`，2026-11-16 21:11，签名验证通过（apksigner 退出码 0）；归档在 `releases/v0.5.7.3`（**不含回归日志**，脚本自己检测到 `_regress.log` 比 `app.js` 旧） |
 | `version.json` | **仍是线上 0.5.7 / 192**（`8fb7df9` 起构建脚本已不写它） |
 | git | HEAD = `73ffa9f`（0.5.7.6 全部改动已提交） |
 | 远端 | `origin/main` = `73ffa9f`（已推送，无领先/落后） |
-| 送达 | **不关机版**在跑：`python -m http.server 8899 --bind 0.0.0.0 --directory 桌面\mxj`（PID 25228）。`http://10.191.57.9:8899/latest.html`，已验证 `latest.html` 与 APK 都是 200 / 54,020,473 字节。<br>⚠️ 构建脚本默认起的是 **serve-and-shutdown.py（传完 60 秒关机）**，白天用会误关，所以构建后已停掉它、换成不关机版。`serve-apk.ps1` 在 PS 5.1 下会解析失败（无 BOM + 中文注释，和 run-regression.ps1 同一个坑），要跑得用 pwsh 7。 |
+| 送达 | **不关机版**在跑：`python -m http.server 8899 --bind 0.0.0.0 --directory 桌面\mxj`（PID 25228）。`http://10.191.57.9:8899/latest.html`，已验证 `latest.html` 与 APK 都是 200 / 54,020,473 字节。<br>✅ 0.5.7.7 起构建脚本**默认不再关机**（末尾起的仍是 serve-and-shutdown.py，但子进程带 `MXJ_NO_SHUTDOWN=1`，只送包不设关机；想要睡前那套要显式加 `-Shutdown`），所以这条隐患已经消掉。`serve-apk.ps1` 在 PS 5.1 下会解析失败（无 BOM + 中文注释，和 run-regression.ps1 同一个坑），要跑得用 pwsh 7。 |
 | 被忽略的人设素材 | `_yuy_ref/`、`_yukari/`、`_suwako/`、`人设卡写作规格.md`、`八云紫-写卡提示词.md` |
 
 ### 10.2 卡点（按优先级）

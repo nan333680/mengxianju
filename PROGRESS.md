@@ -349,8 +349,8 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | e2e 总套数 | 175 套进了全量（`e2e/` 下 177 个文件，减掉 `e2e-helper` / `e2e-src`） |
 | 最新 APK | `桌面\mxj\梦弦居-v0.5.7.6.apk`（ASCII 副本 `mengxianju-v0.5.7.6.apk`），54,020,473 字节，sha256 `8B699CB584EEA5716EB329A164F13F6A6BEB71B55D64F7B030743BA076113D07`，2026-11-17 15:21，签名验证通过（apksigner 退出码 0，签名 `e986da9d…`）；归档 `releases/v0.5.7.6`（**含** `_regress-0.5.7.6.log`）<br>上一版 0.5.7.5：54,018,001 字节，sha256 `1EC69BBE96C16F5E…`<br>再上一版 0.5.7.4：54,016,825 字节，sha256 `8E7B10F676CC2856…`，归档不含回归日志（脚本判「跑完后改过代码」）<br>再上一版 0.5.7.3：`桌面\mxj\梦弦居-v0.5.7.3.apk`（ASCII 副本 `mengxianju-v0.5.7.3.apk` 才是上传用的），54,009,706 字节，sha256 `3F1356E077596E90892DF0EA4AEF9F12BB9221A0A71FA5B4119462D29DCF2FDE`，2026-11-16 21:11，签名验证通过（apksigner 退出码 0）；归档在 `releases/v0.5.7.3`（**不含回归日志**，脚本自己检测到 `_regress.log` 比 `app.js` 旧） |
 | `version.json` | **仍是线上 0.5.7 / 192**（`8fb7df9` 起构建脚本已不写它） |
-| git | HEAD = `1aaa25c`（0.5.7.5 全部改动已提交）+ 本次文档同步提交 |
-| 远端 | `origin/main` = 本次文档同步提交（同步前与本地同为 `1aaa25c`，无领先/落后） |
+| git | HEAD = `73ffa9f`（0.5.7.6 全部改动已提交） |
+| 远端 | `origin/main` = `73ffa9f`（已推送，无领先/落后） |
 | 送达 | **不关机版**在跑：`python -m http.server 8899 --bind 0.0.0.0 --directory 桌面\mxj`（PID 25228）。`http://10.191.57.9:8899/latest.html`，已验证 `latest.html` 与 APK 都是 200 / 54,020,473 字节。<br>⚠️ 构建脚本默认起的是 **serve-and-shutdown.py（传完 60 秒关机）**，白天用会误关，所以构建后已停掉它、换成不关机版。`serve-apk.ps1` 在 PS 5.1 下会解析失败（无 BOM + 中文注释，和 run-regression.ps1 同一个坑），要跑得用 pwsh 7。 |
 | 被忽略的人设素材 | `_yuy_ref/`、`_yukari/`、`_suwako/`、`人设卡写作规格.md`、`八云紫-写卡提示词.md` |
 

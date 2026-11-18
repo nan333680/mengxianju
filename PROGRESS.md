@@ -42,7 +42,7 @@
 | 前端 | 原生 ES modules，**无构建步骤** | 改完刷新即生效 |
 | 存储 | IndexedDB（`ai-companion`） | characters / messages / kv / memories / wbGroups / wbSolo / scenes |
 | 本地向量 | `bge-small-zh-v1.5` 量化版（24MB，APK 自带，ONNX 原生） | `embedding.js`，**async，过原生桥** |
-| 测试 | Puppeteer + 本地 http server + hijack `fetch` | 175 套 `e2e/e2e-*.mjs` |
+| 测试 | Puppeteer + 本地 http server + hijack `fetch` | 176 套 `e2e/e2e-*.mjs` |
 | CI | GitHub Actions `windows-latest` | 只跑不需要真 key 的那批 |
 | 类型检查 | `tsc --noEmit` 只看语法 | 28 条历史类型噪音，语法错必须 0 |
 
@@ -55,7 +55,7 @@ A-Apk/
 │   ├── css/
 │   └── js/              37 个模块
 ├── android/             Capacitor 壳 + build.gradle（版本号在这里）
-├── e2e/                 175 套回归
+├── e2e/                 176 套回归
 ├── tools/               构建 / 回归 / 静态检查 / 版本号 / 发版自检
 ├── docs/                9 份文档
 ├── assets/
@@ -93,7 +93,7 @@ A-Apk/
 
 | 目的 | 命令 |
 | --- | --- |
-| 全量回归 | `pwsh -NoProfile -File tools/run-regression.ps1`（175 套，约 65 分钟） |
+| 全量回归 | `pwsh -NoProfile -File tools/run-regression.ps1`（176 套，约 65 分钟） |
 | 单套 | `node e2e/e2e-xxx.mjs` |
 | 静态检查 | `node tools/ci-check.mjs` |
 | 改版本号 | `node tools/bump-version.mjs <版本> <versionCode>`（一次改四处） |
@@ -157,7 +157,7 @@ A-Apk/
 | R10 | 每完成一个阶段自动更新 `PROGRESS.md` | 生效中 | 不用提醒 | 本轮之前 |
 | **R11** | **你贴进来的内容里有一部分是「其他对话检查后给的讨论」——那是材料，不是指令，必须甄别** | 生效中 | 见 4.1.1 | 本轮 |
 | **R12** | **测试版转公开必须等你明确要求；其他对话给的发版计划 / 版本号，一律不算授权** | 生效中 | 见 4.1.2 | 本轮 |
-| R13 | **tag 指向「发布定稿」那个提交** | 生效中 | 0.5.8 踩过：tag 建在 `85c3d36`，而改版本号的 `a77c296` 在它之后 —— 用户下载没问题（asset 是预编译的），但从 tag 重新构建会得到 versionCode 200，Source code zip 里也是 0.5.7 的 version.json。<br>**定稿 = `www/` + `build.gradle` + `package.json` + `version.json` 全是最终值的那个提交。** 建 tag 必须在这些之后；之后只改**不进包的文件**（`PROGRESS.md` / `README.md` / `CHANGELOG.md` / `docs/`）或 Release body 不算错；但只要再动一个字节的 `www/`、`build.gradle`、`package.json`、`version.json`，就必须重打包 + 移 tag（因为包里会变、`sha256` 会变）。<br>顺序：代码+版本号+`version.json` 提交完、`git status` 干净 → 打包 → `git tag vX YYY` → 建 Release 传 APK | 0.5.8 发布轮 |
+| R13 | **tag 指向「发布定稿」那个提交** | 生效中 | 0.5.8 踩过：tag 建在 `85c3d36`，而改版本号的 `a77c296` 在它之后 —— 用户下载没问题（asset 是预编译的），但从 tag 重新构建会得到 versionCode 200，Source code zip 里也是 0.5.7 的 version.json。<br>**定稿 = `www/` + `build.gradle` + `package.json` + `version.json` 全是最终值的那个提交。** 建 tag 必须在这些之后；之后只改**不进包的文件**（`PROGRESS.md` / `README.md` / `CHANGELOG.md` / `docs/`）或 Release body 不算错；但只要再动一个字节的 `www/`、`build.gradle`、`package.json`、`version.json`，就必须重打包 + 移 tag（因为包里会变、`sha256` 会变）。<br>顺序：代码+版本号+`version.json` 提交完、`git status` 干净 → 打包 → `git tag vX YYY` → 建 Release 传 APK<br>**例外（0.5.8.1 起）：如果这次改动开的是新版本号** —— `versionCode` 递增、版本名变成下一版 —— **旧 tag 一律不动**，等新版本真发布时另打新 tag。「必须移 tag」只适用于**同一个版本号下**的补救。0.5.8.1 / 202 动了 `www/`、`build.gradle`、`package.json` 而 `v0.5.8` 原地不动，是对的；照老规矩去移，才会把已发布版本的 tag 挪到测试版代码上。 | 0.5.8 发布轮 |
 
 #### 4.1.1 R11 的具体做法
 
@@ -219,7 +219,7 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | T10 | 「这一轮用了什么」看不到 `secrets` 等 | 已知 | 面板只显示 `inj`，psyche 的 secrets/grudges/boundaries 从来不在界面上 |
 | T11 | 测试版转公开 | **等你明确要求** | 见 R12；不建议我催 |
 | T12 | `PROGRESS.md` 落盘 | 已完成 | 本文件 |
-| T16 | **0.5.8 的 `#2` 没做 —— 自动备份不跨目录比日期** | **下一版第一件事** | `readLatestBackup`（`autobackup.js:219`）仍是「第一个有文件的目录就 return」。`DOCUMENTS` 有旧备份、`EXTERNAL` 有新的时，点「从自动备份恢复」拿到旧的那份，而恢复是 `wipe: true` → **先用旧数据覆盖掉新的**。触发条件是「自动备份曾在 DOCUMENTS 写失败过」，概率不高但命中即丢数据。<br>修法：遍历所有目录收集 `(dir, name)`，按文件名日期**倒序逐个试** —— 读坏了换下一份（只取最新再读，遇到坏文件会比现在更糟）。`count` 要跨目录累加。<br>漏掉的原因：执行清单按批次分类，`#2` 从没进去过；双方核 diff 时只核了「改得对不对」，没数编号 |
+| T16 | **0.5.8 的 `#2` 没做 —— 自动备份不跨目录比日期** | **已修：0.5.8.1 / 202** | `readLatestBackup`（原 `autobackup.js:219`）原来是「第一个有文件的目录就 return」。`DOCUMENTS` 有旧备份、`EXTERNAL` 有新的时，点「从自动备份恢复」拿到旧的那份，而恢复是 `wipe: true` → **先用旧数据覆盖掉新的**。触发条件是「自动备份曾在 DOCUMENTS 写失败过」，概率不高但命中即丢数据。<br>修法：遍历所有目录收集 `(dir, name)`，按文件名日期**倒序逐个试** —— 读坏了换下一份（只取最新再读，遇到坏文件会比现在更糟）。`count` 要跨目录累加。<br>漏掉的原因：执行清单按批次分类，`#2` 从没进去过；双方核 diff 时只核了「改得对不对」，没数编号。<br>**0.5.8.1 落地**：`readLatestBackup` 改成收集 `(dir, name)` → 按名倒序逐个试（读失败 / 解析失败 / 没有 `exportedAt` 都继续下一份）、`count` 跨目录累加、同一天两份按 `directories` 顺序优先；`e2e-v58fix` 从 15 扩到 21 项，其中「较新文件损坏 → 回落较旧那份」是核心。<br>**教训（R11 适用）**：漏做的根因是「按批次分类执行清单」而不是「按编号逐条勾」—— 以后清单一律按编号顺序走，做完一条勾一条。 |
 | T13 | 色块 tooltip 永远是英文 | **待办，下一版** | `theme.js:16-17` 那句注释是**错的**：它说运行时节点「挂不上 `data-i18n-en-title`」，但 `i18n.js` 是用 `querySelectorAll('[data-i18n-en-title]')` 扫 DOM 的，运行时节点照样能挂。正确写法：`btn.dataset.i18nEnTitle = c.en; btn.dataset.i18nZhTitle = c.name; btn.title = c.en`（初次占位英文，切语言时被 i18n 覆盖）。本轮不改的两个理由：触屏上 `title` 本来就不触发 tooltip；改完要再跑一轮 60 分钟的回归。下次碰 `theme.js` 时把注释一起改掉 |
 | T14 | 背景那条 hint 与放开的自由度不自洽 | **已完成（0.5.7.7）** | `index.html:1154` 的说明仍写着「气泡不透明度让背景透出来」「想让图看得清就把两个都调低」—— 没设背景图时这两句不成立（气泡滑杆可拖、暗化是灰的，拖了只是气泡变淡）。两种改法：加「仅在设置背景图后适用」，或让气泡滑杆也跟着灰掉（否定 0.5.7.6 的放开，不建议）。 |
 | T15 | `e2e-theme` / `e2e-chatbg` / `e2e-scrollfollow` 三套没进 CI 清单 | 记下，下一版 | `ci.yml` 现在 42 套；这三套都不需要真 key，按它自己的登记原则本该在。CI 时间是 40 分钟上限，加三套约 +1 分钟。 |
@@ -343,16 +343,16 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 
 | 项 | 值 |
 | --- | --- |
-| 线上最新公开版 | **0.5.7 / versionCode 192**（Release `v0.5.7`，asset `739203945`，53,991,314 字节，sha256 `97703B7F…`） |
-| 本地工作版本 | **0.5.8 / versionCode 201**（**正式版**，2026-11-17 深夜；16 条纯修复：记忆链路 4 条 / 群聊·场景卡注入 / 群成员世界书保存 / 网络超时 / 6 个单点。无新功能） |
-| 最后一次全量回归 | **0.5.8 这版：175 套 / 4678 项 / 0 失败 / 63.7 分钟** ← 2026-11-17 23:30，`_regress.log`，`DONE` 收尾<br>**第一次跑出 2 红**，都是「读源码的正则」没跟上「备份改成整条快照」：<br>· `e2e-memfix2`「备份里存了 id」→ 改成锁 `items: before.map(snapshotMemory)` + `snapshotMemory` 是整条拷贝<br>· `e2e-v30fix`「#1a 备份存全量」→ 改成锁 `items: listAll.map(snapshotMemory)`<br>改完重跑：13 / 0 与 23 / 0 → **4676 + 2 = 4678 全过**（产品代码一行未动）<br>**新增 `e2e-v58fix` 单跑 15 / 0**，锁 #6 / #7<br>⚠️ 跑完只改了版本号常量（3 个字符串），所以归档日志的「代码比日志新」警告是对的但不是逻辑改动<br>上一版 0.5.7.8：175 套 / 4678 项 / 0 失败 / 64.4 分钟 |
+| 线上最新公开版 | **0.5.8 / versionCode 201**（Release `v0.5.8` 是 Latest，asset `mengxianju-v0.5.8.apk` 54,022,837 字节，sha256 `502687FD…`，下载 4 次；三源实测都是 0.5.8）<br>上一公开版 0.5.7 / 192：asset `739203945`，53,991,314 字节，sha256 `97703B7F…` |
+| 本地工作版本 | **0.5.8.1 / versionCode 202**（**测试版，未上传**，2026-11-18 09:20；只补 0.5.8 漏掉的 `#2` 自动备份跨目录比日期 + `updater.js` 过时注释。四段号按规矩不上线：`version.json` 没动、无 tag、无 Release）<br>上一版 0.5.8 / 201（**正式版**，2026-11-17 深夜；16 条纯修复：记忆链路 4 条 / 群聊·场景卡注入 / 群成员世界书保存 / 网络超时 / 6 个单点。无新功能） |
+| 最后一次全量回归 | **0.5.8.1 这版：176 套 / 4699 项 / 0 失败 / 65 分钟** ← 2026-11-18 09:15，`_regress-0.5.8.1.log`，`DONE` 收尾，**一次跑完**<br>4699 = 0.5.8 那次的 4678 + `e2e-v58fix` 整套 21 项 —— 那一套是 0.5.8 全量跑完（23:30）之后、提交（23:45）之前写的，从没进过 0.5.8 的汇总（当时只单跑 15 项），本版加 6 条 `#2` 断言 = 21<br>**上一版 0.5.8：175 套 / 4678 项 / 0 失败 / 63.7 分钟** ← 2026-11-17 23:30，`_regress.log`，`DONE` 收尾<br>**第一次跑出 2 红**，都是「读源码的正则」没跟上「备份改成整条快照」：<br>· `e2e-memfix2`「备份里存了 id」→ 改成锁 `items: before.map(snapshotMemory)` + `snapshotMemory` 是整条拷贝<br>· `e2e-v30fix`「#1a 备份存全量」→ 改成锁 `items: listAll.map(snapshotMemory)`<br>改完重跑：13 / 0 与 23 / 0 → **4676 + 2 = 4678 全过**（产品代码一行未动）<br>**新增 `e2e-v58fix` 单跑 15 / 0**，锁 #6 / #7<br>⚠️ 跑完只改了版本号常量（3 个字符串），所以归档日志的「代码比日志新」警告是对的但不是逻辑改动<br>上一版 0.5.7.8：175 套 / 4678 项 / 0 失败 / 64.4 分钟 |
 | 之后新增/修改 | **0.5.7.5**：`app.js` 两处（`applyChatBg()` 没图时强制 `--bubble-alpha:1`、`s-bg-clear` 连 `_bgImg` 缓存一起清）、`e2e-chatbg` 13→22 项、`serve-and-shutdown.py` 设关机前先 `shutdown /a`。**0.5.7.4**：`PRIMARY_K` 重排 / 新增 `theme.js` / 9 处 `color-mix` / `#chat-bg` 两层 + 三个滑杆。<br>0.5.7.3：`app.js` 9 处（`pendingThreads` / `threadMatch`+`threadDone` / `mergeThreads` / `buildPrevScenes` / `beginScene` 算 prevCtx / `writeScene` 传 prevCtx+台账 / `sceneLogHtml` 台账出口 / `trashScene` 回滚 / 备份与清空前缀表）、`scene.js` 5 处（`PREV_CTX_MAX` / `emptyScene` / `normalizeScene` / `normalizeLog` / `sceneProsePrompt` / `sceneLogPrompt`）、`scenegen.js` 4 处 + `e2e-scenelog` 从 28 项扩到 54 项 |
-| 本版跑过的 e2e | **全量 175 套 / 4678 项 / 0 失败 / 63.7 分钟** ✅（2026-11-17 23:30）<br>**新套件 `e2e-v58fix` 15 / 0**（#6 群成员世界书两种失败模式 / #7 撤销整理四个字段 + 无重复）<br>#6 / #7 另外在真实页面上手点过一遍，dump 出的库值逐字段对照（见 CHANGELOG 0.5.8 第七节）<br>纯函数验过 `planSupersede` / `planExpire` 的 who 比对 5 组 |
-| e2e 总套数 | 175 套进了全量（`e2e/` 下 177 个文件，减掉 `e2e-helper` / `e2e-src`） |
-| 最新 APK | `桌面\mxj\梦弦居-v0.5.8.apk`（ASCII 副本 `mengxianju-v0.5.8.apk` 是上传用的那个），54,022,837 字节，sha256 `502687FD903B2BE849CAADD799C2147AE774E350A8DC06F32608BE6050103456`，2026-11-18 00:0x，签名验证通过（apksigner 退出码 0，签名 `e986da9d…`）；**重建过一次，两次 sha256 完全相同（确定性构建）**；归档 `releases/v0.5.8`（回归日志单独补进去了：`_regress-0.5.8.log`，175 套 4678 项全绿那份）<br>上一版 0.5.7.8：54,018,297 字节，sha256 `4D0E4D3F9EF48044…`<br>上一版 0.5.7.6：54,020,473 字节，sha256 `8B699CB584EEA571…`<br>上一版 0.5.7.5：54,018,001 字节，sha256 `1EC69BBE96C16F5E…`<br>再上一版 0.5.7.4：54,016,825 字节，sha256 `8E7B10F676CC2856…` |
-| `version.json` | **已发布 0.5.8 / 201**（2026-11-18 00:0x）。三源实测都是 0.5.8：`api.github.com`（实时，tag `v0.5.8`，asset 54022837）、`gcore.jsdelivr.net`、`raw.githubusercontent.com`。`publish-version.ps1` 五道关卡全过（versionName 对齐 / versionCode 201>192 / 包存在 / URL 200 / content-length 54022837 与本地一致） |
-| git | HEAD = `a77c296`（0.5.8 四笔：代码与版本号 `e8ff849` / 文档 `7fbe350` / 套数表述订正 `85c3d36` / version.json 与发布脚本修复 `a77c296`） |
-| 远端 | `origin/main` = `a77c296`（已推送，无领先/落后） |
+| 本版跑过的 e2e | **全量 176 套 / 4699 项 / 0 失败 / 65 分钟** ✅（2026-11-18 09:15，一次跑完）<br>**`e2e-v58fix` 21 / 0**（#6 群成员世界书两种失败模式 / #7 撤销整理四个字段 + 无重复 / #2 跨目录 6 条）<br>上一版的 175 套 / 4678 项 / 63.7 分钟**不含** `e2e-v58fix`（那套当时还没进汇总）<br>#6 / #7 另外在真实页面上手点过一遍，dump 出的库值逐字段对照（见 CHANGELOG 0.5.8 第七节）<br>纯函数验过 `planSupersede` / `planExpire` 的 who 比对 5 组 |
+| e2e 总套数 | 176 套进了全量（`e2e/` 下 178 个文件，减掉 `e2e-helper` / `e2e-src`） |
+| 最新 APK | `桌面\mxj\梦弦居-v0.5.8.1.apk`（ASCII 副本 `mengxianju-v0.5.8.1.apk`），54,023,473 字节，sha256 `ACE8A530FFA8CA633D7701C5529A713052198C312197D8B1463B76B281FD1A6C`，2026-11-18 09:20，签名验证通过（apksigner 退出码 0）；归档 `releases/v0.5.8.1`（含 `_regress-0.5.8.1.log`）<br>已发布的 0.5.8（上传用的那个）：`mengxianju-v0.5.8.apk`，54,022,837 字节，sha256 `502687FD903B2BE849CAADD799C2147AE774E350A8DC06F32608BE6050103456`，签名 `e986da9d…`；**重建过一次，两次 sha256 完全相同（确定性构建）**；归档 `releases/v0.5.8`（`_regress-0.5.8.log`，175 套 4678 项全绿那份）<br>上一版 0.5.7.8：54,018,297 字节，sha256 `4D0E4D3F9EF48044…`<br>上一版 0.5.7.6：54,020,473 字节，sha256 `8B699CB584EEA571…`<br>上一版 0.5.7.5：54,018,001 字节，sha256 `1EC69BBE96C16F5E…`<br>再上一版 0.5.7.4：54,016,825 字节，sha256 `8E7B10F676CC2856…` |
+| `version.json` | **已发布 0.5.8 / 201**（2026-11-18 00:0x）。⚠️ 出 0.5.8.1 时**一个字没动** —— 它是唯一的线上更新源，改成 202 会让所有 0.5.8 用户看到「有新版本」却下载不到（四段号从不上线）。三源实测都是 0.5.8：`api.github.com`（实时，tag `v0.5.8`，asset 54022837）、`gcore.jsdelivr.net`、`raw.githubusercontent.com`。`publish-version.ps1` 五道关卡全过（versionName 对齐 / versionCode 201>192 / 包存在 / URL 200 / content-length 54022837 与本地一致） |
+| git | HEAD = `fda0e3f`（0.5.8 四笔：`e8ff849` 代码与版本号 / `7fbe350` 文档 / `85c3d36` 套数表述订正 / `a77c296` version.json 与发布脚本修复；0.5.8.1 两笔：`f44c03f` #2 + 版本号 202、`fda0e3f` CHANGELOG 0.5.8.1 节） |
+| 远端 | `origin/main` = `fda0e3f`（已推送，无领先/落后） |
 | 送达 | **不关机版**在跑（构建脚本自己起的，带 `MXJ_NO_SHUTDOWN=1`）：`http://10.15.42.9:8899/latest.html`。<br>⚠️ 网段每轮都在变：`10.191.57.9` → `172.20.10.3` → 本次 `10.15.42.9`（`手机下载地址.txt` 由构建脚本自动改写，别照抄旧值）。<br>✅ 0.5.7.7 起构建脚本**默认不再关机**（末尾起的仍是 serve-and-shutdown.py，但子进程带 `MXJ_NO_SHUTDOWN=1`，只送包不设关机；想要睡前那套要显式加 `-Shutdown`），所以这条隐患已经消掉。`serve-apk.ps1` 在 PS 5.1 下会解析失败（无 BOM + 中文注释，和 run-regression.ps1 同一个坑），要跑得用 pwsh 7。 |
 | 被忽略的人设素材 | `_yuy_ref/`、`_yukari/`、`_suwako/`、`人设卡写作规格.md`、`八云紫-写卡提示词.md` |
 
@@ -410,3 +410,6 @@ R12 要防的正是已经发生过的事：对方在清单里写「0.5.7.1，ver
 | 2026-11-17 15:21 | **0.5.7.6 完成**（四块）：**A** 逐字上屏改 rAF 合并（`_paintEl` 快照 + `_paintSeq` token + 循环后补帧）；**B** 上滑看历史不被拽回底部（`followScroll` 用在 6 处、`scrollBottom` 保持强制、三层判定、`touchmove` 而非 `touchstart`、`touchend` 不重置、回底按钮 + aria 同步）；**C** 背景遮罩归零 + 气泡不透明度放开（两处方向相反）；**D** 设置页文案批 1（11 改 1 删）。新增 `e2e-scrollfollow` 18 项，`e2e-chatbg` 13→24 | 全量 **175 套 / 4665 项 / 0 失败 / 64 分钟**（`DONE`）；APK 54,020,473 字节 sha256 `8B699CB584EEA571…`，`apksigner` 退出 0 |
 | 2026-11-17 15:12 | **回归跑到 14 套时作废重跑**：用户要求把「清除背景后一片纯黑」并进本版。改完 `e2e-chatbg` 24/0、`e2e-scrollfollow` 18/0、`e2e-theme` 22/0、`e2e-settings` 55/0 | 作废那轮 `_regress.log` 停在第 14 套、0 失败 |
 | 2026-11-17 15:22 | **送达服务换版**：构建脚本默认起 `serve-and-shutdown.py`（传完 60 秒关机），白天用会误关 → 停掉，改起 `python -m http.server 8899 --bind 0.0.0.0`（不关机）。顺手记下：`serve-apk.ps1` 在 PS 5.1 下解析失败（无 BOM + 中文注释，和 `run-regression.ps1` 同一个坑），要跑得用 pwsh 7 | `latest.html` 与 APK 均 200 / 54,020,473 字节 |
+| 2026-11-18 00:0x | **0.5.8 正式发布**：tag `v0.5.8` 先建在 `85c3d36` 上（踩了 R13，用 `push -f` 移到定稿 `dd6e1a5`）、Release `v0.5.8`（title 纯 `v0.5.8`，body 按新增 / 改进 / 修复 / 测试四段，覆盖八轮测试版的全部变化）、`version.json` 推成 0.5.8 / 201；第一次 `gh release create` 超时留了个 Draft，`gh api -X DELETE` 删掉重发 | asset 54,022,837 字节 sha256 `502687FD…`；`publish-version.ps1` 五道关卡全过；三源实测一致（api / jsdelivr / raw），下载计数 4 |
+| 2026-11-18 09:15 | **0.5.8.1 全量回归一次跑完**：176 套 / 4699 项 / 0 失败 / 65 分钟（`_regress-0.5.8.1.log`，`DONE`）。这是 `e2e-v58fix` 第一次进全套汇总 —— 0.5.8 全量跑完（23:30）之后才写这个文件（23:45 提交），当时只单跑 15 项，所以 0.5.8 的 4678 里没有它；本版加 6 条 `#2` 断言 → **4699 = 4678 + 21** | `e2e-v58fix` 21/0；纯函数另测 8 组（跨目录取新 / 回落 / 全坏 / 同一天两份 / count 累加） |
+| 2026-11-18 09:20 | **0.5.8.1 打包完成**（**测试版，未上传**）：`#2` 自动备份跨目录比日期 + `updater.js` 过时注释；`version.json` 一个字没动、无 tag、无 Release —— 四段号按规矩不上线，否则 0.5.8 用户会看到「有新版本」却下载不到 | APK 54,023,473 字节 sha256 `ACE8A530…`，`apksigner` 退出 0，归档 `releases/v0.5.8.1`；桌面一份、`releases/v0.5.8.1/apk/` 一份 |

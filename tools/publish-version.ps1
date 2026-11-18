@@ -100,7 +100,12 @@ foreach ($clPath in $clCands) {
   $cl = [System.IO.File]::ReadAllText($clPath, [System.Text.Encoding]::UTF8)
   $head = [regex]::Match($cl, '###\s*' + [regex]::Escape($Version) + '\s*（')
   if (-not $head.Success) { continue }
-  $rest = $cl.Substring($head.Index)
+  # ⚠️ 必须截到【本节结束】（下一个行首 ###）：只从标题起、不截尾的话，本节没写标记时
+  #    会一路抓到后面某一节的块 —— 弹窗里显示成上一版的说明，而 $rn.Success 仍是 true，
+  #    下面那条「没抓到说明」的警告不会响。不报错、只给错东西，这类最难发现。
+  $after = $cl.Substring($head.Index + $head.Length)
+  $next = [regex]::Match($after, '(?m)^###\s')
+  $rest = if ($next.Success) { $after.Substring(0, $next.Index) } else { $after }
   $rn = [regex]::Match($rest, '<!--\s*release-notes\s*-->\s*([\s\S]*?)\s*<!--\s*/release-notes\s*-->')
   $hm = [regex]::Match($cl, '###\s*' + [regex]::Escape($Version) + '\s*（([^）]*)）')
   if ($rn.Success) {

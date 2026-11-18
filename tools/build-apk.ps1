@@ -147,7 +147,11 @@ if (Test-Path $changelog) {
   #    文件最上面那一节（这一版还没写 CHANGELOG 时，会抓成上一版的说明）。
   $head = [regex]::Match($cl, '###\s*' + [regex]::Escape($vn) + '\s*（')
   if ($head.Success) {
-    $rest = $cl.Substring($head.Index)
+    # ⚠️ 必须截到【本节结束】（下一个行首 ###）—— 和 publish-version.ps1 同一处坑：
+    #    不截尾的话，本节没写标记时会抓到后面某一节的块，打印出来的说明是上一版的。
+    $after = $cl.Substring($head.Index + $head.Length)
+    $next = [regex]::Match($after, '(?m)^###\s')
+    $rest = if ($next.Success) { $after.Substring(0, $next.Index) } else { $after }
     $rn = [regex]::Match($rest, '<!--\s*release-notes\s*-->\s*([\s\S]*?)\s*<!--\s*/release-notes\s*-->')
     $hm = [regex]::Match($cl, '###\s*' + [regex]::Escape($vn) + '\s*（([^）]*)）')
     if ($rn.Success) {

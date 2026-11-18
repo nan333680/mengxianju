@@ -119,4 +119,43 @@ console.log('== 4. i18n 里没有重复 key（JS 对象重复 key 不报错，�
   console.log('   ✓ 没有重复');
 }
 
+console.log('== 5. CHANGELOG 的更新说明块不越界（发版脚本按节切片，切错了会静默拿上一版的说明）==');
+{
+  // ⚠️ 加这条的原因（0.5.8.1 轮）：publish-version.ps1 / build-apk.ps1 原来从本节标题
+  //    一直截到【文件末尾】再找 <!-- release-notes -->，于是本节没写标记时，
+  //    会抓到后面某一节的块 —— 弹窗里显示成上一版的说明，而且不报任何错。
+  //    这里用同一套切法复刻一遍，锁住「哪个版本拿到哪份说明」。
+  //    ⚠️ 以后改那两个 ps1 的提取逻辑，这一段要同步改。
+  const escapeRe = s => s.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  const cl = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
+  const vers = [...cl.matchAll(/^###\s*([0-9][0-9.]*)\s*（/gm)].map(m => m[1]);
+  const notesOf = ver => {
+    const head = new RegExp('###\\s*' + escapeRe(ver) + '\\s*（').exec(cl);
+    if (!head) return null;
+    const after = cl.slice(head.index + head[0].length);
+    const next = /^###\s/m.exec(after);
+    const rest = next ? after.slice(0, next.index) : after;
+    const rn = /<!--\s*release-notes\s*-->\s*([\s\S]*?)\s*<!--\s*\/release-notes\s*-->/.exec(rest);
+    if (rn) return rn[1].replace(/<!--[\s\S]*?-->/g, '').trim();
+    const hm = new RegExp('###\\s*' + escapeRe(ver) + '\\s*（([^）]*)）').exec(cl);
+    return hm ? hm[1].replace(/^versionCode\s+\d+\s*·\s*/, '').trim() : null;
+  };
+  const problems = [];
+  if (vers.length < 2) problems.push('CHANGELOG 里能认出来的版本节少于两个，这条检查没意义了');
+  const v0 = vers[0];
+  const v1 = vers[1];
+  const n0 = v0 ? notesOf(v0) : null;
+  const n1 = v1 ? notesOf(v1) : null;
+  if (!n0) problems.push('最新一节 v' + v0 + ' 抓不到任何说明（块和标题括号都是空的？）');
+  if (!n1) problems.push('上一节 v' + v1 + ' 抓不到任何说明');
+  if (n0 && n1 && n0 === n1) {
+    problems.push('v' + v0 + ' 和 v' + v1 + ' 抓到同一份说明 —— v' + v0 + ' 自己没有块，脚本越界抓了 v' + v1 + ' 的');
+  }
+  if (problems.length) {
+    console.log('   ✗ ' + problems.join('；'));
+    process.exit(1);
+  }
+  console.log('   ✓ v' + v0 + ' → ' + n0.length + ' 字；v' + v1 + ' → ' + n1.length + ' 字（各自独立，没串到隔壁）');
+}
+
 console.log('CI 静态检查通过');

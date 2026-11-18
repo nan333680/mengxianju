@@ -175,12 +175,24 @@ export async function readLatestBackup(o) {
   const { FS, directories = BACKUP_DIRS } = o || {};
   if (!FS) return { ok: false, reason: 'no-filesystem' };
   const folder = '梦弦居备份';
-  // ⚠️ 记下"第一个出问题的目录"，但【不立刻返回】（v0.4.2 修，用户复核）：
-  //    原来 DOCUMENTS 里那份最新的坏掉时直接 return —— EXTERNAL / DATA 里那份好的
-  //    永远不会被看到，面板就红着说"最近那份读不出来"。现在读坏就换下一个目录，
-  //    全试完还是没有可用的，才把记下的那条报出去。
-  let firstBad = null;
-  const keepBad = (info) => { if (!firstBad) firstBad = info; };
+
+  // ⚠️ v0.5.8.1（本轮修的是清单里的 #2，0.5.8 遗漏）：
+  //    这里原来是「按目录顺序走，第一个有文件的目录里取最新那份，直接 return」——
+  //    也就是【只在目录内部比日期，从不跨目录比】。
+  //
+  //    真实事故路径（用户点「从自动备份恢复」）：
+  //      DOCUMENTS 曾写成功，留下 10-05；
+  //      某天 DOCUMENTS 写失败（权限被撤 / 空间满 / SAF 授权丢了）→ 回退到 EXTERNAL，
+  //      10-06、10-07 全写在 EXTERNAL；
+  //      再点恢复 → 走 DOCUMENTS 就先 return 了 10-05 → 而恢复是 wipe:true，
+  //      先清空再导入 → 【最近几天的聊天记录被换成更旧的数据】。
+  //
+  //    修法：先把所有目录的备份【汇总成一份清单】，按文件名日期【倒序】逐个试。
+  //    ⚠️ 不能简化成「取最新那份然后读一次」：最新那份可能正好是写坏的，
+  //       那样会比修之前更糟（以前至少还会换目录）。核心是「读坏了要往下试」。
+  //    文件名是 梦弦居自动备份-YYYY-MM-DD.json，日期补零，所以字符串倒序 = 日期倒序。
+  const all = [];
+  let totalCount = 0;
   for (const dir of directories) {
     let names;
     try {
@@ -188,37 +200,49 @@ export async function readLatestBackup(o) {
       names = (rd && rd.files ? rd.files : []).map(f => (typeof f === 'string' ? f : f && f.name));
     } catch { continue; }   // 这个目录没有或读不了，换下一个
     const mine = (names || [])
-      .filter(n => typeof n === 'string' && n.startsWith('梦弦居自动备份-') && n.endsWith('.json'))
-      .sort();
-    if (!mine.length) continue;
-    const latest = mine[mine.length - 1];
+      .filter(n => typeof n === 'string' && n.startsWith('梦弦居自动备份-') && n.endsWith('.json'));
+    // count 要【跨目录累加】—— 设置页的「保留份数 N / 7」和备份健康面板读的都是它。
+    // 只数当前目录的话，回退期间那个数字会凭空少一截，看着像"备份没了"。
+    totalCount += mine.length;
+    for (const name of mine) all.push({ dir, name });
+  }
+  if (!all.length) return { ok: false, reason: 'none' };
+
+  // 倒序：日期新的在前。同一天在两个目录各有一份时，按 directories 的顺序优先
+  // （DOCUMENTS 第一 —— 那是唯一能活过卸载/清数据的位置）。
+  const dirRank = (d) => { const i = directories.indexOf(d); return i < 0 ? 99 : i; };
+  all.sort((a, b) => (a.name === b.name ? dirRank(a.dir) - dirRank(b.dir) : (a.name < b.name ? 1 : -1)));
+
+  let firstBad = null;
+  const keepBad = (info) => { if (!firstBad) firstBad = info; };
+  for (const it of all) {
+    const { dir, name } = it;
     let raw = null;
     let readFailed = null;
     try {
-      const rd = await FS.readFile({ path: folder + '/' + latest, directory: dir, encoding: 'utf8' });
+      const rd = await FS.readFile({ path: folder + '/' + name, directory: dir, encoding: 'utf8' });
       raw = (rd && typeof rd.data === 'string') ? rd.data : null;
     } catch (e) { readFailed = String((e && e.message) || e); }
     if (readFailed !== null || raw == null) {
-      keepBad({ ok: false, reason: 'read-failed', dir, name: latest, error: readFailed || '' });
+      keepBad({ ok: false, reason: 'read-failed', dir, name, error: readFailed || '' });
       continue;
     }
     let obj;
     try { obj = parseJsonSafe(raw); }
     catch (e) {
-      keepBad({ ok: false, reason: 'corrupt', dir, name: latest, bytes: raw.length,
+      keepBad({ ok: false, reason: 'corrupt', dir, name, bytes: raw.length,
                 error: String((e && e.message) || e) });
       continue;
     }
     // 光能 parse 还不够：一份 {} 也是合法 JSON。要确认它真是【备份】——
     // 至少得有导出时间，否则等于没有内容可恢复。
     if (!obj || typeof obj !== 'object' || !obj.exportedAt) {
-      keepBad({ ok: false, reason: 'empty', dir, name: latest, bytes: raw.length });
+      keepBad({ ok: false, reason: 'empty', dir, name, bytes: raw.length });
       continue;
     }
-    // count = 这个目录里一共有几份自动备份（设置页的「保留份数 N / 7」要用）
-    return { ok: true, dir, name: latest, bytes: raw.length, count: mine.length, data: obj };
+    return { ok: true, dir, name, bytes: raw.length, count: totalCount, data: obj };
   }
-  if (firstBad) return firstBad;   // 全试完了，报最靠前那个（最有信息量的那条）
+  if (firstBad) return firstBad;   // 全试完了，报【最新那份】的问题（最有信息量的那条）
   return { ok: false, reason: 'none' };
 }
 

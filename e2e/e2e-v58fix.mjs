@@ -8,6 +8,8 @@ const puppeteer = require('puppeteer-core');
 
 const R = path.resolve(import.meta.dirname, '..').split(path.sep).join('/');
 const WWW = `${R}/www`;
+// v0.5.8.1：#2 是纯函数、不碰 DOM，直接 import 测，不用开浏览器
+import { readLatestBackup } from '../www/js/autobackup.js';
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const MIME = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.png':'image/png' };
 const server = http.createServer((req,res) => {
@@ -194,6 +196,60 @@ t('#7 draft 没有变 active', m2a.status === m2b.status && m2a.status === 'draf
 t('#7 branch 没有变成 character', m3a.scope === m3b.scope && m3a.scope === 'branch', JSON.stringify(m3a));
 t('#7 pinned 没有掉钉', m3a.pinned === true, JSON.stringify(m3a));
 
+
+// ---------------- #2 自动备份要跨目录比日期（v0.5.8.1） ----------------
+//
+// 原来的 readLatestBackup 是「按目录顺序走，第一个有文件的目录里取最新那份就 return」——
+// 只在目录内部比日期，从不跨目录比。DOCUMENTS 留着 10-05、EXTERNAL 有 10-07 时，
+// 点「从自动备份恢复」拿到的是 10-05，而恢复是 wipe:true → 最近几天的数据被换成旧的。
+//
+// ⚠️ 最要紧的不是「跨目录取到最新的」（那只覆盖一半），而是【较新的那份坏掉时要往下试】。
+//    只测前者的话，简化成「取最新再读一次」也能过 —— 那会让「最新那份坏了」变成新的坑。
+console.log('');
+console.log('=== #2 自动备份跨目录比日期 ===');
+{
+  const N = (d) => '梦弦居自动备份-' + d + '.json';
+  const good = (tag) => JSON.stringify({ exportedAt: tag, characters: [], messages: {} });
+  const mkFS = (files) => ({
+    async readdir({ directory }) {
+      const d = files[directory];
+      if (!d) throw new Error('no dir');
+      return { files: Object.keys(d) };
+    },
+    async readFile({ directory, path: pp }) {
+      const name = pp.split('/').pop();
+      const v = files[directory][name];
+      if (v === 'BROKEN') throw new Error('read failed');
+      return { data: v };
+    },
+  });
+
+  const r1 = await readLatestBackup({ FS: mkFS({
+    DOCUMENTS: { [N('2026-10-05')]: good('a') },
+    EXTERNAL:  { [N('2026-10-07')]: good('b') },
+  }) });
+  t('#2 跨目录取到更新的那份', r1.ok && r1.name === N('2026-10-07'), JSON.stringify(r1.name));
+  t('#2 count 跨目录累加', r1.count === 2, String(r1.count));
+
+  const r2 = await readLatestBackup({ FS: mkFS({
+    DOCUMENTS: { [N('2026-10-05')]: good('a') },
+    EXTERNAL:  { [N('2026-10-07')]: 'BROKEN' },
+  }) });
+  t('#2 较新的坏掉 → 回落到较旧的', r2.ok && r2.name === N('2026-10-05'), JSON.stringify(r2));
+  t('#2 回落时 count 仍跨目录', r2.count === 2, String(r2.count));
+
+  const r3 = await readLatestBackup({ FS: mkFS({
+    DOCUMENTS: { [N('2026-10-05')]: 'BROKEN' },
+    EXTERNAL:  { [N('2026-10-07')]: 'BROKEN' },
+  }) });
+  t('#2 全坏时报的是最新那份的问题', !r3.ok && r3.reason === 'read-failed' && r3.name === N('2026-10-07'), JSON.stringify(r3));
+
+  const r4 = await readLatestBackup({ FS: mkFS({
+    DOCUMENTS: { [N('2026-10-09')]: good('doc') },
+    EXTERNAL:  { [N('2026-10-09')]: good('ext') },
+  }) });
+  t('#2 同一天两份优先 DOCUMENTS', r4.ok && r4.dir === 'DOCUMENTS', JSON.stringify(r4.dir));
+}
 
 console.log('');
 console.log('pageerror:', errs.length ? errs.slice(0, 5) : '无');

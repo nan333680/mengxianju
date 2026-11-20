@@ -28,7 +28,10 @@ const t=(n,ok,ex='')=>{if(ok){pass++;console.log('  OK   '+n);}else{fail++;conso
 const drawer = () => page.$$eval('#drawer-menu .drawer-item span', els => els.map(e=>e.textContent.trim()));
 const h3s = () => page.$$eval('#view-settings .group h3', els => els.map(e=>e.textContent.trim()));
 
-await page.goto('http://127.0.0.1:'+port+'/',{waitUntil:'networkidle0',timeout:40000});
+// v0.5.8.2：40 秒不够。这一套本地整轮 42.1 秒，是全量里最慢的一批，
+// 而 networkidle0 要 500ms 内零网络连接 —— CI 机器比本地慢，40 秒是结构性贴边不是余量。
+// 2026-11-20 那轮 CI 就卡在这里 Navigation timeout（同一份代码本地 31/0）。
+await page.goto('http://127.0.0.1:'+port+'/',{waitUntil:'networkidle0',timeout:60000});
 await sleep(1200);
 await page.evaluate(()=>indexedDB.deleteDatabase('ai-companion'));
 await page.reload({waitUntil:'networkidle0'}); await sleep(600);

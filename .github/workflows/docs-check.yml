@@ -1,0 +1,39 @@
+# Docs check —— 纯文档改动也跑一遍静态检查（v0.5.8.2）
+#
+# 为什么单独一个 workflow：
+#   ci.yml 有 paths-ignore（**/*.md、docs/**），所以「只改 CHANGELOG 就推」会整轮跳过 ——
+#   而 ci-check 第 5 项检查的正是 CHANGELOG 的 release-notes 块会不会越界
+#   （0.5.8.2 那次刚在这条上面假红过）。
+#   把 CHANGELOG 从 paths-ignore 里抠出来是另一种解法，但那等于让「改一行说明」也跑 46 套 e2e。
+#   这里改成互斥路径：文档改动只跑这个（约 1 分钟），代码改动只跑 ci.yml；
+#   两者都改时两个都跑 —— ci-check 是幂等的，跑两遍无害。
+name: Docs check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  static:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 装依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 静态检查（语法 / 文件齐不齐 / 版本号一致 / CHANGELOG 说明块不越界）
+        run: node tools/ci-check.mjs

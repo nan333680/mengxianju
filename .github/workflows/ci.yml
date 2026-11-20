@@ -110,14 +110,37 @@ jobs:
             'e2e-v58fix',      # 自动备份取最近一份：跨目录比日期 / 读坏了往下试（21 项）
             'e2e-v59beat'      # 分段提示词必须读到素材（11 项）
           )
+          # 三种汇总格式（各套件不同时期写的，没统一过）—— 和 tools/run-regression.ps1 同一份判据
+          function Test-HasSummary($text) {
+            if ($text -match 'pass=(\d+)\s+fail=(\d+)') { return $true }
+            if ($text -match '通过\s+(\d+)\s*项[^0-9]*失败\s+(\d+)') { return $true }
+            if ($text -match '通过\s+(\d+)\s*/\s*失败\s+(\d+)') { return $true }
+            return $false
+          }
           $fail = 0
           foreach ($s in $suites) {
             Write-Host "--- $s"
-            node "e2e/$s.mjs"
+            $tmp = Join-Path $env:RUNNER_TEMP "$s.out"
+            node "e2e/$s.mjs" *> $tmp
+            $code = $LASTEXITCODE
+            $out = if (Test-Path $tmp) { Get-Content $tmp -Raw -Encoding UTF8 } else { '' }
+            Write-Host $out
+            # 崩溃重试（v0.5.8.2 补）：和 tools/run-regression.ps1:86 同一个判据 ——
+            # 【没有汇总行且退出码非 0】= 它在 puppeteer 层崩的（Navigation timeout /
+            # detached Frame 那一类），整轮跑时会偶发，重试一次有意义；
+            # 【断言失败绝不重试】—— 那有汇总行，是真信号，不会走到这个分支。
+            # 原来 CI 里是裸 node：本地有兜底、线上没有，所以每次都得人肉重跑。
+            if ($code -ne 0 -and -not (Test-HasSummary $out)) {
+              Write-Host "::warning title=崩溃重试::$s 没有汇总行且退出码 $code —— 按 puppeteer 层崩溃重试一次"
+              node "e2e/$s.mjs" *> $tmp
+              $code = $LASTEXITCODE
+              $out = if (Test-Path $tmp) { Get-Content $tmp -Raw -Encoding UTF8 } else { '' }
+              Write-Host $out
+            }
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
             # 红的时候让 annotation 直接写出是哪一套：否则页面上只有
             # 「Process completed with exit code 1.」，得下载整份日志才知道谁挂的
-            # （v0.5.0 / v0.5.1 两轮都是这么查的）。先存退出码，别被后面的命令盖掉。
-            $code = $LASTEXITCODE
+            # （v0.5.0 / v0.5.1 两轮都是这么查的）。
             if ($code -ne 0) {
               $fail++
               Write-Host "::error title=e2e 失败::e2e/$s.mjs 退出码 $code"

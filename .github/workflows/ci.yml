@@ -16,7 +16,7 @@ on:
   push:
     branches: [main]
     # v0.5.8.2：纯文档改动不再触发那 20 分钟。
-    # 拦的是「改了 CHANGELOG / README / PROGRESS / docs 也要跑全量 46 套」——
+    # 拦的是「改了 CHANGELOG / README / PROGRESS / docs 也要跑全量 44 套」——
     # 这条线上已经有过 6 笔纯文档提交各烧掉一轮 CI，比缺套件更浪费。
     # 只在【所有】改动文件都匹配时才跳过；同时改了代码就照跑。
     paths-ignore:

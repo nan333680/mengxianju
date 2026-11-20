@@ -67,9 +67,15 @@ foreach ($f in $files) {
   #   pass=8 fail=0        /  通过 23 项，失败 0 项  /  通过 31 / 失败 0
   # ⚠️ 第三种一直没被认出来（e2e-appearance 就是它），日志里显示成"(无汇总)"——
   #    判定本身没错（靠 exit code 兜底），但"通过 N 项"这个数字丢了。
+  # 第四、第五种是 0.5.8.3 补的：以前只认前三种，于是 channel(54 项) / writer(31 项) /
+  # viewmode(39 条) 三套一直被记成「无汇总」—— 通过数不进总数，更糟的是【真断言失败
+  # 被当成崩溃、白重试一次】，违反下面「断言失败绝不重试」那条。
+  # tools/ci-check.mjs 第 6 项会扫全仓库，保证新套件不敢再发明第六种。
   $m = [regex]::Match($out, 'pass=(\d+)\s+fail=(\d+)')
   if (-not $m.Success) { $m = [regex]::Match($out, '通过\s+(\d+)\s*项[^0-9]*失败\s+(\d+)') }
   if (-not $m.Success) { $m = [regex]::Match($out, '通过\s+(\d+)\s*/\s*失败\s+(\d+)') }
+  if (-not $m.Success) { $m = [regex]::Match($out, '(\d+)\s*项?\s*通过\s*[/／]\s*(\d+)\s*项?\s*失败') }
+  if (-not $m.Success) { $m = [regex]::Match($out, '通过\s+(\d+)\s*项\s*[/／]\s*失败\s+(\d+)\s*项?') }
   if ($m.Success) {
     $p = [int]$m.Groups[1].Value; $fl = [int]$m.Groups[2].Value
     if ($fl -eq 0) { $verdict = 'PASS' } else { $verdict = 'FAIL' }

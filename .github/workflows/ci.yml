@@ -16,7 +16,7 @@ on:
   push:
     branches: [main]
     # v0.5.8.2：纯文档改动不再触发那 20 分钟。
-    # 拦的是「改了 CHANGELOG / README / PROGRESS / docs 也要跑全量 44 套」——
+    # 拦的是「改了 CHANGELOG / README / PROGRESS / docs 也要跑全量 45 套」——
     # 这条线上已经有过 6 笔纯文档提交各烧掉一轮 CI，比缺套件更浪费。
     # 只在【所有】改动文件都匹配时才跳过；同时改了代码就照跑。
     paths-ignore:
@@ -103,18 +103,25 @@ jobs:
             # 是 97 套回归全绿时漏过去的，因为它不在任何清单里。
             'e2e-ccsync',      # 角色卡字段 ↔ 角色对象双向同步（42 项）
             'e2e-cardio',      # 点设置页入口 → 选 .json → 角色真的被建出来（16 项）
-            # ---- v0.5.8.2 补进清单的 2 套 ----
+            # ---- v0.5.8.2 / 0.5.8.3 补进清单的 3 套 ----
             # 都是纯 Node、不启浏览器、几秒跑完 —— 是 CI 里最便宜的一层保护。
-            # e2e-v58fix 从 0.5.8.1 起就只在本地跑，e2e-v59beat 是 0.5.8.2 新写的；
-            # 两套都验证过「本地全量里有它、CI 清单里没有」这个缺口。
+            # e2e-v58fix 从 0.5.8.1 起就只在本地跑，e2e-v59beat 是 0.5.8.2 新写的，
+            # e2e-v583pov 是 0.5.8.3 新写的；三套都验证过「本地全量里有它、
+            # CI 清单里没有」这个缺口。
             'e2e-v58fix',      # 自动备份取最近一份：跨目录比日期 / 读坏了往下试（21 项）
-            'e2e-v59beat'      # 分段提示词必须读到素材（11 项）
+            'e2e-v59beat',     # 分段提示词必须读到素材（11 项）
+            'e2e-v583pov'      # 视角说明无「她」+ 镜头层数锚点（13 项）
           )
-          # 三种汇总格式（各套件不同时期写的，没统一过）—— 和 tools/run-regression.ps1 同一份判据
+          # 五种汇总格式（各套件不同时期写的，没统一过）—— 和 tools/run-regression.ps1 同一份判据
+          # ⚠️ 两处必须一起改：这一份和 run-regression.ps1:70 起那几行是【两份独立实现】。
+          #    第四、五种是 0.5.8.3 补的（channel / writer / viewmode 三套一直在漏），
+          #    tools/ci-check.mjs 第 6 项会扫全仓库，防止再冒出第六种。
           function Test-HasSummary($text) {
             if ($text -match 'pass=(\d+)\s+fail=(\d+)') { return $true }
             if ($text -match '通过\s+(\d+)\s*项[^0-9]*失败\s+(\d+)') { return $true }
             if ($text -match '通过\s+(\d+)\s*/\s*失败\s+(\d+)') { return $true }
+            if ($text -match '(\d+)\s*项?\s*通过\s*[/／]\s*(\d+)\s*项?\s*失败') { return $true }
+            if ($text -match '通过\s+(\d+)\s*项\s*[/／]\s*失败\s+(\d+)\s*项?') { return $true }
             return $false
           }
           $fail = 0

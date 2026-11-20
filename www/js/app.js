@@ -1,6 +1,6 @@
 import { kv, chars, msgs, mem, wb, scenes, uid, wipeAll, dbAdmin, DB_VERSION } from './db.js';
 import { streamChat, onceChat, needsVision, fileToDataUrl, compressImage, fetchBalance, testConnection, webSearch, formatSearch, providerSpec, providerList, estimateTokens, estimateMsgTokens, isContextOverflow, fitHistoryByBudget, SEARCH_BACKENDS, addUsage } from './api.js';
-import { buildStablePrompt, buildTurnNote, askHits, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR, userSideLines } from './persona.js';
+import { buildStablePrompt, buildTurnNote, askHits, decideKaomoji, decideEmoji, stripKaomoji, splitMessages, FREQ_PRESETS, detectKaomoji, dayLabel, DAYS_PER_YEAR, userSideLines, POV_STYLE_PRESETS } from './persona.js';
 import { assembleSceneContext, cleanExample, cutAtSentence } from './scenectx.js';
 import { PRESETS, getPreset, PARAM_DEFAULTS } from './presets.js';
 import { t, tt, applyI18n, watchI18n, setLang, getLang, getActiveLang, refreshLang, LANGS } from './i18n.js';
@@ -8227,6 +8227,25 @@ let namedInText = false;
     // 命中式的条目仍然走下面的 worldbookHits → 本轮段。
     const wbConst = await worldbookConst(myCharId);   // 常驻条目：进稳定前缀，也要记一笔（见下面的 turnInj）
     sysStable = buildStablePrompt(myChar, P, wbConst, keepPrefix);
+    // 开场白不是长度标准（0.5.8.3）。
+    //
+    // 起因（用户实测）：卡里的开场白长度会影响之后几轮的回复长度 —— 模型把历史里
+    // 第一条 assistant 当成了范式。几轮后它滑出可见窗口就自然失效，所以只在
+    // 「开场白还在窗口里」时补一句。
+    //
+    // ⚠️ 两句都不能省：
+    //   1. 追加内容是【纯文本】，绝不能带 `# ` 前缀。e2e-appearance.mjs:102 断言
+    //      「# 你此刻的样子」必须是把 /^# (.+)$/gm 抓出来的最后一个标题；
+    //      这里是纯文本就不会进那份名单，那条断言照旧过。
+    //   2. 必须追加在 sysStable 构建之后、不回头改 buildStablePrompt ——
+    //      追加在末尾不动前面的 token，前缀缓存照旧命中。
+    //
+    // 判定「开场白还在窗口里」：可见历史的第一条就是 assistant。
+    // 不用给消息加字段、不用迁移老数据；几轮后窗口一滑自然为 false。
+    // 开场白被归档后不在 msgs.list 里，findIndex 返回 -1，也跟着 true 不了。
+    if (pastRaw.findIndex(m => m && m.role === 'assistant') === 0) {
+      sysStable += '\n\n（开场白那一段只是开场，不要拿它的长度当标准；这一条按上面定的长度写。）';
+    }
     // 世界书：拿"用户这句 + 最近几条"去撞触发词。
     // 必须用 past（不含刚才那条还没写进去的），再补上本轮 text ——
     // history 里最新一条就是本轮用户消息，重复拼会命中两次（虽然去重后无影响，但没必要）。
@@ -15007,26 +15026,8 @@ const POV_PRESETS = [
   { label: '开', value: true }
 ];
 
-// 叙事视角（v1.21.48）：一个开关拆成四档 + 关。
-//
-// 为什么要拆：老开关只能表达「不许跳出去」和「不管」两种意思 ——
-// 而写小说真正要的是中间那几档：能写场面、能以对方为主语、能当叙述者。
-// 这几段提示词都在 persona.js（POV_STYLES），这里只管界面文案。
-//
-// ⚠️ '关' 这一档必须留着：老版本 povLock=false 就是「不注入任何视角段落」，
-// 砍掉它等于给所有关着锁的角色强行加上约束。
-const POV_STYLE_PRESETS = [
-  { label: '关', value: '',
-    note: '不约束视角。她自己怎么顺手怎么写 —— 偶尔跳出她的眼睛当旁白也会发生。' },
-  { label: 'L1', value: 'L1',
-    note: '<b>她的眼睛</b>：只写她自己看到、听到、感觉到的。环境照样能写，不能写的是跳出去当旁白、用第三人称转播场面。<br>（老版本的「锁定她的视角=开」就是这一档。）' },
-  { label: 'L2', value: 'L2',
-    note: '<b>她的眼睛 + 场面</b>：在 L1 基础上放开<b>客观的场面</b> —— 雪停了、灯灭了一盏、窗外的车声远了。<br>仍然不许替对方写他心里在想什么。' },
-  { label: 'L3', value: 'L3',
-    note: '<b>跟着她走的第三人称</b>：可以用「他」作主语写对方（他推开门、他把杯子放下）。<br>镜头仍然只在她所在的现场，不写她看不见的事。' },
-  { label: 'L4', value: 'L4',
-    note: '<b>全知叙述者</b>：可以切场景、写别人的心理。<br>⚠️ 但对方（你）的台词和决定留给你自己 —— 叙述者最多写到他开口之前。' },
-];
+// 叙事视角的界面文案在 persona.js 的 POV_STYLE_PRESETS（v0.5.8.3 挪过去的）——
+// 它和 POV_STYLES 是一档一条的对照关系，拆在两个文件里迟早对不上。
 
 // 联网搜索（角色级三态）：'' = 跟随全局设置，其余强制。
 // 用三态而不是布尔：老角色没有这个字段，默认应该"跟着全局走"，
@@ -22304,7 +22305,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.8.2';
+const WEB_VERSION_FALLBACK = '0.5.8.3';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

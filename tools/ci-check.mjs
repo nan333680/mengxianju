@@ -163,4 +163,78 @@ console.log('== 5. CHANGELOG 的更新说明块不越界（发版脚本按节切
   console.log('   ✓ v' + v0 + ' → ' + tag(n0) + ' ' + n0.text.length + ' 字；v' + v1 + ' → ' + tag(n1) + ' ' + n1.text.length + ' 字（各自独立，没串到隔壁）');
 }
 
+console.log('');
+console.log('== 6. 每套的汇总行都得能被判定正则认出来（认不出 = 白重试一次 + 计数漏掉）==');
+// 起因（0.5.8.3）：e2e-viewmode 的 `===== ... 38 通过 / 1 失败 =====` 不在原来那三种
+// 格式里。后果不是「少了个数字」—— 它的【真断言失败】被当成 puppeteer 崩溃、
+// 白重试了一次（违反「断言失败绝不重试」），那 38 项也从总数里消失了。
+// e2e-channel（54 项）、e2e-writer（31 项）一直在漏，只是它们一直绿，没人发现。
+//
+// 这里不跑套件：把每个 console.log 的字符串字面量按顺序拼起来，中间的表达式
+// 一律当成数字 1，模拟出「它会打印的那一行」，再用同一组分正则对号。
+// 格式爱怎么写怎么写，能对上号就行 —— 这比要求 173 套统一格式便宜得多。
+// ⚠️ 三个已知边界（现在没有套件这么写；将来谁这么写，会【误报】成「汇总行对不上」）：
+//   · 模板字符串：console.log(`通过 ${pass} / 失败 ${fail}`) —— 整段被当字面量，
+//     ${pass} 原样留着，正则找不到数字；
+//   · process.stdout.write(...) —— 不是 console.log，logExprs 根本抓不到；
+//   · 汇总行里出现转义引号（'他说\'好\''）：/'[^']*'/ 会切错边界，
+//     lits.shift() 按出现顺序塞回占位符的假设就不成立了。
+//   真遇到这三条报错，先看它是不是没走 console.log，而不是去改正则。
+const SUM_RE = [
+  /pass=(\d+)\s+fail=(\d+)/,
+  /通过\s+(\d+)\s*项[^0-9]*失败\s+(\d+)/,
+  /通过\s+(\d+)\s*\/\s*失败\s+(\d+)/,
+  /(\d+)\s*项?\s*通过\s*[\/／]\s*(\d+)\s*项?\s*失败/,
+  /通过\s+(\d+)\s*项\s*[\/／]\s*失败\s+(\d+)\s*项?/,
+];
+// ⚠️ 上面五条必须和 tools/run-regression.ps1:70 起、.github/workflows/ci.yml 的
+//    Test-HasSummary 保持一致 —— 那是两份独立实现，改一处不改另一处就是新坑。
+function logExprs(src) {
+  const out = []; const re = /console\.log\(/g; let m;
+  while ((m = re.exec(src))) {
+    let i = m.index + m[0].length, depth = 1;
+    while (i < src.length && depth > 0) {
+      const c = src[i];
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      else if (c === "'" || c === '"' || c === '`') {
+        const q = c; i++;
+        while (i < src.length && src[i] !== q) { if (src[i] === '\\') i++; i++; }
+      }
+      i++;
+    }
+    out.push(src.slice(m.index + m[0].length, i - 1));
+  }
+  return out;
+}
+function simOf(expr) {
+  const lits = [];
+  let s = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, m => { lits.push(m.slice(1, -1)); return '\u0001'; });
+  // 占位符以外：空白丢掉（表达式里的空格不进输出），其余（变量、运算符）一律当数字
+  s = s.split('').map(c => (c === '\u0001' ? c : (/\s/.test(c) ? '' : '#'))).join('');
+  s = s.replace(/\u0001/g, () => (lits.length ? lits.shift() : ''));
+  return s.replace(/#+/g, '1').replace(/\s+/g, ' ').trim();
+}
+{
+  const e2eDir = path.join(ROOT, 'e2e');
+  const files = fs.readdirSync(e2eDir).filter(n => n.startsWith('e2e-') && n.endsWith('.mjs'));
+  const missing = [];
+  let counted = 0;
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(e2eDir, f), 'utf8');
+    // 实况型（没有 pass++ / fail++，只打印过程）：本来就不该有汇总行，跳过
+    if (!/fail\+\+|pass\+\+/.test(src)) continue;
+    counted++;
+    if (!logExprs(src).map(simOf).some(s => SUM_RE.some(r => r.test(s)))) missing.push(f);
+  }
+  if (missing.length) {
+    console.log('   ✗ 这些套件有断言计数，但汇总行对不上任何一条判定规则：');
+    missing.forEach(f => console.log('     - ' + f));
+    console.log('   后果：它们的通过数不进总数，而且失败会被当成崩溃、白重试一次。');
+    console.log('   改法：照现有五种格式之一写汇总行，或者给上面五条正则 + 两个 PowerShell 实现同时加规则。');
+    process.exit(1);
+  }
+  console.log('   ✓ ' + counted + ' 套（另有 ' + (files.length - counted) + ' 套实况型/工具文件不要求汇总）都能对上号');
+}
+
 console.log('CI 静态检查通过');

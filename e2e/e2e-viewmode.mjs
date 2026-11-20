@@ -107,7 +107,17 @@ const pov = await page.evaluate(() => ({
 }));
 ok('视角五档都在（关 + L1~L4）', JSON.stringify(pov.btns) === JSON.stringify(['关','L1','L2','L3','L4']), pov.btns);
 ok('老角色 povLock=true 读成 L1（不是「关」）', pov.on.length === 1 && pov.on[0] === 'L1', pov.on);
-ok('L1 的说明写的是「她的眼睛」', String(pov.note).indexOf('她的眼睛') >= 0, pov.note);
+// 0.5.8.3：note 文案中性化（「她的眼睛」→「角色的眼睛」）。
+// 不再断死具体措辞 —— 断的是「显示的说明就是 L1 那一档」这件事实，
+// 以后无论怎么改文案，这条都不会误伤（原来断原文，改一次挂一次）。
+const expectL1 = await page.evaluate(async () => {
+  const { POV_STYLE_PRESETS } = await import('/js/persona.js');
+  const n = (POV_STYLE_PRESETS.find(x => x.value === 'L1') || {}).note || '';
+  return n.replace(/<[^>]+>/g, '');
+});
+ok('显示的说明就是 L1 那一档',
+  String(pov.note).trim() === expectL1.trim(),
+  { got: pov.note, want: expectL1 });
 
 console.log('\n【3】点 L3，说明行和存档位都跟着走');
 await page.evaluate(() => { const b = [...document.querySelectorAll('#e-pov button')].find(x => x.textContent.trim() === 'L3'); b.click(); });

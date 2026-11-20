@@ -136,9 +136,9 @@ console.log('== 5. CHANGELOG 的更新说明块不越界（发版脚本按节切
     const next = /^###\s/m.exec(after);
     const rest = next ? after.slice(0, next.index) : after;
     const rn = /<!--\s*release-notes\s*-->\s*([\s\S]*?)\s*<!--\s*\/release-notes\s*-->/.exec(rest);
-    if (rn) return rn[1].replace(/<!--[\s\S]*?-->/g, '').trim();
+    if (rn) return { text: rn[1].replace(/<!--[\s\S]*?-->/g, '').trim(), block: true };
     const hm = new RegExp('###\\s*' + escapeRe(ver) + '\\s*（([^）]*)）').exec(cl);
-    return hm ? hm[1].replace(/^versionCode\s+\d+\s*·\s*/, '').trim() : null;
+    return { text: hm ? hm[1].replace(/^versionCode\s+\d+\s*·\s*/, '').trim() : '', block: false };
   };
   const problems = [];
   if (vers.length < 2) problems.push('CHANGELOG 里能认出来的版本节少于两个，这条检查没意义了');
@@ -146,16 +146,21 @@ console.log('== 5. CHANGELOG 的更新说明块不越界（发版脚本按节切
   const v1 = vers[1];
   const n0 = v0 ? notesOf(v0) : null;
   const n1 = v1 ? notesOf(v1) : null;
-  if (!n0) problems.push('最新一节 v' + v0 + ' 抓不到任何说明（块和标题括号都是空的？）');
-  if (!n1) problems.push('上一节 v' + v1 + ' 抓不到任何说明');
-  if (n0 && n1 && n0 === n1) {
+  if (!n0 || !n0.text) problems.push('最新一节 v' + v0 + ' 抓不到任何说明（块和标题括号都是空的？）');
+  if (!n1 || !n1.text) problems.push('上一节 v' + v1 + ' 抓不到任何说明');
+  // ⚠️ 只有「本节没写块 + 上一节写了块 + 两者文本一模一样」才是越界。
+  //    两节都没写块时会一起回退到标题括号，剥掉 versionCode 后只剩「测试版，未进 version.json」
+  //    这一句，两节当然相同 —— 那不是越界，是四位数测试版的正常形态（0.5.8.1 / 0.5.8.2 都这样）。
+  //    这一条是 0.5.8.2 轮补的：原来的 n0 === n1 会把「都没写块」判成越界，假红。
+  if (n0 && n1 && n0.text === n1.text && !n0.block && n1.block) {
     problems.push('v' + v0 + ' 和 v' + v1 + ' 抓到同一份说明 —— v' + v0 + ' 自己没有块，脚本越界抓了 v' + v1 + ' 的');
   }
   if (problems.length) {
     console.log('   ✗ ' + problems.join('；'));
     process.exit(1);
   }
-  console.log('   ✓ v' + v0 + ' → ' + n0.length + ' 字；v' + v1 + ' → ' + n1.length + ' 字（各自独立，没串到隔壁）');
+  const tag = n => (n.block ? '块' : '回退标题括号');
+  console.log('   ✓ v' + v0 + ' → ' + tag(n0) + ' ' + n0.text.length + ' 字；v' + v1 + ' → ' + tag(n1) + ' ' + n1.text.length + ' 字（各自独立，没串到隔壁）');
 }
 
 console.log('CI 静态检查通过');

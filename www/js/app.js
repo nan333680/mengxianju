@@ -16024,7 +16024,7 @@ function renderScTemps() {
 
 const SC_SRC_NOTE = {
   blank: '从头起：只按下面填的地方、时间、人物写，不读聊天记录。',
-  chat: '从这段聊起来：把你们最近的聊天截一段当背景（只截文字，之后就独立了）—— 这场戏不会改动聊天，聊天变了也不影响它。'
+  chat: '把这段写成小说：把你们最近的聊天截一段当素材，写成正文（只截文字，之后就独立了）—— 这场戏不会改动聊天，聊天变了也不影响它。'
 };
 
 function refreshSceneNote() {
@@ -16071,7 +16071,7 @@ async function openSceneModal(opts) {
   }
   renderSeg('sc-src', [
     { label: '空白开戏', value: 'blank' },
-    { label: '从这段聊起来', value: 'chat' }
+    { label: '把这段写成小说', value: 'chat' }
   ], _scSrc, v => { _scSrc = String(v); refreshSceneNote(); });
   // 四档（v0.5.3.1）：短/中 是一口气写完的片段，长/章 是分 3–5 拍分批写的。
   // 长档不是「把上限调大」—— 一次要 4000–8000 字会被 token 上限截断、越往后越潦草，
@@ -16628,6 +16628,15 @@ async function startScene() {
   const sc = scDraftScene();
   if (!sc) { toast('先选一个角色'); return; }
   if (_scSrc === 'chat' && !(sc.source && sc.source.excerpt)) toast('这段聊天还没什么内容，按空白开戏写', 3500);
+  // 素材太薄（v0.5.8.2）：选了中/长/章却只带进一两条消息 —— 分段再怎么贴素材也只能是扩写。
+  // 只提示不拦：他可能就是拿一句话起头，硬拦会把「开一场戏」变成「不许开」。
+  if (sc.source.kind === 'chat' && sc.length !== 'short') {
+    const n = String(sc.source.excerpt || '').length;
+    const L = SCENE_LENGTHS[sc.length];
+    if (n && n < L.min * 0.5) {
+      toast('这段素材只有 ' + n + ' 字，撑不起「' + L.label + '」档的 ' + L.min + ' 字 —— 建议用「短」，或从更早的一条开始选', 5500);
+    }
+  }
   $('scn-modal').classList.add('hidden');
   _scStarting = true;
   if (!S.apiKey) { toast('还没填 API Key'); return; }
@@ -22295,7 +22304,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.8.1';
+const WEB_VERSION_FALLBACK = '0.5.8.2';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

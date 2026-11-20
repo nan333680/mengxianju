@@ -592,9 +592,32 @@ export function sceneBeatPlanPrompt(scene) {
   const p = [];
   p.push('给这一场戏分拍。只输出 JSON，不要解释。');
   p.push('');
+  // 素材（v0.5.8.2）：和 sceneProsePrompt 的【素材】块同一口径。
+  // 原来这里一个字都不读它 ——「把这段写成小说」分出来的拍全是模型凭角色名编的，
+  // 而正文提示词里真有素材，两边打架：拍是编的，正文硬往编好的框上缝。
+  // excerpt 保持 8000 全长（normalizeScene 的上限），不要在这再截一次 ——
+  // 正文侧是整段注入，两边截得不一样就又对不上了。
+  if (a.source.kind === 'chat' && a.source.excerpt) {
+    p.push('【素材：你们聊天里的一段】');
+    p.push(a.source.excerpt);
+    p.push('这一场要把上面这段素材里发生过的事写成正文。');
+    p.push('分拍就是沿着素材里实际发生的事切：第 1 拍从素材开头写起，最后一拍写到素材结尾。');
+    p.push('素材里没有的事不要编；素材里发生了的事不要跳过。');
+    p.push('start / change / stop 用动作、物件、场景描述，不要整句照抄素材里的对话。');
+    p.push('');
+  }
   p.push('这一场要改变什么：' + (S(a.beats[0] && a.beats[0].change, 300) || '（没填）'));
   if (a.setting.place) p.push('地点：' + a.setting.place);
+  // 时间 / 天气 / 在场（v0.5.8.2）：正文侧早就有（sceneProsePrompt 的【场景卡】），
+  // 分段侧一直是漏的 —— 分段时模型连「下雨」都不知道。
+  if (a.setting.time) p.push('时间：' + a.setting.time);
+  if (a.setting.weather) p.push('天气：' + a.setting.weather);
   if (main) p.push('主视角：' + main.name);
+  // 导演模式正文里不出现「你」，在场也别列他 —— 和 sceneProsePrompt:452 同一个口径。
+  const others = (a.cast || [])
+    .filter(c => c.role !== 'main' && !(a.userMode === 'director' && c.role === 'user'))
+    .map(c => (c.role === 'temp' ? c.name + '（临时人物）' : c.name));
+  if (others.length) p.push('在场：' + others.join('、'));
   p.push('总长：' + L.min + '–' + L.max + ' 字，分 ' + L.beats + ' 拍。' + (L.beats > 1 ? '从第二拍起，每一拍都要有一个小转折。' : ''));
   p.push('');
   p.push('每拍的格式：');

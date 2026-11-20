@@ -694,11 +694,11 @@ const BY_ZH = {
   //    静态标注靠 index.html 的 data-i18n-en*，这里补的是 app.js 里拼出来的那些。
   '先建一个角色，再来开戏': 'Create a character first.',
   '空白开戏': 'Start blank',
-  '从这段聊起来': 'Grow out of this chat',
+  '把这段写成小说': 'Write this chat into a scene',
   '从头起：只按下面填的地方、时间、人物写，不读聊天记录。':
     'From scratch: written only from the place, time and people you fill in below. Your chat is not read.',
-  '从这段聊起来：把你们最近的聊天截一段当背景（只截文字，之后就独立了）—— 这场戏不会改动聊天，聊天变了也不影响它。':
-    'Grows out of this chat: a slice of your recent chat is taken as background (text only, and only once) - the scene never edits it, and later chat changes do not touch it.',
+  '把这段写成小说：把你们最近的聊天截一段当素材，写成正文（只截文字，之后就独立了）—— 这场戏不会改动聊天，聊天变了也不影响它。':
+    'Write this chat into a scene: a slice of your recent chat is taken as material and written into prose (text only, and only once) - the scene never edits it, and later chat changes do not touch it.',
   '这段聊天还没什么内容，按空白开戏写': 'This chat has nothing to draw on yet - starting blank.',
   '短 · 300–600 字': 'Short · 300–600 chars',
   '中 · 600–1200 字': 'Medium · 600–1200 chars',

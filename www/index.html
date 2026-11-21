@@ -728,19 +728,24 @@
 
     <!-- 「角色自己的生活」（0.5.8.4）：以前这段完全藏在 psyche.js 的作息表里，
          每轮无条件拼进提示词，不受「角色怎么想」那个开关管。
-         单独成栏、不放进上面那个 group：放进去会让用户以为关了 v2 就全关了。 -->
+         单独成栏、不放进上面那个 group：放进去会让用户以为关了 v2 就全关了。
+         v0.5.8.5：七个文本框搬进 #life-modal —— 常驻在这里会把设置页撑成两屏多。
+         主界面只留「开关 + 一句话 + 入口行」。 -->
     <section class="group">
       <h3 data-i18n-en="The character's own life">角色自己的生活</h3>
       <label class="look-switch" data-i18n-nodes>
         <input type="checkbox" id="s-lifeself">
         <span data-i18n-en="Say what the character was doing">告诉角色「它本来在做什么」</span>
       </label>
-      <p class="hint-text" data-i18n-en-html="Every turn adds one line — &quot;you were doing this: X&quot; — and X is picked from the time slot below. <b>A blank slot writes nothing</b>; all seven blank means the line never appears. It never affects typing speed or tone.">
-        每一轮都会加一句「你本来在做这件事：X」，X 从下面按时段挑。
-        <b>哪一段留空，那一段就不写</b>；七段全空等于整段不出现。<br>
-        它只管「本来在做什么」，不影响打字快慢和语气。
+      <p class="hint-text" data-i18n-en-html="Every turn adds one line — &quot;you were doing this: X&quot;. <b>A blank section writes nothing.</b> It never affects typing speed or tone.">
+        每一轮加一句「你本来在做这件事：X」。<b>哪一段留空，那一段就不写</b>。<br>
+        不影响打字快慢和语气。
       </p>
-      <div id="s-life-slots"></div>
+      <button class="pick-row" id="s-life-open">
+        <span data-i18n-en="Edit the schedule">编辑作息表</span>
+        <em id="s-life-brief" data-i18n-en="Default">默认</em>
+        <i class="fold-arrow">›</i>
+      </button>
     </section>
 
     <section class="group">
@@ -1688,6 +1693,25 @@
       <button class="ghost-btn" id="arc-off" data-i18n-en="Turn off">关掉剧情</button>
       <button class="ghost-btn" id="arc-cancel" data-i18n-en="Cancel">取消</button>
       <button class="send-btn" id="arc-save" data-i18n-en="Save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 「角色自己的生活」的七个时段（0.5.8.5）：从设置页搬进来的。
+     结构照 #arc-modal —— ⚠️ 不要给 .modal-box 加 max-height / overflow：
+     .modal 自己就是 overflow-y:auto（style.css:1093），.modal-box 用 margin:auto 兜居中。
+     再加一层会变成【双层滚动】，手机上手指在弹层内划、外层不跟，看着像卡住。 -->
+<div id="life-modal" class="modal hidden" data-i18n-nodes>
+  <div class="modal-box">
+    <h4 data-i18n-en="Edit the schedule">编辑作息表</h4>
+    <p class="hint-text" data-i18n-en-html="One candidate per line. <b>A blank section writes nothing</b>; all seven blank means the line never appears at all.">
+      一行一个候选词。<b>哪一段留空，那一段就不写</b>；七段全空等于整段不出现。
+    </p>
+    <!-- 七个 textarea 由 app.js 的 renderLifeSlots() 填进来（打开弹层时才渲染） -->
+    <div id="s-life-slots"></div>
+    <div class="modal-btns">
+      <button class="ghost-btn" id="life-reset" data-i18n-en="Reset all">全部恢复默认</button>
+      <button class="ghost-btn prim" id="life-done" data-i18n-en="Done">完成</button>
     </div>
   </div>
 </div>

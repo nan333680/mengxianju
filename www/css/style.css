@@ -536,6 +536,15 @@ input[type=checkbox]{
   font-family:inherit; outline:none;
 }
 .profile-box:focus{ border-color:var(--pri); }
+/* 作息表的七个框（0.5.8.5）：按【三行】高，不继承上面那个 200px。
+   200px 是给「我的设定」「他的环境」那种长文本的，作息表每段只有两三行字，
+   借过来就是七个 200px 的空盒子，弹层里要滑好几屏。
+
+   ⚠️ 不改 .profile-box 本身 —— index.html 五处 + app.js 的 quickedit 都在用它。
+   ⚠️ 不写 field-sizing:content：七个框内容长短不一，会高矮不齐，比固定 90px 更难看
+      （而且它是 Chrome 123+，没必要为「更整齐」的效果冒兼容风险）。
+   90px 的算法：line-height 1.65 × 13.5px ≈ 22.3px/行，三行 67px + 上下 padding 22px。 */
+.life-slot textarea.profile-box{ min-height:90px; }
 .profile-foot{
   display:flex; align-items:center; justify-content:space-between;
   gap:10px; margin-top:9px;

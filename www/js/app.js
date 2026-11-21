@@ -18709,36 +18709,104 @@ function bindSettings() {
   function linesSame(a, b) {
     return a.length === b.length && a.every((x, i) => x === b[i]);
   }
+  // 「编辑作息表」那一行的状态（0.5.8.5）：默认 / 已改 N 段。
+  // S.lifeSlots 是【稀疏】的（跟内置表一字不差就 delete，见下面 onchange），
+  // 所以键数就是「改过几段」。清空某段存 [] 也算改过 —— 那确实是一次改动。
+  function updateLifeBrief() {
+    const el = $('s-life-brief');
+    if (!el) return;
+    const cur = (S.lifeSlots && typeof S.lifeSlots === 'object') ? S.lifeSlots : {};
+    const n = Object.keys(cur).length;
+    el.textContent = n ? tt('已改 ' + n + ' 段') : tt('默认');
+  }
+  // ⚠️ 保存要【能被等待】：一次 change 一个 promise，「恢复默认」「完成」靠它精确等上一次写完。
+  //    saveSettings 没有串行锁（S 同步赋值 + await kv.set），两个并发写同一个 key 时
+  //    谁后完成谁赢 —— 用 setTimeout 赌时长不可靠，用 promise 引用是确定的。
+  let lifeSave = Promise.resolve();
   function renderLifeSlots() {
     const box = $('s-life-slots');
     if (!box) return;
     const cur = (S.lifeSlots && typeof S.lifeSlots === 'object') ? S.lifeSlots : {};
-    const on = S.lifeSelf !== false;
     box.innerHTML = LIFE_SLOT_DEFS.map(slot => {
       const key = String(slot.from);
       const has = Object.prototype.hasOwnProperty.call(cur, key);
       const arr = has ? (Array.isArray(cur[key]) ? cur[key] : []) : slot.act;
       // 23-24 那一档其实只有 23 点（lifeSlot 按 hh <= to 判，24 点不存在）
       const span = slot.to >= 24 ? (slot.from + ' 点') : (slot.from + '–' + slot.to + ' 点');
+      // ⚠️ 0.5.8.5 起【不再按总开关灰掉输入框】：开关管「用不用」，编辑管「内容是什么」，
+      //    lifeSelf / lifeSlots 是两个独立的键。「先关掉 → 慢慢配 → 再打开」是正常顺序。
       return '<div class="field life-slot" data-i18n-nodes>'
         + '<span>' + esc(span) + '</span>'
-        + '<textarea class="profile-box" rows="3" spellcheck="false" data-life-slot="' + esc(key) + '"'
-        + (on ? '' : ' disabled') + '>' + esc(arr.join('\n')) + '</textarea>'
+        + '<textarea class="profile-box" rows="3" spellcheck="false" data-life-slot="' + esc(key) + '">'
+        + esc(arr.join('\n')) + '</textarea>'
         + '</div>';
     }).join('');
     box.querySelectorAll('textarea[data-life-slot]').forEach(ta => {
-      ta.onchange = async () => {
-        const key = ta.dataset.lifeSlot;
-        const lines = ta.value.split('\n').map(x => x.trim()).filter(Boolean);
-        const def = (LIFE_SLOT_DEFS.find(s => String(s.from) === key) || { act: [] }).act;
-        const next = { ...((S.lifeSlots && typeof S.lifeSlots === 'object') ? S.lifeSlots : {}) };
-        // 改回和内置表一模一样 → 删掉这个键，回到「跟着内置表走」
-        if (linesSame(lines, def)) delete next[key];
-        else next[key] = lines;
-        await saveSettings({ lifeSlots: next });
-        renderLifeSlots();
+      ta.onchange = () => {
+        lifeSave = (async () => {
+          const key = ta.dataset.lifeSlot;
+          const lines = ta.value.split('\n').map(x => x.trim()).filter(Boolean);
+          const def = (LIFE_SLOT_DEFS.find(s => String(s.from) === key) || { act: [] }).act;
+          const next = { ...((S.lifeSlots && typeof S.lifeSlots === 'object') ? S.lifeSlots : {}) };
+          // 改回和内置表一模一样 → 删掉这个键，回到「跟着内置表走」
+          if (linesSame(lines, def)) delete next[key];
+          else next[key] = lines;
+          await saveSettings({ lifeSlots: next });
+          // ⚠️ 这里【不】重画（0.5.8.5）：框里本来就是生效值，重画没意义；而且重画会落在
+          //    「全部恢复默认」之后，把框里的内容又变回改过的值（界面回跳）。
+          updateLifeBrief();
+        })();
       };
     });
+    updateLifeBrief();
+  }
+  // 把七个框的当前值整体落库（读全部 textarea，不依赖 change 有没有触发过）。
+  // 「完成」用它兜底：change 是失焦才触发，而 onchange 里的保存是异步的 ——
+  // 用户改完直接点「完成」时，最后那一格可能还没存。
+  async function flushLifeSlots() {
+    const box = $('s-life-slots');
+    if (!box) return;
+    const areas = box.querySelectorAll('textarea[data-life-slot]');
+    if (!areas.length) return;
+    const next = { ...((S.lifeSlots && typeof S.lifeSlots === 'object') ? S.lifeSlots : {}) };
+    areas.forEach(ta => {
+      const key = ta.dataset.lifeSlot;
+      const lines = ta.value.split('\n').map(x => x.trim()).filter(Boolean);
+      const def = (LIFE_SLOT_DEFS.find(s => String(s.from) === key) || { act: [] }).act;
+      if (linesSame(lines, def)) delete next[key];
+      else next[key] = lines;
+    });
+    await lifeSave;                       // 先等还在跑的那次 change
+    await saveSettings({ lifeSlots: next });
+    updateLifeBrief();
+  }
+  function closeLifeModal() {
+    $('life-modal').classList.add('hidden');
+    updateLifeBrief();                    // 关掉时也刷一次入口那行
+  }
+  if ($('s-life-open') && $('life-modal')) {
+    $('s-life-open').onclick = () => {
+      renderLifeSlots();                  // 打开时才渲染：七个框不必常驻
+      $('life-modal').classList.remove('hidden');
+    };
+    $('life-done').onclick = async () => {
+      await flushLifeSlots();
+      closeLifeModal();
+    };
+    $('life-reset').onclick = async () => {
+      // 恢复默认是【可逆】的（内置表一直在），所以不弹二次确认 ——
+      // 项目里 confirm 只用在不可逆的两处（删角色 / 清空全部数据）。
+      const ae = document.activeElement;
+      // 先让正在编辑那格触发 change。activeElement 在 tsc 眼里是 Element，没有 blur ——
+      // 项目里同类噪音（Element 上没有 checked/dataset）有 28 条，不差这一条，但不新加。
+      if (ae && ae.tagName === 'TEXTAREA') { /** @type {HTMLElement} */ (ae).blur(); }
+      await lifeSave;                                   // 精确等它写完，再覆盖
+      await saveSettings({ lifeSlots: {} });
+      renderLifeSlots();
+      updateLifeBrief();
+      toast('已恢复默认：七段都回到内置表', 3600);
+    };
+    $('life-modal').addEventListener('click', e => { if (e.target === $('life-modal')) closeLifeModal(); });
   }
   if ($('s-lifeself')) {
     $('s-lifeself').checked = S.lifeSelf !== false;
@@ -18748,10 +18816,11 @@ function bindSettings() {
       toast(on
         ? '角色自己的生活已打开：从下一条开始，会写「角色本来在做什么」'
         : '角色自己的生活已关掉：以后不再写这一句（打字节奏和语气不受影响）', 3600);
-      renderLifeSlots();
+      // 0.5.8.5：不再 renderLifeSlots() —— 那是为了刷输入框的 disabled 状态，
+      // 而 disabled 已经删了（关掉也照样能编辑）。
     };
-    renderLifeSlots();
   }
+  updateLifeBrief();
 
   // 时间细化（全局）：控制聊天栏是否显示时:分、记忆能否设到小时
   $('s-clock-detail').checked = !!S.clockDetail;
@@ -22423,7 +22492,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.8.4';
+const WEB_VERSION_FALLBACK = '0.5.8.5';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

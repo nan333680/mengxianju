@@ -96,5 +96,17 @@ t('34 弹窗标题中性化成「角色本来在做」', APP.indexOf("tt('角色
 t('35 弹窗小字指向「角色自己的生活」', APP.indexOf('要改去「角色自己的生活」') > 0);
 t('36 设置页有七个文本框的渲染', APP.indexOf('data-life-slot') > 0);
 
+console.log('=== 9. 0.5.8.5：七段收进弹层 ===');
+const lifeFn = APP.slice(APP.indexOf('function renderLifeSlots'), APP.indexOf('async function flushLifeSlots'));
+t('37 七段搬进了弹层', APP.indexOf('life-modal') > 0 && APP.indexOf('s-life-open') > 0);
+t('38 关掉总开关也能编辑（renderLifeSlots 里不再拼 disabled）',
+  lifeFn.length > 500 && lifeFn.indexOf('disabled') < 0, lifeFn.length + ' 字节');
+t('39 入口那行有状态（默认 / 已改 N 段）',
+  APP.indexOf('updateLifeBrief') > 0 && APP.indexOf("tt('已改 ' + n + ' 段')") > 0);
+t('40 「全部恢复默认」在（清空 lifeSlots 就回到内置表）',
+  APP.indexOf("saveSettings({ lifeSlots: {} })") > 0);
+t('41 保存能被等待（reset 靠 promise 精确等，不靠延时）',
+  APP.indexOf('let lifeSave = Promise.resolve()') > 0 && APP.indexOf('await lifeSave') > 0);
+
 console.log('pass=' + pass + ' fail=' + fail);
 process.exit(fail ? 1 : 0);

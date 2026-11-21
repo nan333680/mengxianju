@@ -522,6 +522,8 @@ const EXTRA_ZH = {
   '角色本来在做': 'What the character was doing',
   // v0.5.8.4：检查器里「从聊天记录提取到的位置」那一格 + 时段处境那行小字。
   '角色此刻': 'Where the character is now',
+  // v0.5.8.5：「编辑作息表」入口那行没改动过时的显示。
+  '默认': 'Default',
   '这是软件按时段配的处境，不是角色卡的设定。要改去「角色自己的生活」。':
     'Picked by the app from the time of day — not part of the character card. Change it under "The character\'s own life".',
   // ⚠️ v0.5.6 补：检查器的标题一直是裸中文（`showInj` 里 tt('这一轮用了什么')）。
@@ -1051,6 +1053,8 @@ const BY_PATTERN = [
   [/^(\d+) 字$/, (m) => m[1] + ' chars'],
   [/^已有 (\d+) 字$/, (m) => m[1] + ' chars so far'],
   [/^已选 (\d+) \/ (\d+)$/, (m) => 'Selected ' + m[1] + ' / ' + m[2]],
+  // v0.5.8.5：「编辑作息表」入口那行的状态。拼出来的，普通表查不到 —— 不登记的英文界面会漏成中文。
+  [/^已改 (\d+) 段$/, (m) => m[1] + (m[1] === '1' ? ' section changed' : ' sections changed')],
   [/^(.+?)（(\d+):00-(\d+):00）$/, (m) => m[1] + ' (' + m[2] + ':00–' + m[3] + ':00)'],
   [/^(\d+):00-(\d+):00$/, (m) => m[1] + ':00–' + m[2] + ':00'],
   [/^(\d+) 行$/, (m) => m[1] + (m[1] === '1' ? ' line' : ' lines')],

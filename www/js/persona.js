@@ -838,7 +838,7 @@ function clockBack(end, start) {
  * @param {{day?: number, hour?: number, minute?: number, phase?: string}|null} start 上一条消息的 story 快照
  * @returns {string} 可以直接拼进 turnNote 的段落，或空串
  */
-function clockGap(end, start) {
+export function clockGap(end, start) {
   if (!end || !start) return '';
   if (typeof end.day !== 'number' || typeof start.day !== 'number') return '';
   const dDay = end.day - start.day;
@@ -863,7 +863,29 @@ function clockGap(end, start) {
 
   let gap;
   if (dDay === 0) {
-    if (!hasT) return '';                 // 同一天但时段不同、又没有钟点 → 说不清
+    if (!hasT) {
+      // v0.5.8.5：同一天、时段不同、又没有钟点 —— 这是【默认设置下的常态】
+      // （「时间细化」默认关，DEFAULTS.clockDetail = false，于是 hour 恒为 null）。
+      //
+      // 原来这里直接 return ''：等于「说不清就不说」。可用户要的恰恰是
+      // 「她怎么知道过了大半天」—— 不说，模型只能从「下午的光」这种侧面去猜，
+      // 于是同一段戏里她的时间感全靠光线变化（用户实测：爱丽丝出门务农那半天）。
+      //
+      // 现在是按【时段跨了几档】给个模糊说法。八档每档约三小时，所以精度是 ±3 小时左右 ——
+      // 够「大半天」这个级别，不够「几点几分」。
+      //
+      // ⚠️ 措辞里【一个数字都不许带】。下面「不许自己编数字」那条是硬规矩
+      //    （见 :2020 附近：「可以说好一阵，不要说二十三分钟」）；这里写「大概 6 小时」
+      //    等于我们自己先编了一个，模型会把它当真值复述出去。
+      const pe = PHASES.findIndex(p => p.k === end.phase);
+      const ps = PHASES.findIndex(p => p.k === start.phase);
+      if (pe < 0 || ps < 0 || pe <= ps) return '';
+      const step = pe - ps;
+      const word = step <= 1 ? '个把钟头' : step <= 3 ? '几个钟头' : step <= 5 ? '大半天' : '一整天';
+      return '\n【时间过去了】\n'
+        + '上一条是 **' + mk(start) + '**，现在是 **' + mk(end) + '** —— 大概过了' + word + '。\n'
+        + '（这个跨度是按时段估的，没有精确到小时。按这个大概来写就行，不要算出一个具体分钟数。）';
+    }
     const m = minOf(end) - minOf(start);
     if (m <= 0) return '';
     gap = m >= 60
@@ -1717,7 +1739,10 @@ export function buildTurnNote(char, s, ctx = {}) {
           vision = false,
           // 绝对指令（0.5.3.7）：他挂上的那一句死命令（app.js 的 hardCmd，角色级、跨轮）。
           // 空串 = 没挂，整段不出现 —— 没挂的提示词与 0.5.3.6 逐字相同。
-          hardCmd = '' } = ctx;
+          // 续写（0.5.8.5）：这一轮是「接着往下写」还是「回他一句」。
+           // 只用来在有跨度时补一句「这段空档可以先带过去」，别的段落不读它。
+           cont = false,
+           hardCmd = '' } = ctx;
   const parts = [];
   // ⚠️ 世界书放在【本轮段最前面】（v1.20.20 调整）。
   //
@@ -2016,6 +2041,16 @@ export function buildTurnNote(char, s, ctx = {}) {
       + (gapText && !gapBack
         ? `· 隔了这么久，手头那件小事（洗澡、吃饭、走路）通常已经做完了——别把一个动作停在上一次那一下。`
           + `  但他要是明说还在做，就以他说的为准。\n`
+        : '')
+      // v0.5.8.5：续写时明确「这段空档可以先带过去」。
+      //
+      // ⚠️ 和 CONT_NUDGE（app.js:412，塞在 user 消息里的「接着上一段，不要重复已经写过的」）
+      //    不冲突：那条说的是【别复述】，这条说的是【可以跳过一段没写的时间】，方向不同。
+      //    要防的是模型把它读成「可以复述刚才」—— 所以措辞里不出现「重复」的反面。
+      // ⚠️ 只在有跨度时给：没有 gapText 时这句没有前提，反而成了「随便跳时间」的许可。
+      + (gapText && !gapBack && cont
+        ? `· 上一条到这一条之间有一段没写。**这一条可以先把这段时间里的变化带过去** ——`
+          + `  「接着往下写」是从这段空档之后接着写，不是从上一句最后一个字接着写。\n`
         : '')
       + `· ⚠️ 【不要自己编数字】。他没说多久，你就不要替他算出一个具体分钟数。`
       + `  可以说「好一阵」，不要说「二十三分钟」。\n`

@@ -46,7 +46,8 @@ export const MOVE_NAME = MOVE_CN;
 export const LENGTHS = ['short', 'normal', 'long'];
 
 /** 判断调用的输出上限。JSON 有 400 字就够，给 700 是留思考的余量。 */
-// ⚠️ 700 在真模型上会截断（0.5.3.7 真 key 实测）：这张 JSON 有十五个字段，
+// ⚠️ 700 在真模型上会截断（0.5.3.7 真 key 实测）：这张 JSON 有【二十个】字段
+// （0.5.3.7 时是十五个，v2 又加了 secret / selfEvent / boundary / revealSecret / unbelieve），
 // deepseek-flash 会替每个都认真写一句话，写到 inner 就用完了，`}` 永远等不到 →
 // parseDirector 返回 null → 这一轮退回老路径（独白还在，判断层整层丢）。
 // 1100 留出余量；真被截断还有 salvageDirector 兜底。
@@ -71,6 +72,7 @@ const ASK = [
   '',
   '{',
   '  "reading": "你怎么理解他这一轮发来的东西（一句，具体到这一轮，不要通稿）",',
+  '  "now": "你此刻在哪、什么姿势、手里有什么（一句，15~30 字）；没动就照抄上一轮那句",',
   '  "confidence": 0.5,',
   '  "sting": "被戳中的地方；没有就空串",',
   '  "inner": "你这一轮心里最想说的那一句（第一人称，一句话，不超过 60 字）；想不出就空串",',
@@ -105,6 +107,10 @@ const ASK = [
   '- boundary 是你这一轮不吃的那一套（比如"别拿这种玩笑试探我""别替我安排"）。踩上去你会真的不高兴，不用哄好。',
   '- revealSecret 只能从 secret 里挑一件：对方这一轮真的问到了、或者你自己想赌一把，才填。',
   '- unbelieve 只能从「你心里认定的」里挑一条，而且照抄原文：这一轮你真的想通了、或者被对方说破，才填。别为了「有点新东西」而撤一条。',
+  '- now 是「你现在在哪、摆着什么姿势、手里有什么」，从聊天记录里读，不要编。',
+  '  跟上一轮那句几乎一样就【照抄】，一个字都不用改 —— 位置和姿势是一点点挪的，',
+  '  每轮换个说法等于你每轮都在瞬移。真的动了、动到哪了，才改。',
+  '  聊天记录里没写你在哪，就照抄上一轮；上一轮也没有，就写你从这一轮的话里读得出的那个位置，读不出就留空。',
   '- 不要为了显得有内容而编细节。想不出就留空。'
 ].join('\n');
 
@@ -115,7 +121,7 @@ const FENCE_RE = new RegExp(FENCE + '(?:json)?\\s*([\\s\\S]*?)' + FENCE, 'i');
 /**
  * 从【被截断的 JSON】里抢救判断。
  *
- * 真 key 实测（0.5.3.7）：这条 JSON 十五个字段，模型写到 inner 就被 max_tokens 截断，
+ * 真 key 实测（0.5.3.7）：这条 JSON 当时十五个字段，模型写到 inner 就被 max_tokens 截断，
  * 整个对象不闭合。整轮作废的代价是【判断层整层丢失】（独白还有，mood/move/withhold
  * 全没），而 pick 类的东西往往早就写出来了。
  *
@@ -125,7 +131,8 @@ const FENCE_RE = new RegExp(FENCE + '(?:json)?\\s*([\\s\\S]*?)' + FENCE, 'i');
 function salvageDirector(s) {
   if (s.indexOf('{') < 0) return null;
   const out = {};
-  const STR = ['reading', 'sting', 'inner', 'goal', 'blockedBy', 'move', 'length', 'risk', 'callback'];
+  // now（0.5.8.4）排在 reading 后面，截断是从尾巴丢的，它几乎总能救回来。
+  const STR = ['reading', 'now', 'sting', 'inner', 'goal', 'blockedBy', 'move', 'length', 'risk', 'callback'];
   for (const k of STR) {
     const m = s.match(new RegExp('"' + k + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'));
     if (m) out[k] = m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ');
@@ -221,6 +228,10 @@ export function normalizeDirector(raw) {
   const st = raw.stance && typeof raw.stance === 'object' ? raw.stance : {};
   const out = {
     reading: cut(raw.reading, 80),
+    // 她此刻在哪、什么姿势（0.5.8.4）。40 字够一句「沙发边，站着，手里拎着塑料袋」。
+    // ⚠️ 这个字段【不进 psyche】（见 app.js 的 pose key 注释），也不进 psychePrompt ——
+    //    它只在【提取成功的那一轮】进正文提示词，失败就是空，绝不沿用旧值。
+    now: cut(raw.now, 40),
     confidence: num(raw.confidence, 0, 1, 0.5),
     sting: cut(raw.sting, 60),
     inner: cut(raw.inner, 60),
@@ -384,10 +395,11 @@ export function shouldDirect(o) {
  * @param {Array<string>} [o.roster] v2：在场的人名（群聊点名用）
  * @param {string} [o.target]      v2：这一轮该谁说话（群聊里 move/mood 只作用在他身上）
  * @param {Array<string>} [o.plot] v0.5.7.1：用户给的「剧情方向」，这一轮的局面已经定好的部分
+ * @param {string} [o.prevPose] v0.5.8.4：上一轮记下的位置/姿势。只作【提取的输入】，不进正文提示词。
  * @returns {Promise<object|null>} 归一后的判断结果；失败/被中断一律 null
  */
 export async function runDirector(o) {
-  const { stable, recent, userText, psyche, api, signal, roster, target, plot } = o || {};
+  const { stable, recent, userText, psyche, api, signal, roster, target, plot, prevPose } = o || {};
   if (!api || !api.apiKey) return null;
   if (signal && signal.aborted) return null;
 
@@ -442,11 +454,28 @@ export async function runDirector(o) {
       + '（这不是台词，是这一轮已经成立的事实。你的 reading 必须从这里读，'
       + '不许换成别的理解；你想干什么、这一轮怎么接，都往这个方向走。）\n\n';
   }
+  // 「上一轮你在哪」（0.5.8.4）：姿势的惯性。
+  //
+  // 为什么必须给：不给的话它每轮都从聊天记录重新猜一个位置，而它猜出来的东西要写进
+  // 正文提示词 —— 于是同一场戏里她一会儿在沙发边、一会儿在门口。给了之后指令里
+  // 要求「没动就照抄」，位置才会跟着剧情一点点挪。
+  //
+  // ⚠️ 这是【上一轮】的值，可能已经过时（这一轮聊天记录里她走了）。
+  //    所以措辞里写清「以聊天记录为准」，并且这一块只进【判断调用】，不进正文 ——
+  //    过时的位置一旦进正文，就是「她明明站着，提示词说她躺着」那个病本身。
+  let poseBlock = '';
+  const _pp = String(prevPose == null ? '' : prevPose).trim();
+  if (_pp) {
+    poseBlock = '# 上一轮记下的位置\n'
+      + _pp + '\n'
+      + '（这是上一轮记下的，不一定还准。聊天记录里已经动过了，就以聊天记录为准，改过来；'
+      + '没动就照抄这一句，别换个说法。）\n\n';
+  }
   // 顺序：局面 → 状态 → 谁在回 → 指令。
   // 先把「这一轮是什么」定死，再给「我此刻是什么状态」，最后才问「你怎么读」。
   // 反过来（状态在前）等于先塞一个待完成的目标、再告诉她局面变了 ——
   // 模型容易读成「我想问明白，可局面是她开始怀疑自己」，两个意图互相拉扯。
-  msgs.push({ role: 'system', content: plotBlock + (psyBlock ? psyBlock + '\n\n' : '') + whoBlock + ASK });
+  msgs.push({ role: 'system', content: plotBlock + (psyBlock ? psyBlock + '\n\n' : '') + poseBlock + whoBlock + ASK });
 
   let out = '';
   try {

@@ -713,9 +713,24 @@ const LIFE_SLOTS = [
   { from: 10, to: 12, act: ['在工作/上课', '在忙，顾不上别的', '在等人'], busy: true, energy: 0.8 },
   { from: 13, to: 14, act: ['在吃饭', '刚吃完，懒着', '在午休'], busy: false, energy: 0.8 },
   { from: 15, to: 18, act: ['在忙', '在收拾东西', '在外面'], busy: true, energy: 0.8 },
-  { from: 19, to: 22, act: ['刚回家', '在洗澡', '躺着，不想动', '在吃晚饭'], busy: false, energy: 0.7 },
+  // ⚠️ v0.5.8.4：这一档删掉了「在洗澡」。它不是被谁写进卡里的，是这张表里的一行，
+  //    每轮原样拼进「你本来在做这件事：X」—— 用户聊着袋子，回复却写「我头发还湿着」，
+  //    查卡、查世界书、查备份全都查不到，只能从这里来。同类词不要再往里加：
+  //    凡是【带身体状态、会被写进开场】的具体活动（洗澡 / 刚剪完指甲 / 敷着面膜），
+  //    都会像这样冒出来。要作息，就写「刚回家」「躺着，不想动」这种不带身体动作的。
+  { from: 19, to: 22, act: ['刚回家', '躺着，不想动', '在吃晚饭'], busy: false, energy: 0.7 },
   { from: 23, to: 24, act: ['准备睡了', '在关灯', '还没困'], busy: false, energy: 0.4 }
 ];
+
+/**
+ * 内置作息表的【只读副本】（0.5.8.4）：给设置页填默认值用。
+ *
+ * ⚠️ 返回的是副本，不是原表：设置页会把候选词填进七个文本框，那里改一个字
+ *    就会顺着引用改到全局默认表 —— 用户点开设置页什么都没做，所有人的表都变了。
+ * ⚠️ 设置里存的是【稀疏】的覆盖（只存改过的段，见 deriveLife 的 ctx.slots）：
+ *    这里给的只是"没配过的时候长什么样"。
+ */
+export const LIFE_SLOT_DEFS = LIFE_SLOTS.map(s => ({ from: s.from, to: s.to, act: s.act.slice() }));
 
 /** 某个钟点落在哪个槽。越界一律落到深夜槽（宁可当她睡了，也不当她清醒着敷衍你）。 */
 function lifeSlot(hour) {
@@ -732,8 +747,15 @@ function lifeSlot(hour) {
  * 为什么每轮现算而不是存下来：作息是钟点的函数，存下来就会过夜过期 ——
  * 早上八点她还"在被窝里躺着，还没睡"，就露馅了。只把结果写回 psyche.life 供 UI 显示。
  *
+ * ⚠️ v0.5.8.4 两条语义，别搞反：
+ *    ① ctx.override 只换【做什么】（act），不换 busy / energy —— 那两个决定回车速度和语气，
+ *       整槽替换会让「在工作」那一段忽然回得又快又长。见 LIFE_SLOTS 上面那段 ⚠️。
+ *    ② ctx.lifeSelf === false 时 activity 在【这里】就清空，不是在 lifeLine 里清。
+ *       因为 activity 还有另外两条消费者（主动开场 app.js:2276、预写池 app.js:2511），
+ *       只在 lifeLine 清的话，那两条照样把「你现在：在洗澡」写进一条会进历史的消息。
+ *
  * @param {any} psyche
- * @param {{now?:number, hour?:number, char?:any, lastMsgAt?:number, rnd?:()=>number, override?:any}} ctx
+ * @param {{now?:number, hour?:number, char?:any, lastMsgAt?:number, rnd?:()=>number, override?:any, lifeSelf?:boolean, slots?:Record<string,string[]>}} ctx
  * @returns {{activity:string, busy:boolean, energyNow:number, lastSeenAt:number}}
  */
 export function deriveLife(psyche, ctx = {}) {
@@ -741,13 +763,35 @@ export function deriveLife(psyche, ctx = {}) {
   const hour = Number.isFinite(Number(ctx.hour)) ? Number(ctx.hour) : new Date(now).getHours();
   const rnd = typeof ctx.rnd === 'function' ? ctx.rnd : Math.random;
   const ov = ctx.override && typeof ctx.override === 'object' ? ctx.override : null;
-  const slot = ov || lifeSlot(hour);
-  const act = Array.isArray(slot.act) && slot.act.length ? slot.act : ['在忙'];
-  const activity = act[Math.min(act.length - 1, Math.floor(rnd() * act.length))] || act[0];
-  let busy = !!slot.busy;
+  const base = lifeSlot(hour);
+  // 候选词从哪来，优先级从高到低：
+  //   ① ctx.slots[档位起始小时]  用户在设置里自己配的那一段（空数组 = 这一段不写）
+  //   ② ctx.override.act         调用方临时给的
+  //   ③ 内置表
+  //
+  // ⚠️ ctx.slots 是【稀疏】的：只存用户改过的段。没改过的段落在库里根本没有这个键，
+  //    于是继续走内置表 —— 这样以后内置表改词，没配过的人会跟着改。
+  //    如果存成整份副本，那些人的表就永远冻在改动那一天（这和「在洗澡」那件事是同一种病：
+  //    表的内容藏在没人看得见的地方，改一次就漂一次）。
+  const usr = (ctx.slots && typeof ctx.slots === 'object') ? ctx.slots : null;
+  const hasUsr = usr ? Object.prototype.hasOwnProperty.call(usr, String(base.from)) : false;
+  let actSrc = (Array.isArray(base.act) && base.act.length) ? base.act : ['在忙'];
+  if (ov && Array.isArray(ov.act)) actSrc = ov.act;
+  if (hasUsr) actSrc = Array.isArray(usr[String(base.from)]) ? usr[String(base.from)] : [];
+  const actList = actSrc.map(x => cut(x, 20)).filter(Boolean);
+  const picked = actList.length
+    ? (actList[Math.min(actList.length - 1, Math.floor(rnd() * actList.length))] || actList[0])
+    : '';
+  // busy / energy 永远从【内置档】来，override 给不给都不影响 —— 除非显式传了合法的值。
+  let busy = (ov && typeof ov.busy === 'boolean') ? ov.busy : !!base.busy;
   // 忙不忙是随机的：同一个时段她不会每轮都在忙，也不会每轮都闲着。
   if (busy && rnd() >= 0.5) busy = false;
-  const energyNow = num(slot.energy, [0, 1], 0.7);
+  const energyNow = (ov && Number.isFinite(Number(ov.energy)))
+    ? num(ov.energy, [0, 1], 0.7)
+    : num(base.energy, [0, 1], 0.7);
+  // 总开关：关掉 = 这句话整段不写。在【产出层】清空（理由见上面函数注释的 ②）。
+  // busy / energyNow 照常给：planCadence 吃这两个，跟「说不说她在做什么」是两件事。
+  const activity = ctx.lifeSelf === false ? '' : picked;
   return { activity: cut(activity, 20), busy, energyNow, lastSeenAt: now };
 }
 

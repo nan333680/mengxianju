@@ -37,7 +37,7 @@ import { STARTER_CARD, STARTER_HOOK } from './starter.js';
 import { normalizeStyleCard } from './stylecard.js';
 // Psyche v1（0.5.3.6）：跨轮的心理状态 + 每轮的判断层。
 // 两处都只在 send() 里用；任何一个坏了都必须能退回老路径（见 send 里那段注释）。
-import { normalizePsyche, emptyPsyche, decayPsyche, applyPsycheDelta, psycheActive, psychePrompt, deriveLife, relationLine, applyRelation, lifeLine } from './psyche.js';
+import { normalizePsyche, emptyPsyche, decayPsyche, applyPsycheDelta, psycheActive, psychePrompt, deriveLife, relationLine, applyRelation, lifeLine, LIFE_SLOT_DEFS } from './psyche.js';
 // ⚠️ MOVE_NAME 不能删：评审撤了，但「这一轮用了什么」那个面板还在用它把 move 翻成中文
 //    （app.js 的 inj 面板）。上一版按「评审撤了它就没用了」删过一次，tsc 当场报
 //    TS2304 Cannot find name 'MOVE_NAME' —— 那是条会真炸的 ReferenceError，不是类型噪音。
@@ -180,6 +180,22 @@ const DEFAULTS = {
   // ⚠️ 只有两档（用户 m02892 第 2 条：开/关，直接管理全部），没有「只开一半」。
   // ⚠️ 判空一律写 `S.liveV2 !== false`：老库里没有这个键，undefined 必须当成【开】。
   liveV2: true,
+  // —— 「角色自己的生活」（0.5.8.4）——
+  // 它原本是 psyche.js 里一张写死的作息表，每轮无条件拼进「你本来在做这件事：X」，
+  // 不受 liveV2 管（那个开关关着也照样给，见下面 lifeLine 那段注释）。
+  // 用户的实际遭遇：聊着袋子里有什么，回复写「我头发还湿着」—— 查卡、查世界书、查备份
+  // 全查不到，因为它是代码里的一行。所以这一版把它挖出来：能看、能改、能关。
+  //
+  // ⚠️ 默认【开】：它原本就是无条件生效的，默认关等于静默改掉所有老角色的行为。
+  //    判空一律写 S.lifeSelf !== false（和 liveV2 同惯例，老库里没这个键）。
+  // ⚠️ 关掉只关【那句话】，不关 busy / energy —— 那两个决定回车速度和语气（planCadence
+  //    直接吃这两个数），和「要不要说出她在做什么」是两件事。见 deriveLife 的注释。
+  lifeSelf: true,
+  // 作息表的【稀疏覆盖】：key = 档位的起始小时（'0' / '7' / '10' / '13' / '15' / '19' / '23'），
+  // value = 候选词数组（一行一个）。空数组 = 这一段不写。
+  // ⚠️ 只存用户在设置页改过的段 —— 没改过的段落在库里没有这个键，继续用内置表。
+  //    存成整份副本的话，以后内置表改词，这些人的表就永远冻在改动那一天。
+  lifeSlots: {},
   typingDelay: 1.0, showTyping: true, hesitation: true,
   longMemory: false, theme: 'dark', themeColor: 'violet', fontSize: 15, showUsage: false,
   // 聊天背景（v0.5.7.4）：暗化默认 50 —— 给 0 的话第一次选完背景会被自己的照片晃到眼。
@@ -8460,7 +8476,10 @@ let namedInText = false;
       // 按真实钟点算出「在被窝里躺着」，她就只能写出「中午在被窝里」。
       // ⚠️ 这个值必须和下面 lifeRndFor 的第二个参数是同一个，否则种子和档位错开。
       const _lifeHour = storyHourFor(myChar.id);
-      psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: _now0, hour: _lifeHour, char: myChar, rnd: lifeRndFor(myChar.id, _lifeHour) }) });
+      // v0.5.8.4：lifeSelf 在【产出层】生效（deriveLife 里清空 activity），不是在这里清 ——
+      // 因为 activity 还有主动开场（app.js 下面的 proactiveAsk）和预写池两条消费者。
+      // S.lifeSlots 是稀疏的用户覆盖：只存他在设置页改过的段，没改过的继续用内置表。
+      psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: _now0, hour: _lifeHour, char: myChar, rnd: lifeRndFor(myChar.id, _lifeHour), lifeSelf: S.lifeSelf !== false, slots: S.lifeSlots }) });
     } catch { /* 推导失败就沿用读到的旧生活状态，不影响下面的判断 */ }
 
     if (LIVE && S.apiKey) {
@@ -8468,6 +8487,15 @@ let namedInText = false;
       //    两个都有兜底（独白拿不到就用判断层那句，判断拿不到就退回老路径），
       //    所以宁可早点放弃，也不让人盯着空白气泡。
       const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 12000 };
+      // 「上一轮记下的位置」（0.5.8.4）：给判断层当惯性用。
+      // ⚠️ 它只进【判断调用】，绝不进正文提示词（正文只认本轮拿到的 now）。
+      //    过时的位置一旦进正文，就是「她明明站着、提示词说她躺着」那个病。
+      const poseKey = 'pose:' + myChar.id;
+      let prevPose = '';
+      try {
+        const pv = await kv.get(poseKey, null);
+        prevPose = String((pv && pv.text) || '').trim();
+      } catch { prevPose = ''; }
       const recentForJudge = (pastRaw || []).slice(-12).map(m => ({ role: m.role, content: m.content }));
       // 独白和判断没有先后依赖 —— 串行就是白等一倍。两个都失败也能继续。
       const [innerGot, dirGot] = await Promise.all([
@@ -8487,11 +8515,27 @@ let namedInText = false;
           // 之前它只传给 buildTurnNote，也就是【只进正文那一趟】—— 判断层看不见，
           // 于是判断层只能从 recent 里找线索，而 recent 里全是她自己在问。
           // 方向是动作就照做，方向是心理就被 reading 吃掉（见 director.js 那段注释）。
-          plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg)
+          plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
+          // 上一轮的位置（只作提取输入，见上面 poseKey 那段注释）
+          prevPose
         }).catch(err => { console.warn('[director] 外层兜底：' + ((err && err.message) || err)); return null; })
       ]);
       innerText = String(innerGot || '');
       psyDir = dirGot || null;
+      // 「你此刻在哪」（0.5.8.4）：本轮拿到了就写库，给下一轮当惯性输入。
+      //
+      // ⚠️ 没拿到【不覆盖】库里那一条，只把它标成 stale：
+      //    下一轮还需要它当提取器的参照（不给的话，模型每轮都重新猜一个位置，
+      //    比现在更乱）。但 stale 的值【永远不进正文提示词】——
+      //    正文那一侧读的是 psyDir.now（本轮），见下面 buildTurnNote 的 pose 参数。
+      try {
+        const nowPose = String((psyDir && psyDir.now) || '').trim();
+        if (nowPose) await kv.set(poseKey, { text: nowPose, at: Date.now() });
+        else {
+          const old = await kv.get(poseKey, null);
+          if (old && old.text && !old.stale) await kv.set(poseKey, { ...old, stale: true });
+        }
+      } catch (err) { console.warn('[pose] 写库失败：' + ((err && err.message) || err)); }
     }
     // 独白兜底：独白那次没回来时，用判断层写下的那一句（只有 60 字，但总比没有强）。
     if (!innerText && psyDir && psyDir.inner) innerText = psyDir.inner;
@@ -8527,6 +8571,10 @@ let namedInText = false;
       // 而实测用户把 v2 关了（liveV2=false），这段提示词就从来没进过上下文。
       // 它只是纯本地一行字，不额外调用模型，v2 关着也照样给。
       lifeLine: lifeLine(psyBefore),
+      // 「你此刻在哪」（0.5.8.4）：判断层这一轮顺手记下的位置/姿势。
+      // ⚠️ 只认【本轮】的值。判断失败 / 没写 now 时是空串，那一段整段不出现 ——
+      //    不拿库里那条 stale 兜底（那样就等于把「她明明站着、提示词说她躺着」搬回来）。
+      pose: (LIVE && psyDir && psyDir.now) ? psyDir.now : '',
       // 「解释型的问」防自污染（0.5.4.1 补）：上一轮她的原话里有没有「先撇清再问」那种写法。
       // 有就把命中的片段点名给她看（persona 那边注入一段），没有就是空数组、那一段整段不出现。
       // ⚠️ 不挂 LIVE 开关：这和 stable 里那几条反客服腔的规则是一组 ——
@@ -8650,6 +8698,10 @@ let namedInText = false;
       // 之前这里没有它，出问题只能靠回复反推；有了它，改完之后翻任何一轮
       // 都看得见当时的 lifeLine 到底是什么，验证才有落点。
       life: _cut(lifeLine(psyBefore), 40),
+      // 「你此刻在哪」（0.5.8.4）：判断层这一轮记下的位置/姿势。
+      // 和上面 life 那格并排显示，用户能一眼看出「按钟点推的处境」和「聊天记录里的实际位置」
+      // 差在哪 —— 症状 B（她站着、提示词说躺着）就是这两格打架。
+      pose: _cut((LIVE && psyDir && psyDir.now) || '', 40),
     };
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -12281,9 +12333,22 @@ async function showInj(inj) {
   // ---- 活人感 v2：她这一轮本来在做的事 ----
   // 它每轮都在提示词里，而且是【按钟点推】的 —— 钟点错一格，她就会写出
   // 「中午在被窝里」那种开头。放在「她脑子里」后面：先看她怎么想的，再看她站在哪儿。
+  //
+  // v0.5.8.4：
+  // ① 标题「她本来在做」→「角色本来在做」：角色可能是男性（软件里本来就有他/她/TA/它四档），
+  //    弹窗上写死「她」等于替所有角色认了性别。
+  // ② 下面那行小字：用户的原话是「软件里也看不到相关的也改不了」。改，是设置页的事；
+  //    这一句补的是「它从哪来」—— 不然他下次换个角色又得重问一遍。
+  // ③ 「角色此刻」那一格：判断层从聊天记录里提取的位置。和上面那格并排，
+  //    就是因为这两格打架正是这一版要治的病（她站着、上面那格说躺着）。
   if (inj.life) {
-    secs.push('<h4 class="inj-h">' + esc(tt('她本来在做')) + '</h4>'
-      + '<div class="inj-row">' + esc(String(inj.life)) + '</div>');
+    secs.push('<h4 class="inj-h">' + esc(tt('角色本来在做')) + '</h4>'
+      + '<div class="inj-row">' + esc(String(inj.life)) + '</div>'
+      + '<i class="inj-why">' + esc(tt('这是软件按时段配的处境，不是角色卡的设定。要改去「角色自己的生活」。')) + '</i>');
+  }
+  if (inj.pose) {
+    secs.push('<h4 class="inj-h">' + esc(tt('角色此刻')) + '</h4>'
+      + '<div class="inj-row">' + esc(String(inj.pose)) + '</div>');
   }
   if (inj.arc) {
     const ai = (Number(inj.arc.i) || 0) + 1;
@@ -18635,6 +18700,59 @@ function bindSettings() {
       (ok ? '' : '（原生那侧没响应，可能本来就没启用）'), 4200);
   };
 
+  // —— 「角色自己的生活」（0.5.8.4）——
+  // 七个时段各一个文本框，一行一个候选词；留空 = 这一段不写。
+  //
+  // ⚠️ 文本框里显示的是【生效值】：改过的段用他存的数组，没改过的段显示内置表。
+  //    保存时反过来 —— 跟内置表一字不差的段不写进设置（把这个键删掉），
+  //    这样以后内置表改词，没配过的人会跟着改（见 DEFAULTS.lifeSlots 的注释）。
+  function linesSame(a, b) {
+    return a.length === b.length && a.every((x, i) => x === b[i]);
+  }
+  function renderLifeSlots() {
+    const box = $('s-life-slots');
+    if (!box) return;
+    const cur = (S.lifeSlots && typeof S.lifeSlots === 'object') ? S.lifeSlots : {};
+    const on = S.lifeSelf !== false;
+    box.innerHTML = LIFE_SLOT_DEFS.map(slot => {
+      const key = String(slot.from);
+      const has = Object.prototype.hasOwnProperty.call(cur, key);
+      const arr = has ? (Array.isArray(cur[key]) ? cur[key] : []) : slot.act;
+      // 23-24 那一档其实只有 23 点（lifeSlot 按 hh <= to 判，24 点不存在）
+      const span = slot.to >= 24 ? (slot.from + ' 点') : (slot.from + '–' + slot.to + ' 点');
+      return '<div class="field life-slot" data-i18n-nodes>'
+        + '<span>' + esc(span) + '</span>'
+        + '<textarea class="profile-box" rows="3" spellcheck="false" data-life-slot="' + esc(key) + '"'
+        + (on ? '' : ' disabled') + '>' + esc(arr.join('\n')) + '</textarea>'
+        + '</div>';
+    }).join('');
+    box.querySelectorAll('textarea[data-life-slot]').forEach(ta => {
+      ta.onchange = async () => {
+        const key = ta.dataset.lifeSlot;
+        const lines = ta.value.split('\n').map(x => x.trim()).filter(Boolean);
+        const def = (LIFE_SLOT_DEFS.find(s => String(s.from) === key) || { act: [] }).act;
+        const next = { ...((S.lifeSlots && typeof S.lifeSlots === 'object') ? S.lifeSlots : {}) };
+        // 改回和内置表一模一样 → 删掉这个键，回到「跟着内置表走」
+        if (linesSame(lines, def)) delete next[key];
+        else next[key] = lines;
+        await saveSettings({ lifeSlots: next });
+        renderLifeSlots();
+      };
+    });
+  }
+  if ($('s-lifeself')) {
+    $('s-lifeself').checked = S.lifeSelf !== false;
+    $('s-lifeself').onchange = async e => {
+      const on = !!e.target.checked;
+      await saveSettings({ lifeSelf: on });
+      toast(on
+        ? '角色自己的生活已打开：从下一条开始，会写「角色本来在做什么」'
+        : '角色自己的生活已关掉：以后不再写这一句（打字节奏和语气不受影响）', 3600);
+      renderLifeSlots();
+    };
+    renderLifeSlots();
+  }
+
   // 时间细化（全局）：控制聊天栏是否显示时:分、记忆能否设到小时
   $('s-clock-detail').checked = !!S.clockDetail;
   // 描写详细程度（v1.21.31）：全局档。点开弹窗选。
@@ -22305,7 +22423,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.8.3';
+const WEB_VERSION_FALLBACK = '0.5.8.4';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

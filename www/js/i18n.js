@@ -516,7 +516,14 @@ const EXTRA_ZH = {
   '这一轮她心里': 'Inside her this turn',
   // v0.5.5.4：检查器新增的一段（她这一轮本来在做的事，见 app.js 的 inj.life）。
   // 不登记的话英文界面下这一段标题会漏成中文 —— i18n-report 扫不到动态拼接的串。
-  '她本来在做': 'What she was doing',
+  //
+  // v0.5.8.4：'她本来在做' → '角色本来在做'。角色可能是男性（软件有人称四档），
+  // 弹窗上写死「她」等于替所有角色认了性别。旧 key 一并删掉：全仓只有 app.js 一处用它。
+  '角色本来在做': 'What the character was doing',
+  // v0.5.8.4：检查器里「从聊天记录提取到的位置」那一格 + 时段处境那行小字。
+  '角色此刻': 'Where the character is now',
+  '这是软件按时段配的处境，不是角色卡的设定。要改去「角色自己的生活」。':
+    'Picked by the app from the time of day — not part of the character card. Change it under "The character\'s own life".',
   // ⚠️ v0.5.6 补：检查器的标题一直是裸中文（`showInj` 里 tt('这一轮用了什么')）。
   //    这不是这一版引入的 —— showInj 从 0.5.1.1 就在用这句，而英文表里从来没有它，
   //    英文界面点开检查器看到的是中文标题。顺带 `app.js:3206` 长按菜单那一项也用它。

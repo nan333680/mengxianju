@@ -17,8 +17,10 @@
  *    这种碎片，喂给模型等于噪音。
  */
 
-/** 只在括号里找 —— 动作描写在括号里，说出口的话不算「动作惯性」 */
+/** 老格式（0.5.8.6 之前）：动作描写在括号里，说出口的话不算「动作惯性」 */
 const PAREN_RE = /[（(]([^）)]*)[）)]/g;
+/** 新格式（0.5.8.6 起）：说出口的话在引号里，引号外面才是叙述 */
+const QUOTE_RE = /[“”][^“”]*[“”]/g;
 
 /** 切标点：n-gram 不许跨过它 */
 const SEPS = /[，。！？…、；：""''「」『』（）()\-—~\s\u3000]/;
@@ -41,24 +43,45 @@ const HEAD_STOP = /^[在的了着把被往从和与就都也还又很太再才�
 /** 任何长度：尾字是这些助词/语气词，片段就停在半个词上 */
 const TAIL_STOP = /[的了着地得呗呢吧啊啦呀]$/;
 
+/**
+ * 这条消息里【能被当成动作惯性】的那部分。
+ *
+ * ⚠️ 0.5.8.6（引号格式）：必须按【格式】分流，不能只把一条正则换个范围。
+ *    新格式下她不再写括号 —— 老的「只扫括号」会让她每一条新消息都返回空集，
+ *    findCliches 恒为 []，「这几样这一轮别再用」永远不会注入（app.js:8245）。
+ *    而且它坏得【没有声音】：e2e 的 seed 是括号写的，照样绿。
+ *
+ * 分流判据是「有没有弯引号」：
+ *   · 有   → 新格式：把引号里的台词挖掉，剩下的全是叙述，参与统计
+ *   · 没有 → 老格式：仍然只扫括号里（行为一个字都不变，老历史照旧能抓到）
+ *
+ * 为什么不统一成「只扫引号外」：老消息里括号外的那些字是【台词】，
+ * 一起算进去会让「别再用」里冒出一堆台词片段，比失效更烦人。
+ */
+function narOf(text) {
+  const s = String(text || '');
+  if (/[“”]/.test(s)) return s.replace(QUOTE_RE, ' ');
+  const parts = [];
+  PAREN_RE.lastIndex = 0;
+  let m;
+  while ((m = PAREN_RE.exec(s))) parts.push(m[1]);
+  return parts.join(' ');
+}
+
 /** 一条消息里所有可参与计数的片段（去重，同一条里重复出现只算 1 次） */
 function gramsIn(text) {
   const out = new Set();
-  PAREN_RE.lastIndex = 0;
-  let m;
-  while ((m = PAREN_RE.exec(text))) {
-    for (const seg of m[1].split(SEPS)) {
-      if (seg.length < 4) continue;
-      for (let n = 4; n <= 6; n++) {
-        for (let i = 0; i + n <= seg.length; i++) {
-          const g = seg.slice(i, i + n);
-          if (!/[\u4e00-\u9fff]/.test(g)) continue;
-          if (STOP_HEAD.some(p => g.startsWith(p))) continue;
-          if (TAIL_STOP.test(g)) continue;
-          if (HEAD_STOP.test(g)) continue;
-          if (/(.)\1{2,}/.test(g)) continue;
-          out.add(g);
-        }
+  for (const seg of narOf(text).split(SEPS)) {
+    if (seg.length < 4) continue;
+    for (let n = 4; n <= 6; n++) {
+      for (let i = 0; i + n <= seg.length; i++) {
+        const g = seg.slice(i, i + n);
+        if (!/[\u4e00-\u9fff]/.test(g)) continue;
+        if (STOP_HEAD.some(p => g.startsWith(p))) continue;
+        if (TAIL_STOP.test(g)) continue;
+        if (HEAD_STOP.test(g)) continue;
+        if (/(.)\1{2,}/.test(g)) continue;
+        out.add(g);
       }
     }
   }

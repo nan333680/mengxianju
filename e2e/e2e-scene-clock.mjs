@@ -295,7 +295,7 @@ console.log('=== 5. 括号的第三类：旁白和剧本（m00744 第 4 点）==
 {
   await offline(); await putChar({ thinkMode: true }); await enterChat();
   const sys = await send('（她把我按在床上）');
-  t('有「# 关于括号」', sys.includes('# 关于括号'));
+  t('有「# 关于引号」', sys.includes('# 关于引号'));
   t('点明第三类是旁白/剧情', sys.includes('第三种写法') && sys.includes('旁白和剧情'));
   t('要求当成既成事实接住', sys.includes('已经发生的事') && sys.includes('顺着往下演'));
   t('给了分辨办法（主语是"她/他"就是旁白）', sys.includes('环境怎么变了'));
@@ -303,7 +303,7 @@ console.log('=== 5. 括号的第三类：旁白和剧本（m00744 第 4 点）==
 
   await offline(); await putChar({ thinkMode: false }); await enterChat();
   const sys2 = await send('在吗');
-  t('关掉 → 整段不再出现', !sys2.includes('# 关于括号'));
+  t('关掉 → 整段不再出现', !sys2.includes('# 关于引号'));
 }
 
 t('全程没有页面报错', errs.length === 0, errs.slice(0, 3));

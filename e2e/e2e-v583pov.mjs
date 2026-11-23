@@ -9,15 +9,15 @@
 //   1. 视角说明里没有「她」（0.5.7.7 定的中性化口径，漏掉的那五条这一版才补上）
 //   2. 版本沿革已经删干净（「老版本的『锁定她的视角=开』」那半句）
 //   3. LENS 四档的层数锚点在、而且逐档递增
-//   4. 篇幅归 PAREN_LEN、层数归 LENS，两边不再互相越界
-import { POV_STYLE_PRESETS, POV_STYLES, LENS, PAREN_LEN, LENS_HEAD } from '../www/js/persona.js';
+//   4. 篇幅归 NARR_LEN、层数归 LENS，两边不再互相越界
+import { POV_STYLE_PRESETS, POV_STYLES, LENS, NARR_LEN, LENS_HEAD } from '../www/js/persona.js';
 
 let pass = 0, fail = 0;
 const t = (n, ok, ex = '') => { if (ok) { pass++; console.log('  OK   ' + n); } else { fail++; console.log('  FAIL ' + n + (ex ? '  -> ' + ex : '')); } };
 
 const notes = POV_STYLE_PRESETS.map(p => p.note).join('\n');
 const lensAll = ['low', 'mid', 'high', 'max'].map(k => LENS[k].join('')).join('\n');
-const parenHigh = PAREN_LEN.high.join('');
+const parenHigh = NARR_LEN.high.join('');
 const head = LENS_HEAD.join('');
 
 console.log('=== 视角说明（给人看的） ===');
@@ -39,9 +39,9 @@ t('9 max 下限四层', LENS.max.join('').includes('四层'));
 t('10 四档都没有回头用句子数当锚点', !/句子|句话/.test(lensAll));
 
 console.log('=== 两个旋钮各管一样 ===');
-t('11 LENS_HEAD 堵住了「多写几个括号」这个岔路', head.includes('不是多写几个括号'));
-t('12 PAREN_LEN.high 不再讲层', !parenHigh.includes('碰到的东西') && !parenHigh.includes('让什么变了'));
-t('13 PAREN_LEN 仍然只管长度', parenHigh.includes('一百多字'));
+t('11 LENS_HEAD 堵住了「多写几句叙述」这个岔路', head.includes('不是多写几句叙述'));
+t('12 NARR_LEN.high 不再讲层', !parenHigh.includes('碰到的东西') && !parenHigh.includes('让什么变了'));
+t('13 NARR_LEN 仍然只管长度', parenHigh.includes('一百多字'));
 
 console.log('pass=' + pass + ' fail=' + fail);
 process.exit(fail ? 1 : 0);

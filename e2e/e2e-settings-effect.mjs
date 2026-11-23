@@ -119,7 +119,7 @@ console.log('=== 1. 基线：该有的段在，不该有的段不在 ===');
   t('发出了请求', sys.length > 0);
   t('有「# 表达方式」', sys.includes('# 表达方式'));
   t('没开视角 → 没有「# 视角」', !sys.includes('# 视角'));
-  t('没开强制聊天模式 → 没有「# 关于括号」', !sys.includes('# 关于括号'));
+  t('没开强制聊天模式 → 没有「# 关于引号」', !sys.includes('# 关于引号'));
   t('没设临时场景 → 没有「# 当前场景」', !sys.includes('# 当前场景'));
   t('没设外貌 → 没有「# 你此刻的样子」', !sys.includes('# 你此刻的样子'));
   t('没写「他是谁」→ 没有「# 关于对方」', !sys.includes('# 关于对方'));
@@ -147,7 +147,7 @@ console.log('=== 3. 强制聊天模式（关于括号）===');
 {
   await putChar({ thinkMode: true }); await enterChat();
   const sys = await send('在吗');
-  t('开了就出现「# 关于括号」', sys.includes('# 关于括号'));
+  t('开了就出现「# 关于引号」', sys.includes('# 关于引号'));
   await putChar({ thinkMode: false });
 }
 

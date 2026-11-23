@@ -195,7 +195,7 @@ const off = await page.evaluate(async () => {
   const { buildStablePrompt } = await import('/js/persona.js');
   return buildStablePrompt({ persona: '你是阿灵。' }, { myProfile:'', verbosity:'medium', descLevel:'off', splitMessages:false });
 });
-t('off 时不写括号', /不要写括号/.test(off));
+t('off 时只输出引号里的台词', /只输出引号里的台词/.test(off));
 t('off 时没有「括号里写动作」那句', !/写法：括号里写动作/.test(off));
 
 console.log('');

@@ -72,8 +72,10 @@ const promptTest = await page.evaluate(async () => {
   const off = buildStablePrompt(base, { ...base, thinkMode: false });
   const on  = buildStablePrompt(base, { ...base, thinkMode: true });
   return {
-    offHas: off.includes('# 关于括号'), onHas: on.includes('# 关于括号'),
-    onText: on.slice(on.indexOf('# 关于括号'), on.indexOf('# 关于括号') + 200),
+    offHas: off.includes('# 关于引号'), onHas: on.includes('# 关于引号'),
+    // 0.5.8.6：正文变长了一点（宽松兜底那两行），切片从 200 放宽到 240 ——
+    // 不然下面「说明她听不见」那条会被截断，变成假红。
+    onText: on.slice(on.indexOf('# 关于引号'), on.indexOf('# 关于引号') + 240),
     cacheSame: (() => {
       const a = buildStablePrompt(base, { ...base, thinkMode: true });
       const b = buildStablePrompt(base, { ...base, thinkMode: true });
@@ -89,7 +91,7 @@ console.log('   注入内容: ' + promptTest.onText.replace(/\n/g,' | ').slice(0
 
 console.log('=== 4. 关键点都在提示词里 ===');
 const txt = promptTest.onText;
-t('说明她听不见括号', /听不见|听不到/.test(txt), txt.slice(0,60));
+t('说明她听不见引号外的话', /听不见|听不到/.test(txt), txt.slice(0,60));
 t('说明只能靠观察', /样子|观察|看出/.test(txt), '');
 
 console.log('=== 5. 关掉后恢复正常 ===');

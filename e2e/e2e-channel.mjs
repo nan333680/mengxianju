@@ -144,9 +144,9 @@ console.log('=== 1. 三通道进没进提示词 ===');
   const sys = await send('在吗');
   t('发出了请求', sys.length > 0);
   t('有「# 表达方式」段', sys.includes('# 表达方式'));
-  t('括号里【外面】那条在', sys.includes('括号里【外面】'));
-  t('星号里【里面】那条在', sys.includes('星号里【里面】'));
-  t('括号外【之间】那条在', sys.includes('括号外【之间】'));
+  t('引号里【说出口】那条在', sys.includes('引号里【说出口】'));
+  t('星号里【心里】那条在', sys.includes('星号里【心里】'));
+  t('引号外【叙述】那条在', sys.includes('引号外【叙述】'));
   t('说了星号怎么标（一对 * 包住）', sys.includes('整句用一对 * 包住'));
   t('说了不许用两个星号', sys.includes('不要用两个星号'));
   t('心里要具体（不是情绪标签）', sys.includes('不要写「我感到难过」这种情绪标签'));
@@ -156,7 +156,7 @@ console.log('=== 1. 三通道进没进提示词 ===');
   // 而新档位 PAREN_LEN.high 明说「一个括号可以好几句话」，两条相邻注入会互相打脸。
   // 长度归档位管，这里只断言「别把三件事挤进一个括号」这一层还在。
   t('分组那条只管「同一件事」，不再自己规定长度',
-    sys.includes('一段括号里写的要是同一件事') && !sys.includes('该有几段就几段'));
+    sys.includes('一段叙述里写的要是同一件事') && !sys.includes('该有几段就几段'));
 }
 
 console.log('');
@@ -175,9 +175,9 @@ console.log('=== 3. descLevel=off：不写括号，但心里这条通道还在 =
 {
   await putChar({ descLevel: 'off' }); await enterChat();
   const sys = await send('在吗');
-  t('还是要求不写括号', sys.includes('不要写括号里的动作/神态描写'), sys.includes('不要写括号里的动作/神态描写') ? '' : '缺 off 硬规则');
+  t('还是要求不写叙述', sys.includes('只输出引号里的台词'), sys.includes('只输出引号里的台词') ? '' : '缺 off 硬规则');
   t('off 档也说清了星号', sys.includes('星号里：你心里真正在想'));
-  t('off 档不再有「括号里【外面】」', !sys.includes('括号里【外面】'));
+  t('off 档不再有「引号里【说出口】」', !sys.includes('引号里【说出口】'));
   t('off 档不要求「看见/听见/碰到的东西」', !sys.includes('能看见/听见/碰到的东西'));
   await putChar({ descLevel: 'mid' });
 }
@@ -210,7 +210,10 @@ console.log('=== 4. 星号渲染：一对 = 斜体，两个 = 加粗，尖括号
 console.log('');
 console.log('=== 5. 朗读时不念心里话 ===');
 {
-  NEXT_REPLY = '（她把杯子放下）*这话我才不说。*「水凉了。」';
+  // ⚠️ 0.5.8.6：这里原来写的是「水凉了。」（直角引号 U+300C）—— ttsClean 只认
+  //    弯引号（U+201C/U+201D），直角写法会掉进「无引号退回老逻辑」那一支，
+  //    下面 :220/:222 仍然绿，但测的是老逻辑，新逻辑一个字都没测到。别改回去。
+  NEXT_REPLY = '（她把杯子放下）*这话我才不说。*“水凉了。”';
   await putKV({ ttsOn: true }); await enterChat();
   await page.evaluate(() => { window.__spoken = []; });
   await send('说句话');
@@ -292,7 +295,7 @@ console.log('=== 8. 去味：新回复入库前洗干净（显示和库一起干
 }
 
 console.log('');
-console.log('=== 9. 惯性动作：反复出现的括号短语进「别再用」 ===');
+console.log('=== 9. 惯性动作：反复出现的叙述短语进「别再用」 ===');
 {
   await page.evaluate(async (id) => {
     const req = indexedDB.open('ai-companion');
@@ -412,6 +415,13 @@ console.log('=== 14. 跨行的心里话也不会被念出来 ===');
 {
   // ttsClean 原来靠 INNER_RE 的 [^*\n]{1,300} 剥星号 —— 它不跨行，
   // 跨行的心里话剥不掉，剩下的 * 又被记号清理删掉，于是整段心里话变成正文被念出来。
+  //
+  // ⚠️ 0.5.8.6：这一行的「水凉了。」【必须保持直角引号】，别顺手统一成弯引号。
+  //    这一条测的是 ttsClean 的【老逻辑】能不能剥掉跨行星号，而老逻辑只在
+  //    「一个弯引号都没有」时才跑（见 ttsClean 里那个 spoken.length 判断）。
+  //    写成 “水凉了。” 就掉进新分支（只念引号内），跨行星号根本不参与 ——
+  //    这条测试会变成恒真，等于自己把自己废掉。第 5 节那条（:216）相反，
+  //    那条必须用弯引号才测得到新逻辑，两处是【故意不一样】的。
   await putKV({ ttsOn: true });
   NEXT_REPLY = '（她点头）*我' + NL + '其实不想说*' + NL + '「水凉了。」';
   await enterChat();

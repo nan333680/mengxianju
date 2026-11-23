@@ -59,7 +59,9 @@ t('有纯标点兜底正则', appSrc.includes("if (!full || /^[\\s.…。，,、
 // 用于 content 为空、话都写在 reasoning 里的情况。断言改成匹配【前缀】，不再锁死整行。
 t('兜底是上下文接话，不是通用模板', appSrc.includes('buildBlankFallback(_cmd0 ? text : visibleText, pastRaw'));
 t('兜底接他的动作', appSrc.includes('我没接话，手还停在刚才的地方'));
-t('兜底接他的话', appSrc.includes('听他说完「'));
+// 0.5.8.6（引号格式）：兜底文本改成新格式 —— 叙述不带括号、引他说的那句话用双引号。
+// 断言只认「听他说完」这四个字 + 后面那个开引号，引号形式跟着产品走。
+t('兜底接他的话', appSrc.includes('听他说完“'));
 t('兜底接她上一轮的状态', appSrc.includes('我没接他的话'));
 t('旧通用模板已删干净', !appSrc.includes('（没开口，只是看着他）') && !appSrc.includes('（安静地看着他，手还搭在原处）'));
 t('兜底有 console.warn 留痕', appSrc.includes('模型回了空白/纯标点'));

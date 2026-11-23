@@ -242,7 +242,7 @@
             <option value="epic" data-i18n-en="Long-form scene">长篇</option>
           </select>
         </div>
-        <div class="field" data-i18n-nodes><span data-i18n-en="Parentheses length (how long the parentheses may get)">括号里写多长（上限）</span>
+        <div class="field" data-i18n-nodes><span data-i18n-en="Narration length (how long it may get)">台词之外的描写写多长（上限）</span>
           <div class="seg" id="g-desc"></div>
         </div>
         <div class="field" data-i18n-nodes><span data-i18n-en="Description detail">描写详细程度</span>
@@ -534,10 +534,10 @@
           </select>
           <p class="hint-text" data-i18n-en="Every segment bills separately. On, and she keeps writing without another tap.">每段单独计费。开启后无需手动继续。</p>
         </div>
-        <div class="field" data-i18n-nodes><span data-i18n-en="Parentheses length (how long the parentheses may get)">括号里写多长（上限）</span>
+        <div class="field" data-i18n-nodes><span data-i18n-en="Narration length (how long it may get)">台词之外的描写写多长（上限）</span>
           <div class="seg" id="e-desc"></div>
         </div>
-        <p class="hint-text" data-i18n-en-html="Two separate switches: the first caps <b>how long</b> parentheses may get, the second sets <b>how close the lens gets</b>. Both follow the global setting by default.">两个<b data-i18n-en="two separate switches">各管各的</b>：上面管括号<b>能写多长</b>，下面管<b>镜头推到多近</b>。默认<b data-i18n-en="follow global">跟随全局</b>。</p>
+        <p class="hint-text" data-i18n-en-html="Two separate switches: the first caps <b>how long</b> narration may get, the second sets <b>how close the lens gets</b>. Both follow the global setting by default.">两个<b data-i18n-en="two separate switches">各管各的</b>：上面管台词之外的描写<b>能写多长</b>，下面管<b>镜头推到多近</b>。默认<b data-i18n-en="follow global">跟随全局</b>。</p>
         <div class="field" data-i18n-nodes><span data-i18n-en="Description detail">描写详细程度</span>
           <button class="pick-row slim" id="e-drive">
             <em id="e-drive-brief" data-i18n-en="Follow global">跟随全局</em>
@@ -568,7 +568,7 @@
         <div class="field" data-i18n-nodes><span data-i18n-en="Force chat mode">强制聊天模式</span>
           <div class="seg" id="e-think"></div>
         </div>
-        <p class="hint-text" data-i18n-en-html="What sits in parentheses is <b>not said out loud</b> - the character can only guess it from how you act. Characters who <b>read minds</b> by design should have this off.">括号里是你<b data-i18n-en="What was not said aloud">没说出口的</b>，角色只能靠观察猜。人设能<b data-i18n-en="Mind reading">读心</b>的角色建议关。</p>
+        <p class="hint-text" data-i18n-en-html="What sits in asterisks is <b>not said out loud</b> - the character can only guess it from how you act. Characters who <b>read minds</b> by design should have this off.">星号里是你<b data-i18n-en="What was not said aloud">没说出口的</b>，角色只能靠观察猜。人设能<b data-i18n-en="Mind reading">读心</b>的角色建议关。</p>
 
         <div class="field" data-i18n-nodes><span data-i18n-en="Web search">联网搜索</span>
           <div class="seg" id="e-search"></div>
@@ -699,8 +699,8 @@
 
     <section class="group">
       <h3 data-i18n-en="Description & expression">描写与表达</h3>
-      <p class="hint-text" data-i18n-en-html="Parentheses hold what can be seen and heard; a pair of <b>*</b> holds what the character does not say out loud; everything outside <b>*</b> is dialogue.">括号写看得见的，一对 <b>*</b> 写角色没说出口的，<b>*</b> 外面是台词。</p>
-      <div class="field" data-i18n-nodes><span data-i18n-en="Parentheses length (the cap — how long they may get)">括号里写多长（上限）</span>
+      <p class="hint-text" data-i18n-en-html="Quotation marks hold what she <b>says out loud</b>; everything outside them is action and setting you can see and hear; a pair of <b>*</b> holds what she does not say out loud.">引号里是她<b data-i18n-en="Spoken lines">说出口</b>的话；引号外面是看得见、听得见的动作和环境；一对 <b>*</b> 是她<b data-i18n-en="What was not said aloud">没说出口</b>的心理。</p>
+      <div class="field" data-i18n-nodes><span data-i18n-en="Narration length (the cap — how long it may get)">台词之外的描写写多长（上限）</span>
         <div class="seg" id="s-desc"></div>
       </div>
       <button class="pick-row" id="s-drive">
@@ -1158,7 +1158,7 @@
           <label class="field row" data-i18n-nodes><span data-i18n-en="Read replies aloud">朗读回复</span>
             <input id="s-tts" type="checkbox">
           </label>
-          <p class="hint-text" data-i18n-en-html="Only <b>spoken lines</b> are read. Actions in brackets and thoughts in asterisks are skipped. The voice depends on the system speech engine.">只念角色<b data-i18n-en="Spoken lines">说出口的台词</b>，不念括号和星号内容。音色由系统语音引擎决定。</p>
+          <p class="hint-text" data-i18n-en-html="Only <b>spoken lines</b> (in quotation marks) are read. Narration outside the quotes and thoughts in asterisks are skipped. The voice depends on the system speech engine.">只念角色<b data-i18n-en="Spoken lines">说出口的台词</b>，引号外的叙述和星号里的心理跳过。音色由系统语音引擎决定。</p>
         </div>
       </div>
     </section>
@@ -1853,7 +1853,7 @@
 <div id="drive-modal" class="modal hidden" data-i18n-nodes>
   <div class="modal-box">
     <h4 id="drive-title" data-i18n-en="Description detail">描写详细程度</h4>
-    <p class="drive-sub" id="drive-sub"><span data-i18n-en="Controls the shape of action descriptions in parentheses.">控制括号里的动作描写</span><b data-i18n-en="Must be written as">必须写成什么样</b>。<br>
+    <p class="drive-sub" id="drive-sub"><span data-i18n-en="Controls the shape of the narration outside the quotes.">控制引号之外的叙述</span><b data-i18n-en="Must be written as">必须写成什么样</b>。<br>
        和「非对话描写」是两个独立开关：那个管<b data-i18n-en="Cap">上限</b>（最多写多长），这个管<b data-i18n-en="Structure">结构</b>（必须写成什么形状）。</p>
     <div id="drive-list" class="drive-list"></div>
     <div class="modal-btns" data-i18n-nodes>

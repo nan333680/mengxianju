@@ -55,7 +55,7 @@ console.log('=== 1. 导入酒馆预设：报告里列全了 ===');
     const b = [...document.querySelectorAll('#drawer-menu [data-wb-drawer]')].find(x => x.dataset.wbDrawer === 'settings');
     if (b) b.click();
   }); await sleep(900);
-  const input = await page.$('#preset-import-file');
+  const input = await page.$('#cc-import-file');
   t('设置页有预设导入入口', !!input);
   const before = await snapshot();
   await input.uploadFile(R + '/_fixtures/st-preset.json');
@@ -85,12 +85,14 @@ console.log('');
 console.log('=== 2. 不是预设的文件要说清楚 ===');
 {
   fs.writeFileSync(R + '/_fixtures/_tmp-notpreset.json', JSON.stringify({ hello: 'world' }), 'utf8');
-  const input = await page.$('#preset-import-file');
+  const input = await page.$('#cc-import-file');
   await input.uploadFile(R + '/_fixtures/_tmp-notpreset.json');
   await sleep(1300);
   const rep = await page.$eval('#preset-report', e => e.textContent).catch(() => '');
   console.log('   报告: ' + JSON.stringify(rep.slice(0, 120)));
-  t('给了明确原因（不是「未知错误」）', rep.includes('prompts') || rep.includes('不像是酒馆预设'), rep);
+  // 0.5.8.7：{hello:'world'} 现在走 unknown 专用分支（用户点的是「导入角色卡」，
+  // 回他「这不是酒馆预设」是答非所问），文案换成「认不出这是什么文件」
+  t('给了明确原因（不是「未知错误」）', rep.includes('认不出'), rep);
   fs.rmSync(R + '/_fixtures/_tmp-notpreset.json', { force: true });
 }
 
@@ -98,10 +100,10 @@ console.log('');
 console.log('=== 3. 坏 JSON 不崩 ===');
 {
   fs.writeFileSync(R + '/_fixtures/_tmp-badjson.json', '{ not json', 'utf8');
-  const input = await page.$('#preset-import-file');
+  const input = await page.$('#cc-import-file');
   await input.uploadFile(R + '/_fixtures/_tmp-badjson.json');
   await sleep(1200);
-  t('坏 JSON 之后页面还活着', await page.evaluate(() => !!document.getElementById('preset-import-file')));
+  t('坏 JSON 之后页面还活着', await page.evaluate(() => !!document.getElementById('cc-import-file')));
   fs.rmSync(R + '/_fixtures/_tmp-badjson.json', { force: true });
 }
 

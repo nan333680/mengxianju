@@ -124,17 +124,19 @@ t('「我的设置」页里有接口折叠', (await page.$$eval('#view-mine #api
 t('「我的设置」页里有外观折叠', (await page.$$eval('#view-mine #appear-fold', els => els.length)) === 1);
 // v0.4.3.2 返工：三项不是三个并排折叠头，而是**一个「酒馆」折叠**，
 // 展开后里面依次是预设 / 正则 / 聊天记录三段（用户要「像接口那样」一层套一层）。
-t('「我的设置」页里有一个「酒馆」折叠',
-  (await page.$$eval('#view-mine #tavern-fold', els => els.length)) === 1);
+t('「我的设置」页里不再有「酒馆」折叠（0.5.8.7：三个入口合并了）',
+  (await page.$$eval('#view-mine #tavern-fold', els => els.length)) === 0
+  && (await page.$$eval('#view-mine #tavern-wrap', els => els.length)) === 0);
 {
-  const secs = await page.$$eval('#view-mine #tavern-wrap .sec-head', els => els.map(e => e.textContent.replace(/\s+/g, '').trim()));
-  t('「酒馆」折叠里依次是预设 / 正则 / 聊天记录三段',
-    secs.join('|') === '酒馆预设|酒馆正则实验|酒馆聊天记录', JSON.stringify(secs));
+  const secs = await page.$$eval('#view-mine .sec-head', els => els.map(e => e.textContent.replace(/\s+/g, '').trim()));
+  console.log('   sec-head: ' + JSON.stringify(secs));
+  t('只剩「酒馆正则」一段（预设并进导卡，聊天记录归数据区）',
+    secs.join('|') === '酒馆正则实验', JSON.stringify(secs));
 }
-t('三项的入口都还在这一个折叠里',
-  (await page.$$eval('#view-mine #tavern-wrap #btn-preset-import', els => els.length)) === 1
-  && (await page.$$eval('#view-mine #tavern-wrap #stregex-list', els => els.length)) === 1
-  && (await page.$$eval('#view-mine #tavern-wrap #btn-stchat-import', els => els.length)) === 1);
+t('三个入口各回各区（正则跟角色卡走，聊天记录归数据区）',
+  (await page.$$eval('#view-mine #btn-cc-import', els => els.length)) === 1
+  && (await page.$$eval('#view-mine #stregex-list', els => els.length)) === 1
+  && (await page.$$eval('#view-mine #data-sec #btn-stchat-import', els => els.length)) === 1);
 t('全局设置页里不再有接口', (await page.$$eval('#view-settings #api-fold', els => els.length)) === 0);
 t('「时段划分」收成了折叠头', (await page.$$eval('#view-settings #clock-fold', els => els.length)) === 1);
 

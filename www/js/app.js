@@ -9,8 +9,13 @@ import { THEME_COLORS, colorVars } from './theme.js';
 // 主文件只负责"选文件 / 落库 / 写出去"。
 // ⚠️ 只 import 真用到的（v0.4.0 复查）：卡片现在是 parseCardAuto 一把抓
 //    （PNG / CHARX / JSON 三种容器都认，PNG 里还优先读 ccv3 块），
-//    isPng / parseCardJson / extractCardFromPng 在 app.js 里已经没人调了。
-import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entriesFromList, parseJsonSafe, normalizeCard } from './charcard.js';
+//    parseCardJson / extractCardFromPng 在 app.js 里已经没人调了。
+//    ⚠️ v0.5.8.7：isPng 又被用起来了 —— 合并后的导入入口要【先看文件头】再决定
+//    走二进制还是文本分支。这条注释原来写着「isPng 没人调了」，别照着它删。
+import { parseCardAuto, buildCardV2, makeCardPng, bytesToB64, readMkParams, entriesFromList, parseJsonSafe, normalizeCard, isPng, pickImportKind } from './charcard.js';
+// v0.5.8.7：合并后的入口要判 CHARX（zip 容器）。ccv3 本来就在 charcard 的静态
+// import 链上，这条不新增网络/体积开销，只是把已有的边显式化。
+import { isZip } from './ccv3.js';
 // 自动备份（v1.21.40）：纯逻辑，依赖全部注入，见该文件头部说明。
 import { autoBackupIfDue, verifyLatestBackup, readLatestBackup, BACKUP_DIRS, KEEP as BACKUP_KEEP, DAY_MS as BACKUP_DAY_MS } from './autobackup.js';
 // 导出 Markdown（v1.21.48）：纯函数，接一组消息吐一个字符串
@@ -7012,26 +7017,9 @@ function bindWorldbook() {
   if (newE2) newE2.onclick = () => openEntryEditor(-1, _wbCtx);
   const impBtn = $('btn-wb-import');
   if (impBtn) impBtn.onclick = () => $('wb-import-file').click();
-  // 酒馆预设：解析 + 展示，转换动作【由用户点】才发生。理由见 describeStPreset 的注释。
-  const pBtn = $('btn-preset-import'), pFile = $('preset-import-file');
-  if (pBtn && pFile) {
-    pBtn.onclick = () => pFile.click();
-    pFile.onchange = async (e) => {
-      const f = e.target.files && e.target.files[0];
-      if (!f) return;
-      try {
-        const data = parseJsonSafe(await f.text());
-        const rep = describeStPreset(data);
-        const box = $('preset-report');
-        if (box) box.innerHTML = rep.ok ? rep.html
-          : ('<div class="stp-warn">读不了：' + esc(rep.reason || '格式不认识') + '</div>');
-        toast(rep.ok ? rep.summary : ('这不是酒馆预设：' + (rep.reason || '')), 5200);
-        if (rep.ok && box) bindPresetActions(data, box);
-      } catch (err) {
-        toast('读不了这个文件：' + ((err && err.message) || err), 4200);
-      } finally { e.target.value = ''; }   // 允许重复导同一个文件
-    };
-  }
+  // ⚠️ 0.5.8.7：酒馆预设的入口并进了「导入角色卡」（见 cc-import-file 的分发器），
+  //    这个按钮和输入框（btn-preset-import / preset-import-file）都不存在了。
+  //    describeStPreset / bindPresetActions 保留 —— 分发器认出 preset 之后照样调它们。
 
   const impFile = $('wb-import-file');
   if (impFile) impFile.onchange = async (e) => {
@@ -20493,6 +20481,34 @@ async function importCharacterCard(card, avatarDataUrl = '') {
 }
 
 /**
+ * 一个 buffer 进来，一张卡落库。0.5.8.7 起是全软件【唯一】的导卡路径。
+ *
+ * ⚠️ 它【自己会 toast】「已导入「X」：世界书 7 条；…」（见 importCharacterCard 的结尾），
+ *    调用方不要再 toast 一次 —— 那条信息量为零，还会把有用的那条挤掉。
+ *
+ * 为什么抽成函数、而不是用 DataTransfer 转发给别的 input：旧 WebView 上
+ * `input.files = dt.files` 会静默失败，等于把整条导入链断在一个看不出原因的地方。
+ *
+ * 三种容器一律【按文件头】判、不看扩展名（v0.4.0）：有的站把卡片存成 .png 其实里面是纯 JSON，
+ * 反之也有改名的；.charx 是 zip 里放 card.json。parseCardAuto 三种都认，PNG 里 ccv3 块优先于 chara 块。
+ * 头像：PNG 卡里嵌的那张图就是她的立绘（v1.21.52）；.charx 的 assets 里那张 icon 也一样
+ * （v0.4.0，parseCardAuto 已经取好）。JSON 卡没图，本来就该是空。
+ *
+ * @param {ArrayBuffer} buf
+ * @returns {Promise<any>} 卡片对象（形状见 charcard.js 的 normalizeCard）。
+ *   不写这一行，tsc 会把返回值推断成 object，外层 card.name 就是两条类型噪音
+ *   （ci-check 的基线是 28，涨了它会一直提醒）。
+ */
+async function importCardFromBuffer(buf) {
+  const u8 = new Uint8Array(buf);
+  const got = await parseCardAuto(buf);
+  const avatar = got.avatarDataUrl
+    || (got.kind === 'png' ? ('data:image/png;base64,' + bytesToB64(u8)) : '');
+  await importCharacterCard(got.card, avatar);
+  return got.card;
+}
+
+/**
  * 导出当前角色为卡片。
  * @param {'png'|'json'} kind
  */
@@ -22160,12 +22176,10 @@ $('btn-new-char').onclick = () => openPresetPicker();
   // "填完 key 没换服务商"这条路，展开时再兜一次最稳。
   fold('api-fold', 'api-wrap', refreshApiHint);
   fold('clock-fold', 'clock-wrap', refreshClockHint);
-  // v0.4.3.2：外观 + 酒馆都收成折叠（「我的设置」这页原来是一长条平铺，
-  // 酒馆那三块尤其只偶尔用一次，占掉大半个屏幕）。都没有角标要刷，onOpen 省略。
-  // 酒馆是**一个**折叠，展开后里面依次是预设 / 正则 / 聊天记录三段
-  // （一开始做成三个并排的折叠头，用户说不像「接口」那样的一层套一层）。
+  // v0.4.3.2：外观收成折叠（「我的设置」这页原来是一长条平铺）。没有角标要刷，onOpen 省略。
+  // ⚠️ 0.5.8.7：酒馆那个折叠整块删了 —— 预设并进「导入角色卡」，正则搬到角色卡区，
+  //    聊天记录搬到数据区，不再需要折叠头（tavern-fold / tavern-wrap 已不存在）。
   fold('appear-fold', 'appear-wrap');
-  fold('tavern-fold', 'tavern-wrap');
   // 诊断（0.5.3.5）：角标显示当前日志条数 —— 一个 0 就说明干净，不必点进去。
   fold('diag-fold', 'diag-wrap', refreshDiagHint);
   $('btn-diag-open').onclick = openDiagModal;
@@ -22267,25 +22281,84 @@ $('btn-new-char').onclick = () => openPresetPicker();
 
   // 角色卡（实验，v1.21.40）
   $('btn-cc-import').onclick = () => $('cc-import-file').click();
+  // ⚠️ 0.5.8.7：这是全软件【唯一】的导入入口 —— 角色卡、酒馆预设、出错指路都走这里。
+  //    原来「导入角色卡」和「导入酒馆预设 JSON」是两个按钮，用户得先自己认出文件是什么，
+  //    认错了还只在另一个按钮里能用。现在按内容自动认（pickImportKind，在 charcard.js）。
+  //    ⚠️ 成功路径【不要 toast】—— importCardFromBuffer 里的 importCharacterCard 自己会弹。
   $('cc-import-file').onchange = async (e) => {
     const f = e.target.files[0];
     e.target.value = '';   // 同上：不重置的话再选同一个文件不触发 onchange
     if (!f) return;
+    const box = $('preset-report');
+    const say = (html) => { if (box) box.innerHTML = html; };
     try {
       const buf = await f.arrayBuffer();
-      // ⚠️ 一律【按文件头】判断是哪种容器，不看扩展名（v0.4.0）：
-      //    有的站把卡片存成 .png 其实里面是纯 JSON，反之也有改名的；
-      //    v0.4.0 又多了一种 .charx（zip 里放 card.json）。
-      //    parseCardAuto 三种都认，并且 PNG 里 ccv3 块优先于 chara 块。
-      const got = await parseCardAuto(buf);
-      // ⚠️ 头像：PNG 卡里嵌的那张图就是她的立绘（v1.21.52）。
-      //    原来 importCharacterCard 里写死 avatar: null —— 自己导出的卡导回来头像没了，
-      //    每次都得重设一遍。.charx 的 assets 里那张 icon 也一样（v0.4.0，parseCardAuto 取好）。
-      //    JSON 卡没图，本来就该是空。
-      const avatar = got.avatarDataUrl
-        || (got.kind === 'png' ? ('data:image/png;base64,' + bytesToB64(new Uint8Array(buf))) : '');
-      await importCharacterCard(got.card, avatar);
+      const u8 = new Uint8Array(buf);
+
+      // ① 二进制容器：PNG 卡 / CHARX（zip）—— 看文件头，不看扩展名
+      if (isPng(u8) || isZip(u8)) {
+        const card = await importCardFromBuffer(buf);   // 它自己会 toast
+        say('<div class="stp-head">' + esc(card.name) + '</div>'
+          + '<div class="stp-row">已作为<b>新角色</b>导入。</div>');
+        return;
+      }
+
+      // ② 文本：JSON。判种先于解析，因为 parseCardAuto 会把"不是卡"的文件直接抛错。
+      const text = new TextDecoder('utf-8').decode(u8).replace(/^\uFEFF/, '');
+      let data;
+      try { data = parseJsonSafe(text); }
+      catch (err) {
+        // 和 parseCardJson（charcard.js）的措辞对齐 —— 别把原生 SyntaxError 甩给用户
+        throw new Error('不是合法的 JSON：' + ((err && err.message) || err));
+      }
+
+      const kind = pickImportKind(data);
+
+      if (kind === 'card') {
+        const card = await importCardFromBuffer(buf);   // 它自己会 toast
+        say('<div class="stp-head">' + esc(card.name) + '</div>'
+          + '<div class="stp-row">已作为<b>新角色</b>导入。</div>');
+        return;
+      }
+      // 下面四种都是【指路】，是这个入口唯一的价值：告诉用户该去哪个按钮，
+      // 而不是丢一句"格式不对"。每种都要说清"为什么不是这里"。
+      if (kind === 'backup') {
+        say('<div class="stp-warn">这是<b>梦弦居自己的备份</b>，不是角色卡。'
+          + '请用「数据 → 导入数据」，那里会让你选还原哪些部分。</div>');
+        toast('这是备份文件，请用「数据 → 导入数据」', 5200);
+        return;
+      }
+      if (kind === 'worldbook') {
+        // 这里说的是【独立的世界书文件】，不是卡自带的那份 —— 卡里的跟着卡一起进来
+        say('<div class="stp-warn">这是一份<b>独立的世界书文件</b>。'
+          + '它没写自己该挂给谁，所以去「世界书」页导 —— 那里有角色选择器。'
+          + '<br><span class="stp-where">角色卡自带的世界书不受影响：导卡时它跟着一起进来，不用你管。</span></div>');
+        toast('这是独立的世界书文件，请从世界书页导入', 5200);
+        return;
+      }
+      if (kind === 'chat') {
+        say('<div class="stp-warn">这像是<b>聊天记录</b>，'
+          + '请用「数据 → 导入酒馆聊天记录」，那里会让你挑导进哪个角色。</div>');
+        toast('这像是聊天记录，请用「数据」里的聊天记录入口', 5200);
+        return;
+      }
+      if (kind === 'unknown') {
+        // 用户点的是「导入角色卡」，回他「这不是酒馆预设」是答非所问
+        say('<div class="stp-warn">认不出这是什么文件。'
+          + '这个入口收：<b>角色卡</b>（.json / .png / .charx）和<b>酒馆预设</b>。'
+          + '<br>梦弦居备份 → 「数据 → 导入数据」；独立世界书 → 「世界书」页；'
+          + '聊天记录 → 「数据 → 导入酒馆聊天记录」。</div>');
+        toast('认不出这是什么文件', 5200);
+        return;
+      }
+
+      // ③ 酒馆预设（describeStPreset 的判据一个字不动，只是换了入口）
+      const rep = describeStPreset(data);
+      say(rep.ok ? rep.html : ('<div class="stp-warn">读不了：' + esc(rep.reason || '格式不认识') + '</div>'));
+      toast(rep.ok ? rep.summary : ('这不是酒馆预设：' + (rep.reason || '')), 5200);
+      if (rep.ok && box) bindPresetActions(data, box);
     } catch (err) {
+      say('<div class="stp-warn">读不了：' + esc((err && err.message) || err) + '</div>');
       toast('导入失败：' + ((err && err.message) || err), 4200);
     }
   };
@@ -22558,7 +22631,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.8.6';
+const WEB_VERSION_FALLBACK = '0.5.8.7';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

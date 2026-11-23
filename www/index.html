@@ -1162,41 +1162,15 @@
         </div>
       </div>
     </section>
-    <section class="group">
-      <!-- 酒馆三项收进同一个折叠（v0.4.3.2 返工）：用户要的是「像接口那样」——
-           一个「酒馆」头，展开后依次是预设 / 正则 / 聊天记录三段及各自设置。
-           原来这三项是三个并排的折叠头，看起来像三件不相干的行李。 -->
-      <button class="fold-head" id="tavern-fold">
-        <span data-i18n-en="SillyTavern">酒馆</span>
-        <i class="fold-arrow">▾</i>
-      </button>
-      <div class="fold-wrap" id="tavern-wrap">
-        <div class="fold-inner">
-          <!-- 一、酒馆预设：解析 + 展示；转换动作由用户点了才发生 —— 见 app.js 的 describeStPreset。 -->
-          <h4 class="sec-head"><span data-i18n-en="SillyTavern preset">酒馆预设</span></h4>
-          <p class="hint-text" data-i18n-en-html="Import a preset exported from SillyTavern. Nothing takes effect by itself - you pick what to keep.">导入酒馆预设。不会自动生效，由你逐项选择。</p>
-          <button class="ghost-btn" id="btn-preset-import" data-i18n-en="Import a SillyTavern preset">导入酒馆预设 JSON</button>
-          <input id="preset-import-file" type="file" accept=".json,application/json" hidden>
-          <div id="preset-report"></div>
 
-          <!-- 二、酒馆正则：从卡或预设带过来的 findRegex → replaceString，逐条开关 -->
-          <h4 class="sec-head"><span data-i18n-en="Regex scripts">酒馆正则</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h4>
-          <p class="hint-text" data-i18n-en-html="Regex rules from SillyTavern cards or presets. They only rewrite <b>the copy sent to the model</b> and <b>the text drawn on screen</b>; the saved original is never touched.">只改提示词和显示两处副本，存档原文不动。</p>
-          <div id="stregex-list"></div>
-
-          <!-- 三、酒馆聊天记录：.jsonl 导入 -->
-          <h4 class="sec-head"><span data-i18n-en="SillyTavern chat logs">酒馆聊天记录</span></h4>
-          <p class="hint-text" data-i18n-en-html="Import chat logs exported from SillyTavern (<code>.jsonl</code>). <b>Chat logs cannot be rebuilt</b> - confirm the character before importing.">导入酒馆聊天记录（<code>.jsonl</code>）。聊天记录无法重建，导入前请确认角色。</p>
-          <button class="ghost-btn" id="btn-stchat-import" data-i18n-en="Import SillyTavern chat log (.jsonl)">导入酒馆聊天记录（.jsonl）</button>
-          <input id="stchat-file" type="file" accept=".jsonl,.json,application/json" hidden>
-          <div id="stchat-report"></div>
-        </div>
-      </div>
-    </section>
 
     <section class="group" id="data-sec">
       <h3 data-i18n-en="Data">数据</h3>
       <button class="ghost-btn" id="btn-export-md" data-i18n-en="Export this chat (Markdown)">导出当前角色的对话（Markdown）</button>
+      <!-- 0.5.8.7：从「酒馆」折叠搬来。紧挨着导出，别挪到「导入数据」旁边（那是整机覆盖） -->
+      <button class="ghost-btn" id="btn-stchat-import" data-i18n-en="Import SillyTavern chat log (.jsonl)">导入酒馆聊天记录（.jsonl）</button>
+      <input id="stchat-file" type="file" accept=".jsonl,.json,application/json" hidden>
+      <div id="stchat-report"></div>
       <button class="ghost-btn" id="btn-export" data-i18n-en="Export everything (characters + chats)">导出全部数据（角色+记录）</button>
       <button class="ghost-btn" id="btn-import" data-i18n-en="Import">导入数据</button>
       <input id="file-import" type="file" accept="application/json" hidden>
@@ -1215,9 +1189,15 @@
     </section>
     <section class="group">
       <h3><span data-i18n-en="Character cards">角色卡</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h3>
-      <p class="hint-text" data-i18n-en-html="Interoperates with SillyTavern / chub.ai cards. Importing <b>creates a new</b> character.">兼容 SillyTavern / chub.ai 卡片，导入会新建角色。</p>
-      <button class="ghost-btn" id="btn-cc-import" data-i18n-en="Import character card (.json / .png / .charx)">导入角色卡（.json / .png / .charx）</button>
-      <input id="cc-import-file" type="file" accept=".json,.png,.charx,application/json,image/png" hidden>
+      <p class="hint-text" data-i18n-en-html="Interoperates with SillyTavern / chub.ai. <b>The app works out what the file is</b> - a card, a preset or something else. Importing a card creates a new character.">兼容 SillyTavern / chub.ai 卡片。<b>软件自己认文件类型</b>：角色卡、预设还是别的。导入卡会新建角色。</p>
+      <button class="ghost-btn" id="btn-cc-import" data-i18n-en="Import (card / preset)">导入角色卡（.json / .png / .charx）</button>
+      <input id="cc-import-file" type="file" accept="*/*" hidden>
+      <div id="preset-report"></div>
+
+      <h4 class="sec-head"><span data-i18n-en="Regex scripts">酒馆正则</span> <span class="sub" data-i18n-en="experimental" style="font-weight:400">实验</span></h4>
+      <p class="hint-text" data-i18n-en-html="Regex rules from SillyTavern cards or presets. They only rewrite <b>the copy sent to the model</b> and <b>the copy on screen</b> - your saved chat is never touched.">只改提示词和显示两处副本，存档原文不动。</p>
+      <div id="stregex-list"></div>
+
       <button class="ghost-btn" id="btn-cc-export-png" data-i18n-en="Export as PNG card">把当前角色导出为 PNG 卡</button>
       <button class="ghost-btn" id="btn-cc-export-json" data-i18n-en="Export as JSON card">把当前角色导出为 JSON 卡</button>
     </section>

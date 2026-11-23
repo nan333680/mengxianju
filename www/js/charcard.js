@@ -86,6 +86,70 @@ export function crc32(bytes) {
 }
 
 // ============================================================
+//  导入文件判种（0.5.8.7）
+// ============================================================
+
+/**
+ * 认一个导入文件到底是哪一种（0.5.8.7）。
+ *
+ * 纯函数：不碰 DOM、不碰数据库。放这里是为了能纯 Node 单测（见 e2e-v587merge.mjs）——
+ * 它是「数据 → 枚举」，十个分支，表驱动测最省事。
+ *
+ * 顺序有讲究，每一条都是踩出来的：
+ *   1. 备份最先 —— 备份也有 messages 字段，判晚了会掉进聊天记录分支。
+ *      （其实它不会变成角色：备份没有 data.name，normalizeCard 直接抛。这条只为报错说人话）
+ *   2. 预设第二 —— normalizeCard 的 V1 分支【只要有 name 就认】（给 Pygmalion 老卡留的口子），
+ *      顺序一反，带 name 的预设会被当卡建成角色。
+ *   3. 预设判【length】不判「有键」—— 必须和 describeStPreset 的判据一致，
+ *      否则 {name:'x', prompts:[]} 会判成 preset，然后 describeStPreset 回「里面既没有 prompts」，
+ *      文件里明明有 prompts 键，自相矛盾。
+ *   4. 数组要再分两层，而且【必须在世界书对象之前】—— 裸数组世界书 [{key,content}] 和
+ *      聊天记录都是数组，而数组天生带 Array.prototype.entries（truthy），先判 data.entries 会全假命中。
+ *
+ * @returns {'card'|'preset'|'worldbook'|'chat'|'backup'|'unknown'}
+ */
+export function pickImportKind(data) {
+  if (!data || typeof data !== 'object') return 'unknown';
+
+  // —— 梦弦居自己的备份 ——
+  if (data.characters || data.groups || data.solo) return 'backup';
+  if (data.kind === 'backup' || data.kind === 'worldbook') return 'backup';
+
+  // —— 酒馆预设（和 describeStPreset 判据对齐：都是 length）——
+  const regs = (data.extensions && typeof data.extensions === 'object'
+    && Array.isArray(data.extensions.regex_scripts)) ? data.extensions.regex_scripts : [];
+  if ((Array.isArray(data.prompts) && data.prompts.length) || regs.length) return 'preset';
+
+  // —— 角色卡 V2 / V3 ——
+  if (data.data && typeof data.data === 'object' && String(data.data.name || '').trim()) return 'card';
+  // —— 角色卡 V1 / TavernAI / Pygmalion 时代 ——
+  if (String(data.char_name || '').trim()) return 'card';
+
+  // —— 数组必须在「世界书对象形态」之前判（v0.5.8.7 实测踩到）——
+  //    ⚠️ 数组天生带 Array.prototype.entries / keys 方法，都是 truthy ——
+  //    写成 `if (data.entries || …)` 在前，【任何数组】都会假命中判成 worldbook，
+  //    下面这个分支永远走不到。聊天记录数组 [{mes:'x'}] 就是这么被判成世界书的。
+  if (Array.isArray(data)) {
+    const first = data[0];
+    if (first && typeof first === 'object'
+        && (first.key || first.keys || first.keywords)) return 'worldbook';
+    return 'chat';
+  }
+
+  // —— 世界书（对象形态：{entries:{…}} 或单条 {key,content}）——
+  if (data.entries || data.key || data.keys || data.keywords) return 'worldbook';
+
+  // —— 聊天记录（对象形态）——
+  if (data.messages || data.chat_metadata) return 'chat';
+
+  // —— 兜底：有名字 + 任一正文键，按 V1 卡 ——
+  const BODY = ['description', 'personality', 'scenario', 'first_mes', 'mes_example', 'char_greeting'];
+  if (String(data.name || '').trim() && BODY.some(k => data[k])) return 'card';
+
+  return 'unknown';
+}
+
+// ============================================================
 //  JSON 卡解析
 // ============================================================
 

@@ -395,11 +395,13 @@ export function shouldDirect(o) {
  * @param {Array<string>} [o.roster] v2：在场的人名（群聊点名用）
  * @param {string} [o.target]      v2：这一轮该谁说话（群聊里 move/mood 只作用在他身上）
  * @param {Array<string>} [o.plot] v0.5.7.1：用户给的「剧情方向」，这一轮的局面已经定好的部分
+ * @param {string} [o.outline] v0.5.8.9：他确认过的「剧情小纲」（怎么演 / 到哪儿为止 / 别碰）。
+ *   比 plot 更具体、更硬 —— 判断层的 reading / goal / move / beats 都要落在它划的范围里。
  * @param {string} [o.prevPose] v0.5.8.4：上一轮记下的位置/姿势。只作【提取的输入】，不进正文提示词。
  * @returns {Promise<object|null>} 归一后的判断结果；失败/被中断一律 null
  */
 export async function runDirector(o) {
-  const { stable, recent, userText, psyche, api, signal, roster, target, plot, prevPose } = o || {};
+  const { stable, recent, userText, psyche, api, signal, roster, target, plot, outline, prevPose } = o || {};
   if (!api || !api.apiKey) return null;
   if (signal && signal.aborted) return null;
 
@@ -454,6 +456,27 @@ export async function runDirector(o) {
       + '（这不是台词，是这一轮已经成立的事实。你的 reading 必须从这里读，'
       + '不许换成别的理解；你想干什么、这一轮怎么接，都往这个方向走。）\n\n';
   }
+  // 「剧情小纲」（0.5.8.9）：他确认过的三条安排。
+  //
+  // 为什么必须喂给判断层：实测的「B 型偏」就发生在这一步 ——
+  //   方向传达到了，判断层却自己多规划一步（goal / beats / move），
+  //   正文再照着判断走，于是小纲注入了等于没注入。
+  // 顺序上放在「剧情方向」之后（更具体、更靠后 → 权重更高），
+  // 并明写「别越过它再往前推一步」—— 这是治那类偏最直接的一句。
+  //
+  // ⚠️ 措辞仍然不说「作者安排的」：判断层是她的脑子，不是编剧的脑子。
+  //    写成「他确认过的安排」= 她知道自己被要求往这走，但不知道自己在被写。
+  let outlineBlock = '';
+  const ol = String(outline == null ? '' : outline).trim();
+  if (ol) {
+    outlineBlock = '# 他这一轮已经定好的安排\n'
+      + ol + '\n'
+      + '（这是他确认过的安排，比上面那个方向更具体：\n'
+      + '「到哪儿为止」写的是戏停在哪，「别碰」写的是不许出现的东西。\n'
+      + '你的 reading / goal / move / beats 都落在它划的范围里 —— '
+      + '不要越过它再自己往前推一步；多推的那一步，往往就是这出戏崩掉的地方。\n'
+      + '但它只改「发生什么」，不改你怎么写。）\n\n';
+  }
   // 「上一轮你在哪」（0.5.8.4）：姿势的惯性。
   //
   // 为什么必须给：不给的话它每轮都从聊天记录重新猜一个位置，而它猜出来的东西要写进
@@ -475,7 +498,7 @@ export async function runDirector(o) {
   // 先把「这一轮是什么」定死，再给「我此刻是什么状态」，最后才问「你怎么读」。
   // 反过来（状态在前）等于先塞一个待完成的目标、再告诉她局面变了 ——
   // 模型容易读成「我想问明白，可局面是她开始怀疑自己」，两个意图互相拉扯。
-  msgs.push({ role: 'system', content: plotBlock + (psyBlock ? psyBlock + '\n\n' : '') + poseBlock + whoBlock + ASK });
+  msgs.push({ role: 'system', content: plotBlock + outlineBlock + (psyBlock ? psyBlock + '\n\n' : '') + poseBlock + whoBlock + ASK });
 
   let out = '';
   try {

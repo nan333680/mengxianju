@@ -53,6 +53,8 @@ import { checkUpdate, markChecked } from './updater.js';
 // v0.5.5.3：三条候选和评审撤了（理由见下面生成那段的注释），独白仍是独立一次请求。
 // 失败一律退回老路径 —— 这一步坏掉不能挡住聊天（文档 §3 第 2 条）。
 import { runInner } from './innerthought.js';
+// 剧情小纲（0.5.8.9）：独立一次规划请求，见 plotoutline.js 头上那两段。
+import { runOutline } from './plotoutline.js';
 // 周期性反思（0.5.4.1，借 Generative Agents 的 reflection）：
 // 把攒了几天的几件事合成一条更稳的看法，写回 beliefs。
 // 一天最多一次，失败返回 null，不挡聊天。
@@ -7365,7 +7367,14 @@ const TURN_CMDS = [
   { k: 'direct', ico: '✎', label: '本轮更改', cmd: '改', ph: '这一轮想怎么演？例如：用可爱向的写法' },
   // 剧情方向（v0.4.3.2）：和「本轮更改」不同层 —— 那个管"怎么写/怎么演"，
   // 这个管"事往哪发生"。她要照方向推进，但不必一步走完。
-  { k: 'plot', ico: '🧭', label: '剧情方向', cmd: '向', ph: '这一轮大概往哪走？例如：她开始起疑心，气氛往下沉' },
+  // ⚠️ aliases 不是装饰（0.5.8.9）：原来 parseSlashCmds 的正则里硬写着「剧情」，
+  //    走三元的兜底映射到 plot。改成查表之后表里没有 cmd === '剧情' 的条目，
+  //    这条现成命令会当场失效 —— 所以别名必须搬进表里，跟着 cmd 一起被收集。
+  { k: 'plot', ico: '🧭', label: '剧情方向', cmd: '向', aliases: ['剧情'], ph: '这一轮大概往哪走？例如：她开始起疑心，气氛往下沉' },
+  // 剧情小纲（0.5.8.9）：他这一轮【先看一眼怎么演、改完再发】。
+  // 和「剧情方向」的差别：方向是他随口给一句，小纲是确认过的三条（怎么演/到哪儿为止/别碰），
+  // 由独立一次请求生成，存在消息的 tags 上，只对这一轮算数。
+  { k: 'outline', ico: '📋', label: '剧情小纲', cmd: '纲', ph: '点「生成」出三行，或者自己写。改完再发。' },
   // 绝对指令（0.5.3.7）：比「本轮更改」高一层 —— 一直挂着，直到手动撤，
   // 并且明写「和上面任何一条冲突，让位的是那一条」。会盖掉人设和写法规则，
   // 所以挂上时要提醒一次「写歪了算你的」。
@@ -7380,14 +7389,41 @@ function cmdCfg(k) {
   return TURN_CMDS.find(c => c.k === k) || null;
 }
 
+/** 手打命令名 → 功能 k。名字只有一处来源：上面那张 TURN_CMDS 的 cmd / aliases。
+ *
+ *  ⚠️ 0.5.8.9 之前这里是个三元兜底：
+ *      `m[1] === '搜' ? 'search' : (m[1] === '改' ? 'direct' : 'plot')`
+ *    它意味着【任何没被显式列出的命令都会静默算成剧情方向】——
+ *    只给正则加一个 `纲` 而不改三元，`/纲 xxx` 的标签、参数槽、气泡 chip
+ *    全都显示正确，但注入位置、截断、turnInj 全部走到 plot 那条路上。
+ *    这种错不报错、界面也对，只有回复不对劲 —— 比报错难查十倍。
+ *    现在改成表驱动：加功能只改那张表，正则和映射都从它来。 */
+const _SLASH_CMD_K = (() => {
+  const m = new Map();
+  for (const c of TURN_CMDS) {
+    if (c.cmd) m.set(c.cmd, c.k);
+    for (const a of (c.aliases || [])) m.set(a, c.k);
+  }
+  return m;
+})();
+
+/** 正则转义：命令名现在是数据，不是字面量，将来若有人加个带元字符的别名，
+ *  不转义会直接抛 SyntaxError（整个文件加载失败）。 */
+function _reEsc(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** 解析手打的 /搜 /改：命令必须【独占一行】，其余行拼成正文。
  *  为什么不做「/搜(关键词)」这种括号提醒范围：括号会进正文、进她的上下文，
  *  显示侧的正则也会碰到它 —— 独占一行既好解析又好读。 */
 function parseSlashCmds(text) {
+  const names = [..._SLASH_CMD_K.keys()].map(_reEsc).join('|');
+  if (!names) return { cmds: [], text: String(text || '').trim() };
+  const re = new RegExp('^\\s*[/／](' + names + ')\\s*[:：]?\\s*(.*)$');
   const cmds = [], rest = [];
   for (const ln of String(text || '').split('\n')) {
-    const m = ln.match(/^\s*[/／](搜|改|向|剧情)\s*[:：]?\s*(.*)$/);
-    if (m) cmds.push({ k: m[1] === '搜' ? 'search' : (m[1] === '改' ? 'direct' : 'plot'), arg: m[2].trim() });
+    const m = ln.match(re);
+    if (m) cmds.push({ k: _SLASH_CMD_K.get(m[1]), arg: m[2].trim() });
     else rest.push(ln);
   }
   return { cmds, text: rest.join('\n').trim() };
@@ -8581,6 +8617,12 @@ let namedInText = false;
           // 于是判断层只能从 recent 里找线索，而 recent 里全是她自己在问。
           // 方向是动作就照做，方向是心理就被 reading 吃掉（见 director.js 那段注释）。
           plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
+          // 剧情小纲（0.5.8.9）：也喂给判断层 —— 这一行是治「B 型偏」的关键。
+          // 那种偏发生在 director → 正文 这条链上：判断层不知道小纲，就会自己
+          // 规划一步（beats / move），正文再照着判断走，小纲等于没注入。
+          // 注意方向：小纲是【上游输入】，不是下游结论 —— 是判断层读它，
+          // 不是小纲去读判断层（生成小纲那趟不跑 director / inner，见 plotoutline.js）。
+          outline: (_cmds.find(c => c.k === 'outline' && c.arg) || {}).arg || '',
           // 上一轮的位置（只作提取输入，见上面 poseKey 那段注释）
           prevPose
         }).catch(err => { console.warn('[director] 外层兜底：' + ((err && err.message) || err)); return null; })
@@ -8664,6 +8706,9 @@ let namedInText = false;
       hardCmd: _hardArg,
       // 「剧情方向」（v0.4.3.2）：他这一轮想让事态往哪走 —— 只这一轮，不进人设、不进历史。
       plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => c.arg),
+      // 「剧情小纲」（0.5.8.9）：他这一轮确认过的三条。空串 = 整段不出现，
+      // 不挂小纲的提示词与 0.5.8.8 逐字相同（e2e 钉住这一条）。
+      outline: (_cmds.find(c => c.k === 'outline' && c.arg) || {}).arg || '',
       // 「剧情卡」（v0.5.0）：跨轮的方向层（当前拍）。没在跑就是 off，提示词里不出现。
       arc, arcNames,
       // 惯性动作（0.5.3.4）：这一轮不许再出现的那几个动作短语，见 persona.js 那段
@@ -8739,6 +8784,9 @@ let namedInText = false;
         beat: _cut((arc.beats[arc.currentBeat] || {}).t, 40),
       } : null,
       plot: _cmds.filter(c => c.k === 'plot' && c.arg).map(c => _cut(c.arg, 60)),
+      // 剧情小纲（0.5.8.9）：【不截】。这一段是排查用的「这一轮到底带了什么」，
+      // 三行三百字被 _cut(...,60) 砍到六十，出问题时恰好砍掉最关键那句。
+      outline: (_cmds.find(c => c.k === 'outline' && c.arg) || {}).arg || '',
       dir: _cmds.filter(c => c.k === 'direct' && c.arg).map(c => _cut(c.arg, 60)),
       // Psyche v1（0.5.3.6）：这一轮她心里那层。
       // 放进 turnInj 而不是另开一个字段：「能查的地方」只有一个入口，
@@ -11875,9 +11923,24 @@ function syncInput() {
   if (tags) {
     tags.innerHTML = pendingCmds.map(c => {
       const cfg = cmdCfg(c.k);
+      // ⚠️ 剧情小纲（0.5.8.9）只显示名字，不拼参数：它是三行、可能三百字还带换行，
+      //    拼进这排 chip 会把整个输入行压成一坨（气泡上那颗 chip 本来就只显示名字）。
+      //    全文在参数槽里改、在气泡的「附加内容」里看 —— 两处都不缺。
+      const arg = (c.k === 'outline' ? '' : c.arg);
       return '<span class="tag-chip">' + esc(cfg ? (cfg.ico + ' ' + tt(cfg.label)) : c.k)
-        + (c.arg ? '：' + c.arg : '') + '</span>';
+        + (arg ? '：' + arg : '') + '</span>';
     }).join('');
+  }
+  // 剧情小纲的「生成」按钮（0.5.8.9）：正文框空着就点不了。
+  // 空着生成 = 模型没看到这一轮演什么 = 它只能拿历史瞎猜，小纲必瞎编。
+  // 放在这里而不是 renderCmdSlots 里：参数槽只在挂/撤功能时重画，
+  // 而"正文框里有没有字"是每次输入都在变的。
+  const genBtn = $('cmd-slots') && $('cmd-slots').querySelector('[data-gen="outline"]');
+  if (genBtn) {
+    const hasText = !!String(el.value || '').trim();
+    genBtn.disabled = !hasText || _outlineBusy;
+    genBtn.title = _outlineBusy ? tt('正在生成…')
+      : (hasText ? tt('按你打好的这段话，先把这一轮怎么演写出来') : tt('先打完你这一轮要说的话'));
   }
   renderCarryTag();          // 「上一轮的要求」余温条（v0.4.2.2）
   const meta = $('input-meta');
@@ -12096,6 +12159,11 @@ function renderCmdSlots() {
       // 换成 textarea：浏览器自己换行，全文可见可改；高度由 growSlot() 跟着内容撑。
       + '<textarea rows="1" data-cmd="' + esc(c.k) + '" placeholder="' + esc(tt(cfg.ph || ''))
       + '" title="' + esc(c.arg || '') + '">' + esc(c.arg || '') + '</textarea>'
+      // 剧情小纲（0.5.8.9）：只有这一行有「生成」。它是这一轮的一次规划请求，
+      // 别的功能都是"把你说的话塞进提示词"，只有它要调模型。
+      + (c.k === 'outline'
+        ? '<button class="cs-gen" data-gen="outline">' + esc(tt('生成')) + '</button>'
+        : '')
       + '<button class="cs-x" data-del="' + esc(c.k) + '" title="' + esc(tt('去掉这个功能')) + '">✕</button>'
       + '</div>';
   }).join('');
@@ -12118,6 +12186,97 @@ function renderCmdSlots() {
     // 参数槽里的回车就是普通换行（留给多行参数用），不发送 —— 发送永远走右下角那颗按钮
   });
   box.querySelectorAll('[data-del]').forEach(b => { b.onclick = () => delCmd(b.dataset.del); });
+  box.querySelectorAll('[data-gen]').forEach(b => { b.onclick = () => genOutline(); });
+}
+
+/** 生成剧情小纲（0.5.8.9）。
+ *
+ *  为什么是独立一次请求、为什么【不跑判断层】：见 plotoutline.js 头上那两段。
+ *  这里只管三件事：把上下文凑齐、调一次、把结果填进参数槽。
+ *
+ *  ⚠️ 失败不碰参数槽 —— 他可能先手写了一半，网络错不能把那些字清掉。
+ *  ⚠️ 已有内容先确认 —— 点「生成」是覆盖，不是追加。
+ *  ⚠️ 正文框空着不能生成 —— 模型没看到这一轮演什么，小纲必定瞎编。
+ *     按钮在 syncInput 里禁用，这里是第二道（防连点 / 刚清空又点的竞态）。
+ */
+let _outlineBusy = false;
+async function genOutline() {
+  if (_outlineBusy || !curCharId) return;
+  if (busy) { toast('还在生成中，先等一下'); return; }
+  const cur = pendingCmds.find(c => c.k === 'outline');
+  if (!cur) return;
+  const userText = draftText().trim();
+  if (!userText) { toast('先打完你这一轮要说的话'); return; }
+  if (String(cur.arg || '').trim()) {
+    const ok = await confirmBox('覆盖小纲', '会覆盖你现在写的内容，继续？', '覆盖');
+    if (!ok) return;
+  }
+
+  _outlineBusy = true;
+  const slots = $('cmd-slots');
+  const btn = slots && slots.querySelector('[data-gen="outline"]');
+  if (btn) { btn.disabled = true; btn.textContent = tt('生成中…'); }
+  try {
+    // 上下文：人设稳定前缀 + 最近几轮 + 他打好的字 + 他挂的东西（见 outlineExtra）。
+    //
+    // ⚠️ 不带【命中式】世界书：worldbookHits 会写 _wbHold（续期表），
+    //    这里调一次就会把正文那趟「这条还能再留两轮」的计数搅乱 ——
+    //    那条理由写在 5412 那几行注释里（小说侧当初就踩过）。
+    //    常驻条目（pos === 'always'）已经在 sysStable 里，不缺。
+    // ⚠️ 不带记忆块：小纲答的是「这一轮演什么」，不是「她记得什么」。
+    //    为它重跑一遍 pickMemories（四十多行、含群聊视角分支）不值得，
+    //    「之前发生过什么」交给滚动摘要那一行。
+    const charT = curChar;
+    const P = effSettings(charT, S);
+    let wbConst = [];
+    try { wbConst = await worldbookConst(curCharId); } catch { wbConst = []; }
+    const stable = buildStablePrompt(charT, P, wbConst, '');
+    let recent = [];
+    try {
+      const hist = await buildHistory(curCharId, Math.min(Number(P.contextRounds) || 20, 20));
+      recent = hist.map(m => ({ role: m.role, content: m.content }));
+    } catch { recent = []; }
+    let rolling = '';
+    try { rolling = P.longMemory ? String((await getRolling(curCharId)).text || '') : ''; } catch { rolling = ''; }
+
+    const res = await runOutline({
+      stable,
+      recent,
+      userText,
+      extra: outlineExtra(rolling),
+      api: { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider }
+    });
+    if (!res) { toast('小纲没生成出来，原内容没动'); return; }
+    cur.arg = res;
+    renderCmdSlots();
+    syncInput();
+    toast('小纲写好了，改完再发');
+  } catch (err) {
+    console.warn('[outline] 外层兜底：' + ((err && err.message) || err));
+    toast('小纲没生成出来，原内容没动');
+  } finally {
+    _outlineBusy = false;
+    const b2 = $('cmd-slots') && $('cmd-slots').querySelector('[data-gen="outline"]');
+    if (b2) { b2.disabled = !draftText().trim(); b2.textContent = tt('生成'); }
+  }
+}
+
+/** 把「他这一轮挂着的东西」拼成一段，给小纲那趟当输入。
+ *  只挑【管发生什么】的：方向 / 本轮更改 / 绝对指令。
+ *  搜索、图片、小纲自己都不进来 —— 前两个和规划无关，后者是产物。
+ *  滚动摘要是「之前发生过什么」，放最后当背景。 */
+function outlineExtra(rolling) {
+  const lines = [];
+  for (const c of pendingCmds) {
+    if (c.k === 'outline' || c.k === 'image' || c.k === 'search') continue;
+    const arg = String(c.arg || '').trim();
+    if (!arg) continue;
+    const cfg = cmdCfg(c.k);
+    lines.push('- ' + (cfg ? tt(cfg.label) : c.k) + '：' + arg);
+  }
+  if (hardCmd && String(hardCmd.arg || '').trim()) lines.push('- 绝对指令：' + String(hardCmd.arg).trim());
+  if (rolling) lines.push('- 之前发生过（摘要）：' + String(rolling).trim());
+  return lines.join('\n');
 }
 /** 画「上一轮的要求还在延续」那条 chip（没有就整块藏掉） */
 /** 当前这个角色还挂着的上一轮要求（换角色之后旧的原样不显示、也不注入） */
@@ -22686,7 +22845,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.8.8';
+const WEB_VERSION_FALLBACK = '0.5.8.9';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

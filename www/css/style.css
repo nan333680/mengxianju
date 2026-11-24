@@ -316,6 +316,17 @@ body{
   background:var(--bg3); color:var(--fg3); font-size:12px; font-family:inherit;
   cursor:pointer;
 }
+/* 剧情小纲的「生成」按钮（0.5.8.9）：只在这一行出现，夹在输入框和 ✕ 之间。
+   为什么写字不画图标：它是个【动作】不是一个开关，📋 那种图标看不出"点了会有事发生"。
+   宽度按内容走 —— 输入框占剩下的，三行小纲长但不影响这一行的高度。 */
+.cmd-slot .cs-gen{
+  flex-shrink:0; height:26px; padding:0 11px; border:none; border-radius:13px;
+  background:var(--bg3); color:var(--pri-text); font-size:12px; font-family:inherit;
+  cursor:pointer; white-space:nowrap;
+}
+/* 禁用态：正文框空着时点不了 —— 见 app.js 里 genOutline 头上那条注释 */
+.cmd-slot .cs-gen:disabled{ color:var(--fg3); cursor:default; opacity:.55; }
+.cmd-slot .cs-gen:not(:disabled):active{ background:var(--pri); color:#fff; }
 /* 绝对指令那一行（0.5.3.7）：比普通功能高一档，所以要一眼看得出来。
    左边一道金线 + 图标带底色 —— 不做大改，免得每一轮都被它抢走注意力。 */
 .cmd-slot.hard-slot{

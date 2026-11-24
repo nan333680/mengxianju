@@ -70,7 +70,8 @@ t('17 ASK 里有 now 字段', DIR.indexOf('"now":') > 0);
 t('18 now 排在 reading 之后（截断从尾巴丢）', DIR.indexOf('"now":') > DIR.indexOf('"reading":'));
 t('19 salvage 白名单收了 now', /const STR = \['reading', 'now'/.test(DIR));
 t('20 normalizeDirector 白名单收了 now', /now: cut\(raw\.now, 40\)/.test(DIR));
-t('21 runDirector 读 prevPose', /\{ stable, recent, userText, psyche, api, signal, roster, target, plot, prevPose \}/.test(DIR));
+// 0.5.8.9：解构里多了 outline（剧情小纲要给判断层读）—— 断言跟着加，但 prevPose 仍必须在这条里。
+t('21 runDirector 读 prevPose', /\{ stable, recent, userText, psyche, api, signal, roster, target, plot, outline, prevPose \}/.test(DIR));
 t('22 poseBlock 拼进了 system 消息', /poseBlock \+ whoBlock \+ ASK/.test(DIR));
 t('23 惯性块里写明「以聊天记录为准」', DIR.indexOf('聊天记录里已经动过了') > 0);
 

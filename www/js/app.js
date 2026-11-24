@@ -375,7 +375,10 @@ const CHAR_KEYS = [
  *   4) 已存在的角色             —— 快照还躺在库里（实测 19 个角色全带 descLevel）
  * v0.3.1 四条一起修，并做一次性迁移（migrateFollowKeysToGlobal）。
  */
-const FOLLOW_KEYS = ['descLevel', 'detailDrive'];
+const FOLLOW_KEYS = ['descLevel', 'detailDrive', 'verbosity'];
+
+/** 回复长度的中文名（只在 toast / 弹窗里用；控件本身的文案在 index.html 的 option 里） */
+const LEN_LABEL = { veryShort: '极短', short: '短', medium: '中', long: '长', epic: '长篇' };
 
 /** 从一份参数里摘掉三态键 —— 用于"继承全局"的场合（新建角色/导入卡） */
 function omitFollowKeys(o) {
@@ -1881,8 +1884,14 @@ async function migrateFollowKeysToGlobal() {
   if (!allChars.length) return;
   const backup = {};
   let n = 0, failed = 0;
+  // ⚠️ 这里必须用【冻结的旧列表】，不能跟着 FOLLOW_KEYS 走（0.5.8.8）：
+  //    这次迁移的语义是「清掉 v0.3.1 之前写进去的那两个描写档位快照」。
+  //    0.5.8.8 往 FOLLOW_KEYS 里加了 verbosity，如果这里跟着变，只要
+  //    followKeysMigrated 标记没落（新设备 / 从备份恢复），一启动就会把
+  //    25 个角色单独设过的 verbosity 全删掉 —— 静默降级成全局 medium。
+  const MIGRATE_KEYS_V031 = ['descLevel', 'detailDrive'];
   for (const c of allChars) {
-    const hit = FOLLOW_KEYS.filter(k => c[k] !== undefined);
+    const hit = MIGRATE_KEYS_V031.filter(k => c[k] !== undefined);
     if (!hit.length) continue;
     for (const k of hit) backup[c.id + '.' + k] = c[k];
     // 单个角色写失败不该挡住启动
@@ -8260,7 +8269,12 @@ let namedInText = false;
     const cliches = findCliches(
       pastRaw.filter(m => m && m.role === 'assistant' && typeof m.content === 'string')
         .map(m => m.content).slice(-30),
-      { limit: 6 });
+      // 人名不进清单（0.5.8.8）。世界书标题【故意】不在这里 —— 它出现在正文里
+      // 本身就是「模型在复述设定」的 bug，过滤层藏掉只会让那个 bug 更看不见。
+      { limit: 6, stop: [
+        ...allChars.map(c => c && c.name).filter(Boolean),
+        ...(myChar && myChar.nickname ? [myChar.nickname] : []),
+      ] });
     // 「心里那一层」有没有出现过（0.5.3.4）：只认成对的一对星号。
     // 用途①：提示词冷启动；用途②：生成后若还是一条都没有，触发一次补写重写。
     // 实测（tmp/ab*.mjs，deepseek-flash 各 8 轮）：光靠提示词，星号出现率在 0/8 ~ 6/8 之间随机，
@@ -10235,7 +10249,7 @@ async function reviewMemoryDirection(items, transcript, char, who) {
   try {
     out = await onceChat({
       apiKey: S.apiKey, baseUrl: S.baseUrl, provider: S.provider, model: S.model,
-      maxTokens: 512,
+      maxTokens: 768,
       messages: [
         { role: 'system', content:
             '你只做一件事：核对一段记忆有没有把「谁对谁做了什么」记反。只输出 JSON，不要别的话。' },
@@ -10256,7 +10270,10 @@ async function reviewMemoryDirection(items, transcript, char, who) {
           + '（属性 = 身体特征、状态、天赋、性格、所有物 —— 「他的腿不好」「你淋湿了会自己干」，\n'
           + ' 这类不是在说「谁做了什么」，但同样会记反，也要查。）\n'
           + '多记了一件事、少记了一件事、换了个说法，都【不算】问题。\n'
-          + '只输出 JSON：{"bad":[有问题的编号]}。全都对就输出 {"bad":[]}。' }
+          + '只输出 JSON：{"why":"一句话说清反在哪一处，不超过 40 字","bad":[有问题的编号]}。\n'
+          + '全都对就写 {"why":"","bad":[]}。\n'
+          + '列之前先把每一条在心里过一遍：这条里「我」做的事，原话里是不是你自己做的？\n'
+          + '只列你能在转录里指出原话的那几条 —— 想不起在哪、读着别扭，都不算反。【宁可漏，不要冤枉一条对的】。' }
       ]
     });
   } catch (err) {
@@ -18910,6 +18927,44 @@ function bindSettings() {
     toast('已改为「' + driveLabel(v) + '」，下一条回复立刻生效', 3000);
   });
 
+  // 回复长度（0.5.8.8，全局）：这一格之前【不存在】。
+  // 后果不是「少一个设置」——群设置里那句「不勾 = 跟随 ⚙ 全局那份」一直指向
+  // 一个不存在的控件，settings.verbosity 永远停在 medium，用户改不了也看不见。
+  // ⚠️ 已有角色身上带 verbosity 的（实测 47/47 全带）不会跟着变：effSettings
+  //    是角色值优先。要它跟随，只能把键【删掉】—— 这也是下面那段弹窗存在的原因。
+  const setVerbosity = async () => {
+    const nv = $('s-verbosity').value || 'medium';
+    if (nv === S.verbosity) return;
+    const diff = allChars.filter(c => c && c.verbosity !== undefined && c.verbosity !== nv);
+    let wipe = false;
+    if (diff.length) {
+      wipe = await confirmBox('回复长度',
+        '有 ' + diff.length + ' 个角色单独设过表达方式。要一起改成「' + (LEN_LABEL[nv] || nv) + '」吗？\n'
+        + '改了之后它们原来的设置会没掉。');
+    }
+    if (wipe) {
+      // ⚠️ 点「是」必须是【删键】，不是写值：写值会造出「假跟随」——
+      //    值一样了，但下次改全局它还是不动，于是每改一次问一次。
+      const from = {};
+      for (const c of diff) from[c.id] = c.verbosity;
+      try { await kv.set('verbosityBroadcastBackup', { at: Date.now(), from }); } catch { /* 备份失败不挡迁移 */ }
+      let n = 0;
+      for (const c of diff) {
+        try {
+          const nx = { ...c }; delete nx.verbosity;
+          await chars.put(nx); delete c.verbosity; n++;
+        } catch { /* 单个失败不挡其他的 */ }
+      }
+      if (n) console.log('[0.5.8.8] 回复长度退回跟随全局：' + n + ' 个角色（原值见 kv verbosityBroadcastBackup）');
+    }
+    await saveSettings({ verbosity: nv });
+    toast('回复长度已改为「' + (LEN_LABEL[nv] || nv) + '」' + (wipe ? '，' + diff.length + ' 个角色也改了' : ''), 3000);
+  };
+  if ($('s-verbosity')) {
+    $('s-verbosity').value = String(S.verbosity || 'medium');
+    $('s-verbosity').onchange = setVerbosity;
+  }
+
   // 「写字台」（v1.21.48，全局）：输入框长什么样。
   // 它不碰 prompt、不碰存储格式 —— 换台手机同步过去也只是行数不同。
   // 默认 3 行 = 老版本的 120px，装上去观感不变，别让人以为 UI 坏了。
@@ -22631,7 +22686,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.8.7';
+const WEB_VERSION_FALLBACK = '0.5.8.8';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

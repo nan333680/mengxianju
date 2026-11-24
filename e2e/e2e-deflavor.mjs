@@ -9,6 +9,7 @@
 const NL = '\n';
 import { deflavor, deflavorFor, DROP_SENTENCE, DROP_CLAUSE } from '../www/js/deflavor.js';
 import { findCliches, templateHits, TEMPLATE_ACTS } from '../www/js/cliche.js';
+import fs from 'node:fs';
 
 let pass = 0, fail = 0;
 function t(name, ok, extra) {
@@ -102,6 +103,24 @@ console.log('=== 7. 惯性短语：只留像动作的，不许全是碎片 ===')
   const a = findCliches(mk(10, '他低头看他'));
   const b = findCliches(mk(10, '他低头看他').reverse());
   t('同一批消息正序/倒序结果一致（排序有 tiebreak）', JSON.stringify(a) === JSON.stringify(b), [a, b]);
+
+  // 0.5.8.8：人名不该进「这几样这一轮别再用」。
+  // 实测 top-6 是 ["蕾米莉亚","按了一下","帕秋莉把书往",...] —— 4 个是配角名，
+  // 注入出去就变成「别再用：蕾米莉亚、帕秋莉……」，等于让她别写配角。
+  const rawN = findCliches(mk(10, '蕾米莉亚低头看他'), { limit: 6 });
+  const stopN = findCliches(mk(10, '蕾米莉亚低头看他'), { limit: 6, stop: ['蕾米莉亚'] });
+  t('★ 人名默认会进清单（对照，证明过滤真的在起作用）', rawN.some(g => g.includes('蕾米莉亚')), rawN);
+  t('★ 传了 stop 之后人名不进清单（0.5.8.8）',
+    stopN.length > 0 && stopN.every(g => !g.includes('蕾米莉亚')), stopN);
+  // 这条必须断【源码契约】，不能靠行为：候选池本身有限时（10 条同一句话），
+  // 「ranked 阶段过滤」和「取完 top-6 再滤」都会剩下同样两三条，行为断言分不开。
+  // 差别只在候选充足时才显现 —— 而那时对人名之外的短语才是正确的那一半。
+  const clicheSrc = fs.readFileSync(new URL('../www/js/cliche.js', import.meta.url), 'utf8');
+  t('★ 过滤发生在 ranked 阶段，不是取完 top-6 再滤（0.5.8.8）',
+    /\.filter\(\(\[g, c\]\) => c >= min && !stop\.some/.test(clicheSrc), '');
+  t('★ 单字停用词不生效（长度 < 2 被丢掉）',
+    JSON.stringify(findCliches(mk(10, '他低头看他'), { limit: 6, stop: ['他'] }))
+      === JSON.stringify(findCliches(mk(10, '他低头看他'), { limit: 6 })));
 }
 
 console.log('=== 8. 按模型分档：没实测过的模型不许乱删 ===');

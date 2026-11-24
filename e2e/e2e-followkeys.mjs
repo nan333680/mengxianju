@@ -164,7 +164,19 @@ console.log('');
 console.log('=== 3. 三条写入路径 + 空库边界（源码契约）===');
 {
   const src = readCode(WWW + '/js/app.js');
-  t('FOLLOW_KEYS 定义了这两个键', src.includes("const FOLLOW_KEYS = ['descLevel', 'detailDrive'];"));
+  t('FOLLOW_KEYS 定义了这三个键（0.5.8.8 加 verbosity）', src.includes("const FOLLOW_KEYS = ['descLevel', 'detailDrive', 'verbosity'];"));
+  // 0.5.8.8：全局设置页终于有了「回复长度」。之前这一格【根本不存在】——
+  // 群设置那句「不勾 = 跟随 ⚙ 全局那份」一直指向一个不存在的东西，
+  // settings.verbosity 永远停在 medium，用户改不了也看不见。
+  // ⚠️ 这里不能用 readCode：它是【剥 JS 注释】的，喂 HTML 会把 `//` 之类当注释吃掉。
+  const html = fs.readFileSync(WWW + '/index.html', 'utf8');
+  const iSel = html.indexOf('id="s-verbosity"');
+  const sel = iSel >= 0 ? html.slice(iSel, html.indexOf('</select>', iSel)) : '';
+  t('★ 全局设置页有 #s-verbosity（0.5.8.8）', iSel >= 0);
+  t('★ 五个档位齐全（0.5.8.8）', ['veryShort', 'short', 'medium', 'long', 'epic'].every(v => sel.includes('value="' + v + '"')), sel.slice(0, 120));
+  t('★ 点「是」删键，不是写值（0.5.8.8）', src.includes('delete nx.verbosity'));
+  t('★ 删键前先写备份（0.5.8.8）', src.includes("kv.set('verbosityBroadcastBackup'"));
+  t('★ 保存时先问一句（0.5.8.8）', src.includes('个角色单独设过表达方式'));
   t('编辑页保存：跟随全局时删键', src.includes('for (const k of FOLLOW_KEYS) if (data[k] === undefined) delete nextC[k];'));
   t('广播：先删键再写这一页的值', src.includes('for (const k of FOLLOW_KEYS) delete nextC[k];'));
   t('导入卡：不继承三态键', src.includes('...omitFollowKeys(pickCharParams(S)),'));

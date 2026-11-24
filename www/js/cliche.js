@@ -91,7 +91,7 @@ function gramsIn(text) {
 /**
  * 找出她最近反复用的动作短语。
  * @param {string[]} msgs 最近若干条【她】的正文（越多越准，30 条够）
- * @param {{min?: number, limit?: number}} [opts] min=至少出现在几条消息里（默认 3），limit=最多给几条（默认 6）
+ * @param {{min?: number, limit?: number, stop?: string[]}} [opts] min=至少出现在几条消息里（默认 3），limit=最多给几条（默认 6），stop=不该进清单的词（人名）
  * @returns {string[]} 从高频到低频；样本不够时返回空数组（宁可不说，也别乱说）
  */
 export function findCliches(msgs, opts = {}) {
@@ -101,12 +101,18 @@ export function findCliches(msgs, opts = {}) {
   if (limit <= 0) return [];
   const list = (msgs || []).filter(Boolean).map(String);
   if (list.length < 6) return [];
+  // 人名不该进「这几样这一轮别再用」（0.5.8.8）：实测 top-6 里 4 个是配角名，
+  // 提示词会变成「别再用：蕾米莉亚、帕秋莉……」，等于让她别写配角。
+  // ⚠️ 长度 >= 2 是必要的：单字停用词会把「他低头看他」这类正常短语整片打掉。
+  const stop = (Array.isArray(opts.stop) ? opts.stop : [])
+    .map(s => String(s || '').trim()).filter(s => s.length >= 2);
 
   const cnt = new Map();
   for (const t of list) for (const g of gramsIn(t)) cnt.set(g, (cnt.get(g) || 0) + 1);
 
   const ranked = [...cnt]
-    .filter(([, c]) => c >= min)
+    // ⚠️ 在 ranked 阶段过滤，不是取完 top-6 再滤 —— 那样过滤完只剩两三条。
+    .filter(([g, c]) => c >= min && !stop.some(n => g.includes(n)))
     // ⚠️ 必须带一个稳定的 tiebreak（v0.5.3.4 复查实测）：同次数同长度时落到 Map 插入序，
     //    同一批 30 条只要倒序一遍，19 个角色里有 12 个的 top-6 就不一样了。
     .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length || (a[0] < b[0] ? -1 : 1));

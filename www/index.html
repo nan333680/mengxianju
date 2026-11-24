@@ -700,6 +700,15 @@
     <section class="group">
       <h3 data-i18n-en="Description & expression">描写与表达</h3>
       <p class="hint-text" data-i18n-en-html="Quotation marks hold what she <b>says out loud</b>; everything outside them is action and setting you can see and hear; a pair of <b>*</b> holds what she does not say out loud.">引号里是她<b data-i18n-en="Spoken lines">说出口</b>的话；引号外面是看得见、听得见的动作和环境；一对 <b>*</b> 是她<b data-i18n-en="What was not said aloud">没说出口</b>的心理。</p>
+      <div class="field"><span data-i18n-en="Reply length (what she actually says)">回复长度（只管说出口的话）</span>
+        <select id="s-verbosity">
+          <option value="veryShort" data-i18n-en="Very short">很短</option>
+          <option value="short" data-i18n-en="Short">短</option>
+          <option value="medium" data-i18n-en="Medium">中等</option>
+          <option value="long" data-i18n-en="Long">长</option>
+          <option value="epic" data-i18n-en="Long-form scene">长篇</option>
+        </select>
+      </div>
       <div class="field" data-i18n-nodes><span data-i18n-en="Narration length (the cap — how long it may get)">台词之外的描写写多长（上限）</span>
         <div class="seg" id="s-desc"></div>
       </div>

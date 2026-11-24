@@ -68,7 +68,8 @@ await page.evaluateOnNewDocument((BAD_TEXT) => {
     if (text.indexOf('逐条核对') >= 0) {
       window.__hits.review.push(body);
       if (window.__reviewMode === 'fail') return new Response('boom', { status: 500 });
-      return new Response(JSON.stringify({ choices: [{ message: { content: '{"bad":[1]}' } }] }),
+      // 0.5.8.8：改成带 why 的新格式 —— 复核现在先要理由再要判决，这条 mock 顺带验解析链路。
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"why":"第1条把方向写反了","bad":[1]}' } }] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     if (body.stream !== true) {
@@ -228,6 +229,15 @@ const fnBody = src.slice(fnStart, src.indexOf('\n}', fnStart));
 t('memReviewWhy 判定在 shouldAutoCommit 之后',
   fnBody.indexOf('shouldAutoCommit') >= 0 && fnBody.indexOf('it.memReviewWhy') > fnBody.indexOf('shouldAutoCommit'));
 t('有熔断上限', src.includes('MEM_REVIEW_MAX_FAILS'));
+// 0.5.8.8：why 放在 bad 【前面】—— 生成顺序决定「先想再判」还是「先判再编理由」。
+// 仓库自己在 app.js:9974 已经写过同一条结论（quote 放第一位）。
+{
+  const iWhy = src.indexOf('"why":"一句话说清反在哪一处');
+  const iBad = src.indexOf('"bad":[有问题的编号]');
+  t('★ 复核先要 why 再要 bad（0.5.8.8）', iWhy >= 0 && iBad > iWhy, { iWhy, iBad });
+}
+// 512 装不下「20 条编号 + 一句话理由」，截断后 parseReviewBad 返回 null → 复核静默失效。
+t('★ 复核预算抬到 768（0.5.8.8）', src.includes('maxTokens: 768'), '');
 t('收下时清标记', src.includes("memReviewWhy: ''"));
 
 await initSettings();

@@ -378,7 +378,7 @@ const CHAR_KEYS = [
 const FOLLOW_KEYS = ['descLevel', 'detailDrive', 'verbosity'];
 
 /** 回复长度的中文名（只在 toast / 弹窗里用；控件本身的文案在 index.html 的 option 里） */
-const LEN_LABEL = { veryShort: '极短', short: '短', medium: '中', long: '长', epic: '长篇' };
+const LEN_LABEL = { veryShort: '很短', short: '短', medium: '中等', long: '长', epic: '长篇' };  // 必须和 index.html 三个 select（s-/e-/g-）的 option 文案逐字一致
 
 /** 从一份参数里摘掉三态键 —— 用于"继承全局"的场合（新建角色/导入卡） */
 function omitFollowKeys(o) {

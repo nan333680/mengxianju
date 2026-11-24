@@ -32,7 +32,7 @@
 
 ⚠️ 一个必须记住的坑：`migrateFollowKeysToGlobal`（v0.3.1 那次迁移）原来是跟着 `FOLLOW_KEYS` 走的，加了第三个键之后，只要 `followKeysMigrated` 标记没落（新设备 / 从备份恢复），一启动就会把 25 个角色单独设过的 verbosity 全删掉。现在**冻结成 `MIGRATE_KEYS_V031`**，只认那两个描写档位。
 
-测试：定向 8 套 341 项全绿（deflavor 56 / epic 47 / memreview 28 / followkeys 30 / settings 55 / cardio 16 / charcard 67 / ccsync 42）。**全套 182 套本轮未跑** —— 时间不够，留到下一轮补。
+测试：**全量 182 套 / 4997 项 / 0 失败 / 64.8 分钟**（2026-11-24 19:02，`DONE`，exit 0，一次跑完、无重试）。4997 = 上一版的 4984 + 13（deflavor +4 / epic +2 / memreview +2 / followkeys +5）。全量之前先定向跑过 8 套 / 341 项（含被这次改动波及的 cardio / charcard / ccsync），全绿。
 
 这一版没做的：群聊旁白（笔 3）、记忆正文改第三人称、`subject` 标错的 4 条、给 `long` 档加下限（`persona.js:219-222` 的实测结论不推翻）。
 ### 0.5.8.7（versionCode 208 · 测试版，未进 version.json）

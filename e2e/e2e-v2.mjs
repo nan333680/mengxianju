@@ -395,7 +395,13 @@ prog("B1 say done");
 const h1 = await since(mm);
 prog("B1 since done");
 const k1 = h1.once.map(x => x.kind).sort().join(",");
-t("B1 一轮里独白和判断各跑一次", k1 === "dir,inner", "实际=" + k1);
+// ⚠️ v0.5.8.10：一轮里多了第三条非流式 —— 状态卡片（不挂 liveV2）。
+//    这里只比 dir / inner；卡片那条在下面单独认领，不当成"意外多出来的请求"。
+const k1Real = h1.once.filter(x => x.kind !== "other").map(x => x.kind).sort().join(",");
+t("B1 一轮里独白和判断各跑一次", k1Real === "dir,inner", "实际=" + k1Real + "（全量 " + k1 + "）");
+const k1Other = h1.once.filter(x => x.kind === "other");
+t("B1 多出来的那条是状态卡片", k1Other.every(x => x.all.indexOf("只记一样东西") >= 0),
+  k1Other.map(x => x.all.slice(0, 60)).join(" | "));
 // v0.5.5.3 的核心断言：正文只该有一条。三条候选（0.85/1.0/1.15）已经撤了 ——
 // 官方 thinking_mode 文档写明思考模式下 temperature 无效，那三条本来就不是三种风格。
 t("B1 正文只有一条流式（三条候选已撤）", h1.stream.filter(x => !x.isRewrite).length === 1, "流式请求数=" + h1.stream.length);

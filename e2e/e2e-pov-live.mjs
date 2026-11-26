@@ -27,7 +27,10 @@ page.on('request', req => {
     if (req.method() === 'OPTIONS') { req.respond({ status:204, headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'*'} }); return; }
     let body = {};
     try { body = JSON.parse(req.postData() || '{}'); } catch {}
-    if (body.messages) captured.push(body.messages);
+    // ⚠️ v0.5.8.10：一轮里不止一条请求了 —— 状态卡片也会发（非流式、没有 system）。
+    //    所以要连 stream 一起存下来，下面只挑【正文那一条】看，不能拿 captured[0]：
+    //    两条是并发发的，谁先到不确定。
+    if (body.messages) captured.push({ messages: body.messages, stream: !!body.stream });
     if (body.stream) {
       const reply = ['测试回复'];
       const payload = 'data: ' + JSON.stringify({ choices: [{ delta: { content: reply[0] } }] }) + String.fromCharCode(10,10) + 'data: [DONE]' + String.fromCharCode(10,10);
@@ -87,9 +90,10 @@ await page.evaluate(() => { const i = document.getElementById('input'); i.value 
 await sleep(300);
 await jsClick('#btn-send');
 await sleep(3500);
-const sysOn = captured.length ? ((captured[0].find(m => m.role === 'system') || {}).content || '') : '';
-console.log('   捕获请求: ' + captured.length + ' | system 长度: ' + sysOn.length);
-t('发出了请求', captured.length > 0);
+const genOn = captured.find(x => x.stream) || null;
+const sysOn = genOn ? ((genOn.messages.find(m => m.role === 'system') || {}).content || '') : '';
+console.log('   捕获请求: ' + captured.length + '（正文 1 + 其它） | system 长度: ' + sysOn.length);
+t('发出了正文请求', !!genOn);
 t('system 含「# 视角」', sysOn.includes('# 视角'), sysOn.slice(-150));
 t('含「只能站在【你自己的视角】」', sysOn.includes('只能站在【你自己的视角】'));
 t('含环境说明', sysOn.includes('你注意到的环境'));
@@ -117,7 +121,8 @@ await page.evaluate(() => { const i = document.getElementById('input'); i.value 
 await sleep(300);
 await jsClick('#btn-send');
 await sleep(3500);
-const sysOff = captured.length ? ((captured[0].find(m => m.role === 'system') || {}).content || '') : '';
+const genOff = captured.find(x => x.stream) || null;
+const sysOff = genOff ? ((genOff.messages.find(m => m.role === 'system') || {}).content || '') : '';
 console.log('   system 长度: ' + sysOff.length);
 t('关了之后没有视角段', !sysOff.includes('# 视角'), sysOff.slice(-120));
 t('表达方式段还在', sysOff.includes('# 表达方式'));

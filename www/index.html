@@ -757,6 +757,27 @@
       </button>
     </section>
 
+    <!-- 「记住东西在哪」（0.5.8.10）状态卡片。
+         病灶：她把眼镜摘下放桌上，五六轮之后只剩「摘下」；咲夜把换洗的衣物放在门口，
+         十五轮之后她还在为「没有干净衣服」发愁。信息一直在上下文里 —— 不是记不住，是没连上。
+         ⚠️ 它【不放进】「角色怎么想」那个 group：那个开关管的是独白和判断，
+            而这一条答的是「东西在哪」，关着判断层的时候它照样该工作。
+         ⚠️ 默认开。不加这一条的话，关着 v2 的用户连『位置』都没有（实测 1253 条注入快照里
+            pose 非空 0 条 —— 那条通道从来没跑过）。 -->
+    <section class="group">
+      <h3 data-i18n-en="Keeping track of things">记住东西在哪</h3>
+      <label class="look-switch" data-i18n-nodes>
+        <input type="checkbox" id="s-posecard">
+        <span data-i18n-en="Note what the character looks like each turn">每轮记下「她这会儿什么样」</span>
+      </label>
+      <p class="hint-text" data-i18n-en-html="One extra small request per turn — where she is, what she is doing, what is in her hands, what she is wearing, and <b>what is lying next to her</b>. That last one is the bit that gets forgotten: the glasses left on the table, the clean clothes waiting outside the door.<br>It writes nothing but that picture — no mood, no plans. It does <b>not</b> depend on the thinking pipeline above; turning that off does not turn this off.<br>A failed call just means this turn was not recorded; it never blocks the reply.">
+        每一轮多问一次：在哪、什么姿势、手里拿着什么、身上穿着什么、<b>身边搁着什么</b>。<br>
+        最后那一项是最容易被忘的 —— 眼镜搁在桌上、干净衣服在门口。写成一行，每轮都在提示词里。<br>
+        它只记画面，不写情绪、不写打算，和上面「活人感管线」无关：那个关着它照样工作。<br>
+        一次很小的请求（约 200 token），和正文同时发；没连上就是这一轮没记上，不挡回复。
+      </p>
+    </section>
+
     <section class="group">
       <h3 data-i18n-en="Composer">写字台</h3>
       <p class="hint-text" data-i18n-en-html="Only the <b>input box</b>. It never changes how the character replies.">只改输入框，不影响角色怎么回。</p>

@@ -73,7 +73,11 @@ t('20 normalizeDirector 白名单收了 now', /now: cut\(raw\.now, 40\)/.test(DI
 // 0.5.8.9：解构里多了 outline（剧情小纲要给判断层读）—— 断言跟着加，但 prevPose 仍必须在这条里。
 t('21 runDirector 读 prevPose', /\{ stable, recent, userText, psyche, api, signal, roster, target, plot, outline, prevPose \}/.test(DIR));
 t('22 poseBlock 拼进了 system 消息', /poseBlock \+ whoBlock \+ ASK/.test(DIR));
-t('23 惯性块里写明「以聊天记录为准」', DIR.indexOf('聊天记录里已经动过了') > 0);
+// ⚠️ v0.5.8.10 改了这一句：原文「聊天记录里已经动过了，就以聊天记录为准，改过来」
+//    是【危险授权】—— 判断层只看得到最近 8 条，「它没看到」被它读成「没动过」，
+//    于是把还在的槽（门口搁着的衣裳）当成过期清掉。现在只认「明确写了变了」。
+t('23 惯性块改成「明确写了变了才改，没提的照抄」',
+  DIR.indexOf('【明确写了】某一项变了') > 0 && DIR.indexOf('聊天记录里已经动过了') < 0);
 
 console.log('=== 7. 正文侧：让位句 + 你现在在哪 ===');
 const PER = readJs('persona.js');
@@ -82,7 +86,9 @@ const lifeSeg = lifeIdx >= 0 ? PER.slice(lifeIdx, lifeIdx + 220) : '';
 t('24 让位句在 lifeLine 那一段里', lifeIdx > 0);
 t('25 让位句不含「她」', lifeSeg.indexOf('她') < 0, lifeSeg.slice(0, 60));
 t('26 让位句要求以聊天记录为准', lifeSeg.indexOf('以聊天记录为准') > 0);
-t('27 有「你现在在哪」那一段', PER.indexOf('# 你现在在哪') > 0);
+// ⚠️ v0.5.8.10 改了标题：内容从「40 字位置」变成五槽画面（在哪/姿势/手里/身上/身边），
+//    「你现在在哪」已经盖不住穿着和身边搁着的东西。
+t('27 有「你这会儿的样子」那一段', PER.indexOf('# 你这会儿的样子') > 0);
 t('28 pose 是 buildTurnNote 的参数', /pose = '',/.test(PER));
 
 console.log('=== 8. app.js：开关 / 稀疏存储 / 弹窗 ===');
@@ -91,8 +97,10 @@ t('29 lifeSelf 传进了 deriveLife', APP.indexOf('lifeSelf: S.lifeSelf !== fals
 t('30 lifeSlots 也传进去了', APP.indexOf('slots: S.lifeSlots') > 0);
 t('31 DEFAULTS 里 lifeSelf 默认开', /lifeSelf: true,/.test(APP));
 t('32 DEFAULTS 里 lifeSlots 默认空对象（稀疏）', /lifeSlots: \{\},/.test(APP));
-t('33 正文只认本轮的 now，不拿 stale 兜底',
-  APP.indexOf("pose: (LIVE && psyDir && psyDir.now) ? psyDir.now : '',") > 0);
+// ⚠️ v0.5.8.10：来源多了一个（状态卡片五槽，优先），但「不拿库里的旧值兜底」这条没变 ——
+//    两个来源都只认【本轮】的，空就是空，那一段整段不出现。
+t('33 正文只认本轮的来源，不拿 stale 兜底',
+  APP.indexOf("pose: poseCard || ((LIVE && psyDir && psyDir.now) ? psyDir.now : ''),") > 0);
 t('34 弹窗标题中性化成「角色本来在做」', APP.indexOf("tt('角色本来在做')") > 0);
 t('35 弹窗小字指向「角色自己的生活」', APP.indexOf('要改去「角色自己的生活」') > 0);
 t('36 设置页有七个文本框的渲染', APP.indexOf('data-life-slot') > 0);

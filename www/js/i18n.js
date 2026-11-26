@@ -518,7 +518,12 @@ const EXTRA_ZH = {
   // 弹窗上写死「她」等于替所有角色认了性别。旧 key 一并删掉：全仓只有 app.js 一处用它。
   '角色本来在做': 'What the character was doing',
   // v0.5.8.4：检查器里「从聊天记录提取到的位置」那一格 + 时段处境那行小字。
+  // v0.5.8.10：这一格的内容从「40 字位置」变成「五槽画面」，多了两种失败态。
   '角色此刻': 'Where the character is now',
+  '这一轮是判断层顺手记的（状态卡片没记成）。':
+    'Recorded by the judgement pass this turn — the state card did not come back.',
+  '这一轮没记成 —— 请求超时或没连上，不是她忘了。':
+    'Not recorded this turn — the request timed out or did not connect. This is not the character forgetting.',
   // v0.5.8.5：「编辑作息表」入口那行没改动过时的显示。
   '默认': 'Default',
   '这是软件按时段配的处境，不是角色卡的设定。要改去「角色自己的生活」。':

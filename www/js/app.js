@@ -55,6 +55,10 @@ import { checkUpdate, markChecked } from './updater.js';
 import { runInner } from './innerthought.js';
 // 剧情小纲（0.5.8.9）：独立一次规划请求，见 plotoutline.js 头上那两段。
 import { runOutline } from './plotoutline.js';
+// 状态卡片（0.5.8.10）：每轮一条「她现在什么样」。
+// 为什么单独一条通道、不并进判断层：见 posecard.js 头上那三条理由。
+// 它【不挂 liveV2】—— 判断层关着的时候正是它最该在的时候。
+import { runPose } from './posecard.js';
 // 周期性反思（0.5.4.1，借 Generative Agents 的 reflection）：
 // 把攒了几天的几件事合成一条更稳的看法，写回 beliefs。
 // 一天最多一次，失败返回 null，不挡聊天。
@@ -198,6 +202,15 @@ const DEFAULTS = {
   // ⚠️ 关掉只关【那句话】，不关 busy / energy —— 那两个决定回车速度和语气（planCadence
   //    直接吃这两个数），和「要不要说出她在做什么」是两件事。见 deriveLife 的注释。
   lifeSelf: true,
+  // —— 「记住东西在哪」（0.5.8.10）——
+  // 每轮一个小请求：她现在在哪｜什么姿势｜手里｜身上｜身边搁着什么。
+  // 治的是「眼镜放桌上了，五轮之后只剩『摘下』」这类细节丢。
+  //
+  // ⚠️ 默认【开】，而且【不挂 liveV2】：它答的是「东西在哪」，不是「她怎么想」。
+  //    判断层关着的机器（实测用户就是关着的）恰恰是它最该在的时候 ——
+  //    那种机器上一轮状态通道都没有，全靠注意力，十几轮之后就断。
+  // ⚠️ 判空一律写 S.poseCard !== false（和 liveV2 / lifeSelf 同惯例）。
+  poseCard: true,
   // 作息表的【稀疏覆盖】：key = 档位的起始小时（'0' / '7' / '10' / '13' / '15' / '19' / '23'），
   // value = 候选词数组（一行一个）。空数组 = 这一段不写。
   // ⚠️ 只存用户在设置页改过的段 —— 没改过的段落在库里没有这个键，继续用内置表。
@@ -8583,21 +8596,42 @@ let namedInText = false;
       psyBefore = normalizePsyche({ ...psyBefore, life: deriveLife(psyBefore, { now: _now0, hour: _lifeHour, char: myChar, rnd: lifeRndFor(myChar.id, _lifeHour), lifeSelf: S.lifeSelf !== false, slots: S.lifeSlots }) });
     } catch { /* 推导失败就沿用读到的旧生活状态，不影响下面的判断 */ }
 
+    // 「上一轮记下的那行状态」（0.5.8.4 起，0.5.8.10 扩成五槽）：
+    //   判断层拿它当提取的惯性输入，状态卡片拿它当继承源。
+    // ⚠️ 这里是【唯一权威】那一份：'pose:<charId>' 只由状态卡片写（见下面写库那段）。
+    //    判断层的 now 只在卡片没记成时兜底注入，【不落库】——
+    //    两边都写就会互相覆盖，而且每覆盖一次就缩一次（40 字 vs 五槽）：
+    //    卡片写五槽 → 判断层读五槽压成 40 字写回去 → 卡片下一轮只读到 40 字 → 越滚越短。
+    const poseKey = 'pose:' + myChar.id;
+    let prevPose = '';
+    try {
+      const pv = await kv.get(poseKey, null);
+      prevPose = String((pv && pv.text) || '').trim();
+    } catch { prevPose = ''; }
+    const recentForJudge = (pastRaw || []).slice(-12).map(m => ({ role: m.role, content: m.content }));
+
+    // —— 状态卡片（0.5.8.10）：这一轮她什么样 ——
+    // 在这里【只建 promise、不 await】：下面 liveV2 那两趟（独白 + 判断）也要几秒，
+    // 让它们一起在飞。v2 关着的时候它就是唯一在跑的并行任务，等它 2~4 秒，
+    // 正好藏在「点完发送到第一个字出来」这段本来就空着的时间里。
+    // ⚠️ 不挂 liveV2：它答的是「东西在哪」，不是「她怎么想」。
+    // ⚠️ 失败返回 ''（runPose 内部已经 catch），所以这里不用再兜 —— 绝不能挡住正文。
+    const poseOn = S.poseCard !== false && !!S.apiKey;
+    const posePromise = poseOn
+      ? runPose({
+          recent: recentForJudge,
+          userText: visibleText,
+          prev: prevPose,
+          api: { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider },
+          signal: abortCtl && abortCtl.signal
+        })
+      : Promise.resolve('');
+
     if (LIVE && S.apiKey) {
       // ⚠️ v0.5.5.3：20s → 12s。这两趟在正文之前，谁跑满整轮就多等多久。
       //    两个都有兜底（独白拿不到就用判断层那句，判断拿不到就退回老路径），
       //    所以宁可早点放弃，也不让人盯着空白气泡。
       const apiCfg = { apiKey: S.apiKey, baseUrl: S.baseUrl, model: S.model, provider: S.provider, timeoutMs: 12000 };
-      // 「上一轮记下的位置」（0.5.8.4）：给判断层当惯性用。
-      // ⚠️ 它只进【判断调用】，绝不进正文提示词（正文只认本轮拿到的 now）。
-      //    过时的位置一旦进正文，就是「她明明站着、提示词说她躺着」那个病。
-      const poseKey = 'pose:' + myChar.id;
-      let prevPose = '';
-      try {
-        const pv = await kv.get(poseKey, null);
-        prevPose = String((pv && pv.text) || '').trim();
-      } catch { prevPose = ''; }
-      const recentForJudge = (pastRaw || []).slice(-12).map(m => ({ role: m.role, content: m.content }));
       // 独白和判断没有先后依赖 —— 串行就是白等一倍。两个都失败也能继续。
       const [innerGot, dirGot] = await Promise.all([
         runInner({ stable: sysStable, recent: recentForJudge, userText: visibleText, api: apiCfg, signal: abortCtl && abortCtl.signal })
@@ -8629,23 +8663,31 @@ let namedInText = false;
       ]);
       innerText = String(innerGot || '');
       psyDir = dirGot || null;
-      // 「你此刻在哪」（0.5.8.4）：本轮拿到了就写库，给下一轮当惯性输入。
-      //
-      // ⚠️ 没拿到【不覆盖】库里那一条，只把它标成 stale：
-      //    下一轮还需要它当提取器的参照（不给的话，模型每轮都重新猜一个位置，
-      //    比现在更乱）。但 stale 的值【永远不进正文提示词】——
-      //    正文那一侧读的是 psyDir.now（本轮），见下面 buildTurnNote 的 pose 参数。
-      try {
-        const nowPose = String((psyDir && psyDir.now) || '').trim();
-        if (nowPose) await kv.set(poseKey, { text: nowPose, at: Date.now() });
-        else {
-          const old = await kv.get(poseKey, null);
-          if (old && old.text && !old.stale) await kv.set(poseKey, { ...old, stale: true });
-        }
-      } catch (err) { console.warn('[pose] 写库失败：' + ((err && err.message) || err)); }
+      // 「你此刻在哪」（0.5.8.4）原本在这里写 pose 库 —— 0.5.8.10 起【不写了】。
+      // 写的人是状态卡片（见下面那一段）。理由：同一个键两个写者必然互相覆盖，
+      // 而判断层那一侧只有 40 字，每覆盖一次就把五槽压扁一次。
+      // 判断层的 now 只留一个用处：卡片没记成时兜底注入这一轮（不落库）。
     }
     // 独白兜底：独白那次没回来时，用判断层写下的那一句（只有 60 字，但总比没有强）。
     if (!innerText && psyDir && psyDir.inner) innerText = psyDir.inner;
+
+    // —— 状态卡片（0.5.8.10）：收这一轮的结果 ——
+    //
+    // 到这里 liveV2 那两趟已经跑完，所以这一行几乎不用等（卡片 2~4 秒，它们 6~12 秒）。
+    // 记成了就落库 —— 它是 'pose:<charId>' 唯一的写者，下一轮判断层和卡片都读它。
+    // 没记成【不覆盖】旧值（旧值下一轮还能当继承源，比丢了强），注入侧也【不拿旧值顶】
+    // （过时的位置进正文就是 0.5.8.4 治的那个病：她明明站着，提示词说她躺着）。
+    let poseCard = '';
+    let poseCardFail = false;
+    if (poseOn) {
+      try { poseCard = String(await posePromise || '').trim(); }
+      catch (err) { poseCard = ''; console.warn('[posecard] 取值失败：' + ((err && err.message) || err)); }
+      if (!poseCard) poseCardFail = true;
+      else {
+        try { await kv.set(poseKey, { text: poseCard, at: Date.now() }); }
+        catch (err) { console.warn('[posecard] 写库失败：' + ((err && err.message) || err)); }
+      }
+    }
 
     // 落库：就算这一轮判断失败，也要把【衰减后的】状态写回去 ——
     // 否则「昨晚那点火气」会一直停在原处不降（衰减只在读的时候发生，不写回就白算）。
@@ -8678,10 +8720,16 @@ let namedInText = false;
       // 而实测用户把 v2 关了（liveV2=false），这段提示词就从来没进过上下文。
       // 它只是纯本地一行字，不额外调用模型，v2 关着也照样给。
       lifeLine: lifeLine(psyBefore),
-      // 「你此刻在哪」（0.5.8.4）：判断层这一轮顺手记下的位置/姿势。
-      // ⚠️ 只认【本轮】的值。判断失败 / 没写 now 时是空串，那一段整段不出现 ——
-      //    不拿库里那条 stale 兜底（那样就等于把「她明明站着、提示词说她躺着」搬回来）。
-      pose: (LIVE && psyDir && psyDir.now) ? psyDir.now : '',
+      // 「你这会儿的样子」（0.5.8.4 起，0.5.8.10 扩成五槽）：这一轮的她是什么样。
+      //
+      // 两个来源，优先级写死：
+      //   ① 状态卡片的五槽（0.5.8.10）—— 不挂 liveV2，判断层关着的时候也照样有；
+      //   ② 判断层的 now（0.5.8.4）—— 只在卡片【这一轮没记成】时兜底。
+      // 两者都空 → 空串 → persona 那段整段不出现（老提示词逐字不变）。
+      //
+      // ⚠️ 不拿库里的旧值兜底：过时的位置进正文就是 0.5.8.4 治的那个病
+      //    （她明明站着，提示词说她躺着）。宁可这一轮没有。
+      pose: poseCard || ((LIVE && psyDir && psyDir.now) ? psyDir.now : ''),
       // 续写（0.5.8.5）：只用来判断「这一段空档能不能先带过去」，别处不读。
       // cont 在 :7826 就定好了（opts.cont），和 CONT_NUDGE 是同一个来源。
       cont,
@@ -8814,10 +8862,21 @@ let namedInText = false;
       // 之前这里没有它，出问题只能靠回复反推；有了它，改完之后翻任何一轮
       // 都看得见当时的 lifeLine 到底是什么，验证才有落点。
       life: _cut(lifeLine(psyBefore), 40),
-      // 「你此刻在哪」（0.5.8.4）：判断层这一轮记下的位置/姿势。
+      // 「你这会儿的样子」（0.5.8.4 起，0.5.8.10 扩成五槽）。
       // 和上面 life 那格并排显示，用户能一眼看出「按钟点推的处境」和「聊天记录里的实际位置」
       // 差在哪 —— 症状 B（她站着、提示词说躺着）就是这两格打架。
-      pose: _cut((LIVE && psyDir && psyDir.now) || '', 40),
+      //
+      // ⚠️ 0.5.8.10 起这里记的是【真正注入的那一份】，不是 psyDir.now：
+      //    真正进提示词的是卡片五槽（优先级见 buildTurnNote），卡片没记成才退回 now。
+      //    记错来源的话，用户翻面板会以为她看到了、其实没看到。
+      // ⚠️ 【不截断】：这一格就是拿来核对五槽齐不齐的，砍到 40 字等于砍掉「身边」那一槽。
+      pose: poseCard || ((LIVE && psyDir && psyDir.now) ? psyDir.now : ''),
+      // 这一行是谁给的：'card' = 状态卡片（不挂 v2），'now' = 判断层兜底，'' = 这一轮没有。
+      poseSrc: poseCard ? 'card' : ((LIVE && psyDir && psyDir.now) ? 'now' : ''),
+      // 卡片这一轮【没记成】（超时 / 没连上 / 格式不对）。
+      // 为什么必须显示出来：它和「她忘了」在界面上长得一模一样 ——
+      // 用户会以为模型记不住，其实是这一趟没回来。不写出来就永远分不清。
+      poseFail: !!(poseOn && poseCardFail),
     };
 
     // —— 联网搜索（只有明确打了 /搜 才走这里）——
@@ -12576,9 +12635,24 @@ async function showInj(inj) {
       + '<div class="inj-row">' + esc(String(inj.life)) + '</div>'
       + '<i class="inj-why">' + esc(tt('这是软件按时段配的处境，不是角色卡的设定。要改去「角色自己的生活」。')) + '</i>');
   }
-  if (inj.pose) {
-    secs.push('<h4 class="inj-h">' + esc(tt('角色此刻')) + '</h4>'
-      + '<div class="inj-row">' + esc(String(inj.pose)) + '</div>');
+  // —— 「你这会儿的样子」（0.5.8.4 / 0.5.8.10 扩成五槽）——
+  // 三种状态必须分开显示，因为它们看起来一样、原因完全不同：
+  //   ① 有五槽 → 状态卡片记成了（每轮一个小请求，不挂 v2）
+  //   ② 只有 40 字那一句 → 卡片没记成，判断层兜底的（v2 开着才有）
+  //   ③ 明说「没记成」→ 请求超时 / 没连上 / 格式不对。不写出来，用户会读成「她又忘了」，
+  //      然后去改提示词、改角色卡，而真正该看的是网络。
+  if (inj.pose || inj.poseFail) {
+    const rows = [];
+    if (inj.pose) {
+      rows.push('<div class="inj-row">' + esc(String(inj.pose)) + '</div>');
+      if (inj.poseSrc === 'now') {
+        rows.push('<i class="inj-why">' + esc(tt('这一轮是判断层顺手记的（状态卡片没记成）。')) + '</i>');
+      }
+    }
+    if (inj.poseFail) {
+      rows.push('<i class="inj-why">' + esc(tt('这一轮没记成 —— 请求超时或没连上，不是她忘了。')) + '</i>');
+    }
+    secs.push('<h4 class="inj-h">' + esc(tt('角色此刻')) + '</h4>' + rows.join(''));
   }
   if (inj.arc) {
     const ai = (Number(inj.arc.i) || 0) + 1;
@@ -18930,6 +19004,18 @@ function bindSettings() {
       (ok ? '' : '（原生那侧没响应，可能本来就没启用）'), 4200);
   };
 
+  // 状态卡片（0.5.8.10）：每轮一条「她现在什么样」。
+  // ⚠️ 和上面那个开关【并列、不嵌套】—— 它不挂 liveV2。
+  //    判断层关着的时候正是它最该在的时候：那种机器上一轮状态通道都没有。
+  $('s-posecard').checked = S.poseCard !== false;
+  $('s-posecard').onchange = async e => {
+    const on = !!e.target.checked;
+    await saveSettings({ poseCard: on });
+    toast(on
+      ? '开始记了：从下一条起，每轮多一次很小的请求'
+      : '不记了：她手里的、身上的、屋里搁着的，会随对话慢慢淡掉', 3200);
+  };
+
   // —— 「角色自己的生活」（0.5.8.4）——
   // 七个时段各一个文本框，一行一个候选词；留空 = 这一段不写。
   //
@@ -22845,7 +22931,7 @@ function bindBackButton() {
  * 不会再漂移。桌面浏览器上这个 API 必抛 unimplemented，用常量兜底 ——
  * 构建脚本会断言这个常量和 build.gradle 一致，对不上就构建失败。
  */
-const WEB_VERSION_FALLBACK = '0.5.8.9';
+const WEB_VERSION_FALLBACK = '0.5.8.10';
 
 /** 源码地址。换了仓库记得改这里（关于页和 README 都用它）。 */
 const REPO_URL = 'https://github.com/nan333680/mengxianju';

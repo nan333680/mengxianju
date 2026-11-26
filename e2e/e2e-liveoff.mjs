@@ -196,7 +196,18 @@ const h1 = await since(mm);
 const nS1 = h1.stream.length;
 const nO1 = h1.once.length;
 t("L1 关掉后一轮只有 1 次流式请求", nS1 === 1, "实际=" + nS1);
-t("L1 关掉后没有独白 / 判断 / 评审（0 次非流式）", nO1 === 0, "实际=" + nO1 + "：" + h1.once.map(x => x.kind).join(","));
+// ⚠️ v0.5.8.10：关掉这个开关之后【不再】是一条非流式都没有了 ——
+//    状态卡片（posecard.js）不挂 liveV2，它答的是「东西在哪」，不是「她怎么想」。
+//    所以这里只数 dir / inner / crit / proactive，多出来的 those 在下面那条里认领。
+const onceReal1 = h1.once.filter(x => x.kind !== "other");
+t("L1 关掉后没有独白 / 判断 / 评审（0 次非流式）", onceReal1.length === 0,
+  "实际=" + onceReal1.length + "：" + onceReal1.map(x => x.kind).join(","));
+// 多出来的那条必须【确认是状态卡片】—— 不能只是被排除掉：
+// 否则以后任何一条来历不明的非流式请求都会从这里溜过去。
+const others1 = h1.once.filter(x => x.kind === "other");
+t("L1 多出来的那条非流式确实是状态卡片（不是别的东西）",
+  others1.length === 1 && others1[0].all.indexOf("只记一样东西") >= 0,
+  others1.length + " 条：" + others1.map(x => x.all.slice(0, 60)).join(" | "));
 const gen1 = (h1.stream[0] || {}).all || "";
 t("L2 关掉后提示词里没有「你脑子里刚转过这几句」", gen1.indexOf("# 你脑子里刚转过这几句") < 0);
 t("L2 关掉后提示词里没有「你这会儿的状态」", gen1.indexOf("# 你这会儿的状态") < 0);
@@ -229,7 +240,10 @@ await say("再说一句");
 const h2 = await since(mm);
 const kinds = h2.once.map(x => x.kind).sort().join(",");
 // v0.5.5.3：三条候选和评审撤了，打开后只剩独白 + 判断（各一次，并行）。
-t("L4 打开后独白 + 判断都在", kinds === "dir,inner", "实际=" + kinds);
+// ⚠️ v0.5.8.10：一轮里多了第三条非流式（状态卡片）。只比 dir / inner，
+//    卡片那条不影响「打开之后独白和判断都在」这句话的真假。
+const kindsReal = h2.once.filter(x => x.kind !== "other").map(x => x.kind).sort().join(",");
+t("L4 打开后独白 + 判断都在", kindsReal === "dir,inner", "实际=" + kindsReal + "（全量 " + kinds + "）");
 const temps = h2.stream.filter(x => !x.isRewrite).map(x => Number(Number(x.temp).toFixed(2)));
 t("L4 打开后正文只有一条，温度就是角色值", temps.length === 1 && temps[0] === 1, temps.join(","));
 const gen2 = (h2.stream.find(x => !x.isRewrite) || {}).all || "";

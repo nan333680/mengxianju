@@ -122,6 +122,43 @@ const gotoChar = async (name) => {
   await sleep(250);
 };
 const typeText = (s) => page.evaluate((x) => { const i=document.getElementById('input'); i.value=x; i.dispatchEvent(new Event('input',{bubbles:true})); }, s);
+// 长按她的那条回复 → 更多… →「这一轮用了什么」→ 读出弹窗文本 → 关掉。
+//
+// ⚠️ 三条都是踩出来的（CI 上连红三版才定位到）：
+//   ① 必须点【assistant 那条】，不能拿 els[els.length-1]。CI 里最后一条不一定是她的。
+//   ② 菜单项是异步渲染的，点 [data-more] 之前要等它出现。
+//   ③ 每一步找不到就【抛】，不要 if (b) b.click() 静默跳过 ——
+//      静默跳过的后果是弹窗根本没开，然后四条断言一起红，看起来像检查器坏了。
+const openInjPanel = async () => {
+  const okMsg = await page.evaluate(() => {
+    const list = [...document.querySelectorAll('#messages .msg')].filter(x => x.classList.contains('ai'));
+    const el = list[list.length - 1];
+    if (!el) return false;
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    return true;
+  });
+  if (!okMsg) throw new Error('消息列表里没有 assistant 气泡');
+  await waitFor(() => !!document.querySelector('.msg-menu'));
+  const more = await page.evaluate(() => {
+    const m = document.querySelector('.msg-menu [data-more]');
+    if (!m) return false;
+    m.click(); return true;
+  });
+  if (!more) throw new Error('长按菜单里没有「更多…」');
+  await waitFor(() => [...document.querySelectorAll('.msg-menu button')].some(x => x.textContent.indexOf('这一轮用了什么') >= 0));
+  const clicked = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.indexOf('这一轮用了什么') >= 0);
+    if (!b) return false;
+    b.click(); return true;
+  });
+  if (!clicked) throw new Error('长按菜单里没有「这一轮用了什么」');
+  await waitFor(() => { const m = document.getElementById('modal'); return m && !m.classList.contains('hidden'); });
+  await sleep(300);
+  const txt = await page.evaluate(() => { const b = document.getElementById('modal-text'); return b ? b.textContent : ''; });
+  await page.evaluate(() => { const b = document.getElementById('modal-ok'); if (b) b.click(); });
+  await sleep(250);
+  return txt;
+};
 // 发一句 + 等这一轮真的结束。
 // 判据不是"转圈圈停了"（CI 上它可能在两次请求的间隙里短暂不转），
 // 而是【消息数多出两条】（他的 + 她的）且按钮不再处于停止态。
@@ -308,24 +345,10 @@ await sendOne('咲夜把换洗的衣物放在门口外面，没有进去过。')
 
 console.log('');
 console.log('--- 长按 →「这一轮用了什么」要能看到那五槽 ---');
-await page.evaluate(() => {
-  const els = document.querySelectorAll('#messages .msg');
-  const el = els[els.length - 1];
-  el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
-});
-await page.waitForFunction(() => !!document.querySelector('.msg-menu'), { timeout: 8000 }).catch(() => {});
-await sleep(300);
-await page.evaluate(() => { const m = document.querySelector('.msg-menu [data-more]'); if (m) m.click(); });
-await sleep(300);
-await page.evaluate(() => { const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.indexOf('这一轮用了什么') >= 0); if (b) b.click(); });
-await page.waitForFunction(() => { const m = document.getElementById('modal'); return m && !m.classList.contains('hidden'); }, { timeout: 8000 }).catch(() => {});
-await sleep(400);
 {
-  const txt = await page.evaluate(() => { const b = document.getElementById('modal-text'); return b ? b.textContent : ''; });
+  const txt = await openInjPanel();
   t('检查器里有「角色此刻」那一格', txt.indexOf('角色此刻') >= 0, txt.slice(0, 120));
   t('检查器里显示的是五槽（不是 40 字那句）', txt.indexOf('身边：') >= 0, txt.slice(0, 300));
-  await page.evaluate(() => { const b = document.getElementById('modal-ok'); if (b) b.click(); });
-  await sleep(300);
 }
 
 console.log('');
@@ -355,24 +378,10 @@ await sendOne('你要去洗澡吗。');
 
 console.log('');
 console.log('--- 失败那一轮，检查器要说出「这一轮没记成」---');
-await page.evaluate(() => {
-  const els = document.querySelectorAll('#messages .msg');
-  const el = els[els.length - 1];
-  el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
-});
-await page.waitForFunction(() => !!document.querySelector('.msg-menu'), { timeout: 8000 }).catch(() => {});
-await sleep(300);
-await page.evaluate(() => { const m = document.querySelector('.msg-menu [data-more]'); if (m) m.click(); });
-await sleep(300);
-await page.evaluate(() => { const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.indexOf('这一轮用了什么') >= 0); if (b) b.click(); });
-await page.waitForFunction(() => { const m = document.getElementById('modal'); return m && !m.classList.contains('hidden'); }, { timeout: 8000 }).catch(() => {});
-await sleep(400);
 {
-  const txt = await page.evaluate(() => { const b = document.getElementById('modal-text'); return b ? b.textContent : ''; });
+  const txt = await openInjPanel();
   t('★ 检查器明说「这一轮没记成」（不是让她背锅）', txt.indexOf('这一轮没记成') >= 0, txt.slice(0, 200));
   t('并且说清「不是她忘了」', txt.indexOf('不是她忘了') >= 0, '');
-  await page.evaluate(() => { const b = document.getElementById('modal-ok'); if (b) b.click(); });
-  await sleep(300);
 }
 
 console.log('');

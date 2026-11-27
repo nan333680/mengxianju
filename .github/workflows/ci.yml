@@ -168,8 +168,7 @@ jobs:
               # 起因：e2e-posecard 在 CI 里连红两次，而 job 日志要 admin 权限（403），
               # 页面上只剩一句"退出码 1"—— 白猜两轮，每轮二十分钟。
               # ::error:: 的消息里不能有换行，也不能有 ::，先洗掉。
-              $why = (@($out -split "?
-") | Where-Object { $_ -match '^s*FAIL|Error:|^汇总' } | Select-Object -Last 6) -join ' / '
+              $why = (@($out -split "\r?\n") | Where-Object { $_ -match '^\s*FAIL|Error:|^汇总' } | Select-Object -Last 6) -join ' / '
               if (-not $why) { $why = '(没有 FAIL 行，像是 puppeteer 层崩的)' }
               $why = ($why -replace '::', ':').Trim()
               Write-Host ("::error title=e2e 失败::e2e/$s.mjs 退出码 $code :: " + $why)

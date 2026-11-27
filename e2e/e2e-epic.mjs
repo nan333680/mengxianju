@@ -179,6 +179,37 @@ t('★ 复读并进了「复述」那条，没有新增条目（0.5.8.8）',
 // 0.5.8.8：单场景一幕分不出段，模型退化成「一句话一段」—— 判据补了一句。
 t('★ 分段判据说清了「不是一句话一段」（0.5.8.8）', s1.includes('不是说完一句话就换段'), '');
 
+// 0.5.8.11：密度下限。上面那组跑的是 epic + descLevel=low（baseChar 的默认），
+// 而实测 264 字 / 5 段 / 53 字每段是 epic + high（「丰富」）+ max（「极详」）量出来的。
+// 两件事分开测：1b 查新句子进没进 high，1c 查 off 档有没有被牵连。
+console.log('');
+console.log('=== 1b. 长篇 + 丰富（descLevel=high）+ 极详（max）：密度下限在，段数仍归 NARR_LEN ===');
+await seedAll('epic', { descLevel: 'high', detailDrive: 'max' });
+await page.goto('http://127.0.0.1:' + port + '/index.html', { waitUntil: 'networkidle0' });
+await sleep(1500);
+const r1b = await sendOne('雨下大了。');
+t('真的发出去了', !!r1b, '');
+const s1b = sysOf(r1b);
+t('★ 有密度下限那句（0.5.8.11）', s1b.includes('每一段里都要真的走过去一步'), '');
+t('★ 判据是「段首尾的局面」，不是「一句话」', s1b.includes('回头读这一段的首尾') && s1b.includes('局面一样，就是没走'), '');
+t('★ 段数仍由 NARR_LEN.high 管', s1b.includes('一条消息三到四段'), '');
+t('没有混进和段数同轴的「3-4 步」', !/3-4\s*步/.test(s1b), '');
+t('长篇体裁那句还在（LEN_HINT.epic）', /很长的一场戏/.test(s1b), '');
+t('极详的四层下限也在（LENS.max）', s1b.includes('下限【四层】'), '');
+
+console.log('');
+console.log('=== 1c. 长篇 + 不写（descLevel=off）：密度下限不进这一档 ===');
+await seedAll('epic', { descLevel: 'off' });
+await page.goto('http://127.0.0.1:' + port + '/index.html', { waitUntil: 'networkidle0' });
+await sleep(1500);
+const r1c = await sendOne('雨下大了。');
+t('真的发出去了', !!r1c, '');
+const s1c = sysOf(r1c);
+t('★ 不含「走过去一步」（off 档写不了局面）', !s1c.includes('走过去一步'), '');
+t('off 档「不写动作、神态、环境」还在', s1c.includes('不要写动作、神态、环境'), '');
+t('★ 两档共用的体裁句仍在', s1c.includes('这一条是一场戏，不是一条聊天消息'), '');
+t('off 分支自己的落点句还在', s1c.includes('这一场要有一个【落点】：结尾停在一句话上'), '');
+
 console.log('');
 console.log('=== 2. 普通档：没有长篇要求，max_tokens 保持 2048 ===');
 await seedAll('medium');

@@ -16,8 +16,8 @@
   <header class="topbar">
     <button class="icon-btn" id="btn-chars" title="角色" data-i18n-en-title="Character">☰</button>
     <div class="title" id="chat-title" data-i18n-nodes>
-      <span class="avatar-sm tap-edit" id="chat-avatar" title="点这里编辑她的设定" data-i18n-en-title="Tap to edit her profile">🎎</span>
-      <div class="title-txt tap-edit" id="chat-titletxt" title="点这里编辑她的设定" data-i18n-en-title="Tap to edit her profile">
+      <span class="avatar-sm tap-edit" id="chat-avatar" title="编辑这个角色" data-i18n-en-title="Edit this character">🎎</span>
+      <div class="title-txt tap-edit" id="chat-titletxt" title="编辑这个角色" data-i18n-en-title="Edit this character">
         <span id="chat-name" data-i18n-en="No character selected">未选择角色</span>
         <span class="sub" id="chat-status" data-i18n-en="Offline">离线</span>
       </div>
@@ -100,7 +100,7 @@
          内容与事件都由 app.js 的 showArcInline() 管。 -->
     <div id="arc-inline" class="arc-inline hidden"></div>
     <div class="composer-row">
-      <button class="icon-btn" id="btn-continue" title="让她接着往下写（不用你说话）" data-i18n-en-title="Let her keep writing (you do not have to speak)">⟳</button>
+      <button class="icon-btn" id="btn-continue" title="让角色接着往下写（不用你说话）" data-i18n-en-title="Let the character keep writing (you do not have to speak)">⟳</button>
       <textarea id="input" rows="1" data-i18n-en-ph="Say something..." placeholder="说点什么…"></textarea>
       <button class="icon-btn" id="btn-plus" title="附加功能" data-i18n-en-title="Extras" data-i18n-en="+">＋</button>
       <button class="send-btn" id="btn-send" data-i18n-en="Send">发送</button>
@@ -699,7 +699,7 @@
 
     <section class="group">
       <h3 data-i18n-en="Description & expression">描写与表达</h3>
-      <p class="hint-text" data-i18n-en-html="Quotation marks hold what she <b>says out loud</b>; everything outside them is action and setting you can see and hear; a pair of <b>*</b> holds what she does not say out loud.">引号里是她<b data-i18n-en="Spoken lines">说出口</b>的话；引号外面是看得见、听得见的动作和环境；一对 <b>*</b> 是她<b data-i18n-en="What was not said aloud">没说出口</b>的心理。</p>
+      <p class="hint-text" data-i18n-en-html="Quotation marks hold what the character <b>says out loud</b>; everything outside them is action and setting you can see and hear; a pair of <b>*</b> holds what was not said out loud.">引号里是角色<b data-i18n-en="Spoken lines">说出口</b>的话；引号外是看得见、听得见的动作和环境；一对 <b>*</b> 是<b data-i18n-en="What was not said aloud">没说出口</b>的心理。</p>
       <div class="field"><span data-i18n-en="Reply length (what she actually says)">回复长度（只管说出口的话）</span>
         <select id="s-verbosity">
           <option value="veryShort" data-i18n-en="Very short">很短</option>
@@ -768,13 +768,12 @@
       <h3 data-i18n-en="Keeping track of things">记住东西在哪</h3>
       <label class="look-switch" data-i18n-nodes>
         <input type="checkbox" id="s-posecard">
-        <span data-i18n-en="Note what the character looks like each turn">每轮记下「她这会儿什么样」</span>
+        <span data-i18n-en="Note what the character looks like each turn">每轮记下「角色这会儿什么样」</span>
       </label>
-      <p class="hint-text" data-i18n-en-html="One extra small request per turn — where she is, what she is doing, what is in her hands, what she is wearing, and <b>what is lying next to her</b>. That last one is the bit that gets forgotten: the glasses left on the table, the clean clothes waiting outside the door.<br>It writes nothing but that picture — no mood, no plans. It does <b>not</b> depend on the thinking pipeline above; turning that off does not turn this off.<br>A failed call just means this turn was not recorded; it never blocks the reply.">
-        每一轮多问一次：在哪、什么姿势、手里拿着什么、身上穿着什么、<b>身边搁着什么</b>。<br>
-        最后那一项是最容易被忘的 —— 眼镜搁在桌上、干净衣服在门口。写成一行，每轮都在提示词里。<br>
-        它只记画面，不写情绪、不写打算，和上面「活人感管线」无关：那个关着它照样工作。<br>
-        一次很小的请求（约 200 token），和正文同时发；没连上就是这一轮没记上，不挡回复。
+      <p class="hint-text" data-i18n-en-html="One extra small request per turn — where the character is, what posture, what is in hand or worn, and <b>what is lying nearby</b>.<br>It notes <b>the picture only</b>; the thinking pipeline above being off does not turn this off.<br>A very small request (about 200 tokens); if it fails, only this turn goes unrecorded — the reply is never blocked.">
+        每一轮多问一次：在哪、什么姿势、手里和身上有什么、<b>身边搁着什么</b>。<br>
+        只记画面；「活人感管线」关着，它照样工作。<br>
+        一次很小的请求（约 200 token）；没连上只是这轮没记上，不挡回复。
       </p>
     </section>
 

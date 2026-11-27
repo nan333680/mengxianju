@@ -36,6 +36,14 @@ const page = await browser.newPage();
 await page.setViewport({ width: 393, height: 851, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', e => errs.push(e.message));
 page.on('dialog', async d => { await d.accept(); });
+// ⚠️ 调试开关：SLOW=1 把 CPU 降速，模拟 CI 的 windows-latest。
+//   这套在 CI 里连红两次、本地怎么跑都是 77/77 —— 以后遇到「本地绿、CI 红」，
+//   先 SLOW=1 跑一遍，能复现就在本地调，别靠推一版等二十分钟。
+if (process.env.SLOW) {
+  const rate = Number(process.env.SLOW) > 1 ? Number(process.env.SLOW) : 6;
+  await page.emulateCPUThrottling(rate).catch(() => { /* 老版本 puppeteer 没这个方法就算了 */ });
+  console.log('   [SLOW] CPU 降速 x' + rate);
+}
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 let pass=0, fail=0;
 const t=(n,ok,ex='')=>{ if(ok){pass++;console.log('  OK   '+n);}else{fail++;console.log('  FAIL '+n+(ex?'  -> '+ex:''));} };

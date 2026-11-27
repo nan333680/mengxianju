@@ -129,35 +129,43 @@ const typeText = (s) => page.evaluate((x) => { const i=document.getElementById('
 //   ② 菜单项是异步渲染的，点 [data-more] 之前要等它出现。
 //   ③ 每一步找不到就【抛】，不要 if (b) b.click() 静默跳过 ——
 //      静默跳过的后果是弹窗根本没开，然后四条断言一起红，看起来像检查器坏了。
+// ⚠️ 从后往前试每一条 assistant 气泡，而不是"只点最后一条"。
+//    CI #121 的 annotation 给出的是：Error: 长按菜单里没有「这一轮用了什么」——
+//    说明气泡找到了、菜单也开了、[data-more] 也点了，就是展开后没有那一项。
+//    原因：turnInj 只挂在【这一轮第一条 assistant 消息】上。回复一旦被分成两段，
+//    最后那一条就没有 inj，菜单里自然没有「这一轮用了什么」。
+//    本地回复是一段（"好。"），CI 那边分段了 —— 所以本地永远绿。
 const openInjPanel = async () => {
-  const okMsg = await page.evaluate(() => {
-    const list = [...document.querySelectorAll('#messages .msg')].filter(x => x.classList.contains('ai'));
-    const el = list[list.length - 1];
-    if (!el) return false;
-    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
-    return true;
-  });
-  if (!okMsg) throw new Error('消息列表里没有 assistant 气泡');
-  await waitFor(() => !!document.querySelector('.msg-menu'));
-  const more = await page.evaluate(() => {
-    const m = document.querySelector('.msg-menu [data-more]');
-    if (!m) return false;
-    m.click(); return true;
-  });
-  if (!more) throw new Error('长按菜单里没有「更多…」');
-  await waitFor(() => [...document.querySelectorAll('.msg-menu button')].some(x => x.textContent.indexOf('这一轮用了什么') >= 0));
-  const clicked = await page.evaluate(() => {
-    const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.indexOf('这一轮用了什么') >= 0);
-    if (!b) return false;
-    b.click(); return true;
-  });
-  if (!clicked) throw new Error('长按菜单里没有「这一轮用了什么」');
-  await waitFor(() => { const m = document.getElementById('modal'); return m && !m.classList.contains('hidden'); });
-  await sleep(300);
-  const txt = await page.evaluate(() => { const b = document.getElementById('modal-text'); return b ? b.textContent : ''; });
-  await page.evaluate(() => { const b = document.getElementById('modal-ok'); if (b) b.click(); });
-  await sleep(250);
-  return txt;
+  const total = await page.evaluate(() => [...document.querySelectorAll('#messages .msg')].filter(x => x.classList.contains('ai')).length);
+  if (!total) throw new Error('消息列表里没有 assistant 气泡');
+  const tries = [];
+  for (let idx = total - 1; idx >= 0; idx--) {
+    await page.evaluate((i) => {
+      const list = [...document.querySelectorAll('#messages .msg')].filter(x => x.classList.contains('ai'));
+      list[i].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    }, idx);
+    await waitFor(() => !!document.querySelector('.msg-menu'));
+    const more = await page.evaluate(() => {
+      const m = document.querySelector('.msg-menu [data-more]');
+      if (!m) return false;
+      m.click(); return true;
+    });
+    if (!more) { tries.push(idx + ':没有更多'); await page.evaluate(() => document.body.click()); await sleep(150); continue; }
+    await waitFor(() => [...document.querySelectorAll('.msg-menu button')].some(x => x.textContent.indexOf('这一轮用了什么') >= 0));
+    const clicked = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.indexOf('这一轮用了什么') >= 0);
+      if (!b) return false;
+      b.click(); return true;
+    });
+    if (!clicked) { tries.push(idx + ':没有该项'); await page.evaluate(() => document.body.click()); await sleep(200); continue; }
+    await waitFor(() => { const m = document.getElementById('modal'); return m && !m.classList.contains('hidden'); });
+    await sleep(300);
+    const txt = await page.evaluate(() => { const b = document.getElementById('modal-text'); return b ? b.textContent : ''; });
+    await page.evaluate(() => { const b = document.getElementById('modal-ok'); if (b) b.click(); });
+    await sleep(250);
+    return txt;
+  }
+  throw new Error('所有 assistant 气泡都没有「这一轮用了什么」（共 ' + total + ' 条；' + tries.join(',') + '）');
 };
 // 发一句 + 等这一轮真的结束。
 // 判据不是"转圈圈停了"（CI 上它可能在两次请求的间隙里短暂不转），

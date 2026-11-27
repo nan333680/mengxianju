@@ -237,4 +237,63 @@ function simOf(expr) {
   console.log('   ✓ ' + counted + ' 套（另有 ' + (files.length - counted) + ' 套实况型/工具文件不要求汇总）都能对上号');
 }
 
+console.log('');
+console.log('== 7. 新写的 e2e 必须登记（进 CI 清单，或者进 e2e/ci-baseline.txt）==');
+// 为什么要有这一项（v0.5.8.10 补）：
+//   ci.yml 里那段注释本身就是一份病历 ——「e2e-v58fix 从 0.5.8.1 起就只在本地跑，
+//   e2e-v59beat 是 0.5.8.2 新写的……e2e-v587merge 是 0.5.8.7 新写的」。
+//   每个版本新写一套、忘了登记、过一阵子有人翻注释才发现，然后再漏一套。
+//   0.5.8.9 的 e2e-outline、0.5.8.10 的 e2e-posecard 又各漏了一次 —— 正是这个模式。
+//   所以不再靠「记得补两行」，改成让机器记：
+//     e2e/e2e-*.mjs 的文件名集合  ==  ci.yml 的 $suites  ∪  e2e/ci-baseline.txt
+//   两边都没有 → 红。想让它过只有两条路：加进 CI，或者进基线并写清为什么。
+//   ⚠️ 基线是【欠账清单】，不是许可状。还账 = 从基线删掉、加进 $suites。
+{
+  const ciPath = path.join(ROOT, '.github', 'workflows', 'ci.yml');
+  const ciSrc = fs.readFileSync(ciPath, 'utf8');
+  // 只解析 $suites = @( ... ) 那一块：整文件扫会把注释里提到的套件名也算进来。
+  const blockM = ciSrc.match(/\$suites\s*=\s*@\(([\s\S]*?)\n\s*\)/);
+  if (!blockM) {
+    console.log('   ✗ ci.yml 里找不到 $suites = @( ... ) 块，这一项没法校验');
+    process.exit(1);
+  }
+  const suites = new Set([...blockM[1].matchAll(/'(e2e-[a-z0-9-]+)'/g)].map(m => m[1]));
+
+  const basePath = path.join(ROOT, 'e2e', 'ci-baseline.txt');
+  const baseSet = new Set();
+  if (fs.existsSync(basePath)) {
+    for (const raw of fs.readFileSync(basePath, 'utf8').split(/\r?\n/)) {
+      const s = raw.trim();
+      if (!s || s.startsWith('#')) continue;
+      baseSet.add(s);
+    }
+  }
+
+  const e2eDir = path.join(ROOT, 'e2e');
+  const allFiles = fs.readdirSync(e2eDir)
+    .filter(n => /^e2e-.*\.mjs$/.test(n))
+    .map(n => n.replace(/\.mjs$/, ''))
+    .sort();
+
+  const known = new Set([...suites, ...baseSet]);
+  const unregistered = allFiles.filter(f => !known.has(f));
+  const ghosts = [...known].filter(f => !allFiles.includes(f)).sort();
+
+  if (unregistered.length) {
+    console.log('   ✗ 这些 e2e 既不在 ci.yml 的 $suites，也不在 e2e/ci-baseline.txt：');
+    unregistered.forEach(f => console.log('     - ' + f + '.mjs'));
+    console.log('   后果：它只在本地全量里跑，CI 永远不知道它坏没坏。');
+    console.log('   改法：① 加进 ci.yml 的 $suites（推荐 —— 实测一套十几秒，不是"多跑一轮全量"）；');
+    console.log('         ② 或者写进 e2e/ci-baseline.txt，并注明为什么进不了 CI。');
+    process.exit(1);
+  }
+  if (ghosts.length) {
+    console.log('   ✗ 这些名字在清单/基线里，但 e2e/ 下没有对应的 .mjs（改名或删套件时忘了清）：');
+    ghosts.forEach(f => console.log('     - ' + f + '.mjs'));
+    process.exit(1);
+  }
+  console.log('   ✓ ' + allFiles.length + ' 套 = CI 清单 ' + suites.size + ' + 基线欠账 ' + baseSet.size +
+    '（新写一套忘了登记，这一项会当场红）');
+}
+
 console.log('CI 静态检查通过');

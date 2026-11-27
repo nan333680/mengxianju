@@ -1,0 +1,154 @@
+# e2e/ci-baseline.txt —— 不在 CI 清单里的 e2e（欠账清单，不是许可状）
+#
+# 规则（tools/ci-check.mjs 第 7 项校验）：
+#     e2e/e2e-*.mjs 的文件名集合  ==  .github/workflows/ci.yml 的 $suites  ∪  这个文件
+#   新写一套 e2e，两边都没登记 -> CI 当场红，不用再等两个月后有人翻注释才发现。
+#
+# 想还账：把它从这里删掉、加进 ci.yml 的 $suites。
+#   ⚠️ 代价别猜：本地全量日志里每一套都有耗时，实测一套十几秒到一分钟。
+#      0.5.8.9 的 e2e-outline 是 13.3 秒，0.5.8.10 的 e2e-posecard 是 19.1 秒。
+#      "补进去要多跑一轮全量"这个说法是错的（差四十倍）。
+#
+# 为什么底下还躺着 133 套：
+#   ① 其中一部分要【真实 API Key】或真实文件，CI 里跑不了；
+#   ② 另一部分是早期写的、没有做成"自己假造请求"的形式 —— 这些是能还的账，
+#      只是一直没人还。要动的话逐条试，能进就进，进不了才留在基线里。
+#
+# ---- 工具文件（不是套件，不会自己跑）----
+e2e-helper
+e2e-src
+
+# ---- 历史遗留 / 需要真实环境 ----
+e2e-about
+e2e-aboutpage
+e2e-archive
+e2e-archive2
+e2e-archpipeline
+e2e-autoarchive
+e2e-autochain
+e2e-balance
+e2e-bugfix
+e2e-bugfix2
+e2e-bugfix3
+e2e-channel
+e2e-charcard
+e2e-chatbg
+e2e-clear-usage
+e2e-clock
+e2e-clockdetail
+e2e-clockreal
+e2e-composer
+e2e-crop
+e2e-ctxbudget
+e2e-ctxbudget2
+e2e-deflavor
+e2e-delchar
+e2e-diag
+e2e-drive
+e2e-envprio
+e2e-err
+e2e-errbody
+e2e-fix
+e2e-fix2
+e2e-followkeys
+e2e-foreign-import
+e2e-greetswipe
+e2e-group-effect
+e2e-import
+e2e-importchars
+e2e-importmode
+e2e-liveoff
+e2e-look2
+e2e-love
+e2e-love3
+e2e-memcadence
+e2e-memdedupe
+e2e-memedit
+e2e-memedit2
+e2e-memfix
+e2e-memfix2
+e2e-memfold
+e2e-memimport
+e2e-memkeep
+e2e-memory
+e2e-memory2
+e2e-mempick
+e2e-memsum
+e2e-memtidy
+e2e-memtime
+e2e-memui
+e2e-moodkao
+e2e-myavatar
+e2e-myenv
+e2e-new
+e2e-note
+e2e-perf
+e2e-plotjudge
+e2e-pov
+e2e-pov-live
+e2e-profile
+e2e-profile-layout
+e2e-prose
+e2e-provider
+e2e-psyche
+e2e-quickedit
+e2e-read
+e2e-realfiles
+e2e-rearchive
+e2e-repro
+e2e-rollingsummary
+e2e-scene-clock
+e2e-scrollfollow
+e2e-search
+e2e-secret
+e2e-setfold
+e2e-settings
+e2e-settings-blind
+e2e-settings-effect
+e2e-showtyping
+e2e-storytime
+e2e-stpreset
+e2e-stworldbook
+e2e-test
+e2e-test2
+e2e-test3
+e2e-test4
+e2e-test5
+e2e-textedit
+e2e-theme
+e2e-thinkmode
+e2e-timemem
+e2e-update
+e2e-v031audit
+e2e-v031fix
+e2e-v2
+e2e-v25fix
+e2e-v27fix
+e2e-v28fix
+e2e-v29fix
+e2e-v30fix
+e2e-v32fix
+e2e-v34fix
+e2e-v35fix
+e2e-v42fix
+e2e-v43fix
+e2e-v47fix
+e2e-v516
+e2e-v51fix
+e2e-v56
+e2e-variant
+e2e-viewmode
+e2e-wbalways
+e2e-wbdrag
+e2e-wbentryio
+e2e-wbimport
+e2e-wbinject
+e2e-wbkey
+e2e-wbmulti
+e2e-wbpos
+e2e-wbsearch
+e2e-wbsolo
+e2e-wbui
+e2e-worldbook
+e2e-writer
+e2e-ziworldbook

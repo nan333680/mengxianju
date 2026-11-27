@@ -94,16 +94,42 @@ const allMsgs = () => page.evaluate(async () => {
   const v = await new Promise(r => { const q = db.transaction('messages').objectStore('messages').getAll(); q.onsuccess = () => r(q.result||[]); });
   db.close(); return v;
 });
+// 等【条件】，不等时间。CI 的 windows-latest 比本地慢好几倍，
+// 第一版这里全是固定 sleep —— 本地 77/77、CI 直接红（e2e-posecard 退出码 1），
+// 查了半小时没有日志可看（job 日志要 admin 权限）。以后新套件别写死 sleep。
+const waitFor = (fn, ms = 15000, ...args) => page.waitForFunction(fn, { timeout: ms }, ...args).catch(() => null);
+const msgCount = () => page.evaluate(() => document.querySelectorAll('#messages .msg').length);
 const gotoChar = async (name) => {
-  await page.evaluate((n) => { const c=[...document.querySelectorAll('#char-list .char-card')].find(x=>x.textContent.includes(n)); if(c)c.click(); }, name);
-  await sleep(800);
-};
-const waitIdle = async () => {
-  for (let i=0;i<40;i++){ await sleep(300); const b=await page.$eval('#btn-stop',e=>!e.classList.contains('hidden')).catch(()=>false); if(!b) break; }
-  await sleep(600);
+  await waitFor(() => !!document.querySelector('#char-list .char-card'));
+  // ⚠️ 找不到角色就直接抛，不要 if (c) 静默跳过 —— 静默跳过之后所有断言都会红，
+  //    但红在别处，看起来像"功能坏了"。
+  const ok = await page.evaluate((n) => {
+    const c = [...document.querySelectorAll('#char-list .char-card')].find(x => x.textContent.includes(n));
+    if (!c) return false;
+    c.click(); return true;
+  }, name);
+  if (!ok) throw new Error('找不到角色卡：' + name);
+  await waitFor(() => { const v = document.getElementById('view-chat'); return v && v.classList.contains('active'); });
+  await waitFor(() => !!document.getElementById('input'));
+  await sleep(250);
 };
 const typeText = (s) => page.evaluate((x) => { const i=document.getElementById('input'); i.value=x; i.dispatchEvent(new Event('input',{bubbles:true})); }, s);
-const sendOne = async (txt) => { await typeText(txt); await sleep(150); await page.evaluate(() => document.getElementById('btn-send').click()); await waitIdle(); };
+// 发一句 + 等这一轮真的结束。
+// 判据不是"转圈圈停了"（CI 上它可能在两次请求的间隙里短暂不转），
+// 而是【消息数多出两条】（他的 + 她的）且按钮不再处于停止态。
+const sendOne = async (txt) => {
+  const n0 = await msgCount();
+  await typeText(txt);
+  await sleep(150);
+  await page.evaluate(() => document.getElementById('btn-send').click());
+  for (let i = 0; i < 150; i++) {
+    await sleep(300);
+    const n = await msgCount();
+    const busy = await page.$eval('#btn-stop', e => !e.classList.contains('hidden')).catch(() => false);
+    if (n >= n0 + 2 && !busy) break;
+  }
+  await sleep(700);
+};
 
 await page.goto('http://127.0.0.1:'+port+'/index.html', { waitUntil:'networkidle0' });
 await sleep(900);
@@ -349,9 +375,19 @@ console.log('=== 8. 开关：关掉就真的不跑 ===');
   //    直接点 btn-settings 读到的是 HTML 默认值（全部 unchecked）——
   //    这会造出两种假结论：「默认是关的」和「关掉也没用」。这一条踩过。
   await page.evaluate(() => document.getElementById('btn-settings').click());
-  await sleep(450);
-  await page.evaluate(() => { const b = document.querySelector('[data-wb-drawer="settings"]'); if (b) b.click(); });
-  await sleep(1000);
+  // 抽屉是渲染出来的，不是一开就有 —— 等它出现，别赌 450 毫秒。
+  await waitFor(() => !!document.querySelector('[data-wb-drawer="settings"]'));
+  const openedSettings = await page.evaluate(() => {
+    const b = document.querySelector('[data-wb-drawer="settings"]');
+    if (!b) return false;
+    b.click(); return true;
+  });
+  if (!openedSettings) throw new Error('抽屉里没有 data-wb-drawer="settings" 这一项');
+  // ⚠️ 等【设置视图真的切过去】，不能等 #s-posecard 存在 ——
+  //    那个 input 从一开始就在 DOM 里（index.html 静态的），
+  //    等它等于没等，读到的还是 bindSettings() 跑之前的 HTML 默认值。
+  await waitFor(() => { const v = document.getElementById('view-settings'); return v && v.classList.contains('active'); });
+  await sleep(400);
   const box = await page.evaluate(() => {
     const el = document.getElementById('s-posecard');
     return { exists: !!el, checked: el ? el.checked : null };

@@ -2,153 +2,156 @@
 #
 # 规则（tools/ci-check.mjs 第 7 项校验）：
 #     e2e/e2e-*.mjs 的文件名集合  ==  .github/workflows/ci.yml 的 $suites  ∪  这个文件
-#   新写一套 e2e，两边都没登记 -> CI 当场红，不用再等两个月后有人翻注释才发现。
+#   新写一套 e2e，两边都没登记 -> CI 当场红。
+#
+# ⚠️ 每一行【必须带 # 理由】，不写理由校验就红。
+#    为什么要卡这一下：不然遇到红最省事的动作就是往这里加一行裸文件名 ——
+#    这个文件就变成了后门。写上理由，「懒得做」和「做不了」在文本上就分开了。
 #
 # 想还账：把它从这里删掉、加进 ci.yml 的 $suites。
-#   ⚠️ 代价别猜：本地全量日志里每一套都有耗时，实测一套十几秒到一分钟。
+#   ⚠️ 代价别猜：本地全量日志里每套都有耗时，实测一套十几秒到一分钟。
 #      0.5.8.9 的 e2e-outline 是 13.3 秒，0.5.8.10 的 e2e-posecard 是 19.1 秒。
 #      "补进去要多跑一轮全量"这个说法是错的（差四十倍）。
 #
-# 为什么底下还躺着 133 套：
-#   ① 其中一部分要【真实 API Key】或真实文件，CI 里跑不了；
-#   ② 另一部分是早期写的、没有做成"自己假造请求"的形式 —— 这些是能还的账，
-#      只是一直没人还。要动的话逐条试，能进就进，进不了才留在基线里。
-#
-# ---- 工具文件（不是套件，不会自己跑）----
-e2e-helper
-e2e-src
+# 现在这里 135 条，按理由分组：
 
-# ---- 历史遗留 / 需要真实环境 ----
-e2e-about
-e2e-aboutpage
-e2e-archive
-e2e-archive2
-e2e-archpipeline
-e2e-autoarchive
-e2e-autochain
-e2e-balance
-e2e-bugfix
-e2e-bugfix2
-e2e-bugfix3
-e2e-channel
-e2e-charcard
-e2e-chatbg
-e2e-clear-usage
-e2e-clock
-e2e-clockdetail
-e2e-clockreal
-e2e-composer
-e2e-crop
-e2e-ctxbudget
-e2e-ctxbudget2
-e2e-deflavor
-e2e-delchar
-e2e-diag
-e2e-drive
-e2e-envprio
-e2e-err
-e2e-errbody
-e2e-fix
-e2e-fix2
-e2e-followkeys
-e2e-foreign-import
-e2e-greetswipe
-e2e-group-effect
-e2e-import
-e2e-importchars
-e2e-importmode
-e2e-liveoff
-e2e-look2
-e2e-love
-e2e-love3
-e2e-memcadence
-e2e-memdedupe
-e2e-memedit
-e2e-memedit2
-e2e-memfix
-e2e-memfix2
-e2e-memfold
-e2e-memimport
-e2e-memkeep
-e2e-memory
-e2e-memory2
-e2e-mempick
-e2e-memsum
-e2e-memtidy
-e2e-memtime
-e2e-memui
-e2e-moodkao
-e2e-myavatar
-e2e-myenv
-e2e-new
-e2e-note
-e2e-perf
-e2e-plotjudge
-e2e-pov
-e2e-pov-live
-e2e-profile
-e2e-profile-layout
-e2e-prose
-e2e-provider
-e2e-psyche
-e2e-quickedit
-e2e-read
-e2e-realfiles
-e2e-rearchive
-e2e-repro
-e2e-rollingsummary
-e2e-scene-clock
-e2e-scrollfollow
-e2e-search
-e2e-secret
-e2e-setfold
-e2e-settings
-e2e-settings-blind
-e2e-settings-effect
-e2e-showtyping
-e2e-storytime
-e2e-stpreset
-e2e-stworldbook
-e2e-test
-e2e-test2
-e2e-test3
-e2e-test4
-e2e-test5
-e2e-textedit
-e2e-theme
-e2e-thinkmode
-e2e-timemem
-e2e-update
-e2e-v031audit
-e2e-v031fix
-e2e-v2
-e2e-v25fix
-e2e-v27fix
-e2e-v28fix
-e2e-v29fix
-e2e-v30fix
-e2e-v32fix
-e2e-v34fix
-e2e-v35fix
-e2e-v42fix
-e2e-v43fix
-e2e-v47fix
-e2e-v516
-e2e-v51fix
-e2e-v56
-e2e-variant
-e2e-viewmode
-e2e-wbalways
-e2e-wbdrag
-e2e-wbentryio
-e2e-wbimport
-e2e-wbinject
-e2e-wbkey
-e2e-wbmulti
-e2e-wbpos
-e2e-wbsearch
-e2e-wbsolo
-e2e-wbui
-e2e-worldbook
-e2e-writer
-e2e-ziworldbook
+# ---- 需要真实 API Key 或真实文件，CI 里跑不了 ----
+e2e-about  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-balance  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-bugfix  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-clock  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-drive  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-err  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-fix  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-fix2  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-love  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-love3  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-memedit2  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-memfix  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-memfix2  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-memory  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-memsum  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-memtime  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-myavatar  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-new  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-note  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-perf  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-rearchive  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-repro  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-setfold  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-settings  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-showtyping  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-test  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-test2  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-test4  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-test5  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-v25fix  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-v28fix  # 需要真实 API Key 或真实文件，CI 里跑不了
+e2e-v34fix  # 需要真实 API Key 或真实文件，CI 里跑不了
+
+# ---- 早期写的，没做成自造请求 —— 能还的账 ----
+e2e-aboutpage  # 早期写的，没做成自造请求 —— 能还的账
+e2e-archive  # 早期写的，没做成自造请求 —— 能还的账
+e2e-archive2  # 早期写的，没做成自造请求 —— 能还的账
+e2e-archpipeline  # 早期写的，没做成自造请求 —— 能还的账
+e2e-autoarchive  # 早期写的，没做成自造请求 —— 能还的账
+e2e-autochain  # 早期写的，没做成自造请求 —— 能还的账
+e2e-bugfix2  # 早期写的，没做成自造请求 —— 能还的账
+e2e-bugfix3  # 早期写的，没做成自造请求 —— 能还的账
+e2e-channel  # 早期写的，没做成自造请求 —— 能还的账
+e2e-charcard  # 早期写的，没做成自造请求 —— 能还的账
+e2e-chatbg  # 早期写的，没做成自造请求 —— 能还的账
+e2e-clear-usage  # 早期写的，没做成自造请求 —— 能还的账
+e2e-clockdetail  # 早期写的，没做成自造请求 —— 能还的账
+e2e-clockreal  # 早期写的，没做成自造请求 —— 能还的账
+e2e-composer  # 早期写的，没做成自造请求 —— 能还的账
+e2e-crop  # 早期写的，没做成自造请求 —— 能还的账
+e2e-ctxbudget  # 早期写的，没做成自造请求 —— 能还的账
+e2e-ctxbudget2  # 早期写的，没做成自造请求 —— 能还的账
+e2e-deflavor  # 早期写的，没做成自造请求 —— 能还的账
+e2e-delchar  # 早期写的，没做成自造请求 —— 能还的账
+e2e-diag  # 早期写的，没做成自造请求 —— 能还的账
+e2e-envprio  # 早期写的，没做成自造请求 —— 能还的账
+e2e-errbody  # 早期写的，没做成自造请求 —— 能还的账
+e2e-followkeys  # 早期写的，没做成自造请求 —— 能还的账
+e2e-foreign-import  # 早期写的，没做成自造请求 —— 能还的账
+e2e-greetswipe  # 早期写的，没做成自造请求 —— 能还的账
+e2e-group-effect  # 早期写的，没做成自造请求 —— 能还的账
+e2e-import  # 早期写的，没做成自造请求 —— 能还的账
+e2e-importchars  # 早期写的，没做成自造请求 —— 能还的账
+e2e-importmode  # 早期写的，没做成自造请求 —— 能还的账
+e2e-liveoff  # 早期写的，没做成自造请求 —— 能还的账
+e2e-look2  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memcadence  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memdedupe  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memedit  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memfold  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memimport  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memkeep  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memory2  # 早期写的，没做成自造请求 —— 能还的账
+e2e-mempick  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memtidy  # 早期写的，没做成自造请求 —— 能还的账
+e2e-memui  # 早期写的，没做成自造请求 —— 能还的账
+e2e-moodkao  # 早期写的，没做成自造请求 —— 能还的账
+e2e-myenv  # 早期写的，没做成自造请求 —— 能还的账
+e2e-plotjudge  # 早期写的，没做成自造请求 —— 能还的账
+e2e-pov  # 早期写的，没做成自造请求 —— 能还的账
+e2e-pov-live  # 早期写的，没做成自造请求 —— 能还的账
+e2e-profile  # 早期写的，没做成自造请求 —— 能还的账
+e2e-profile-layout  # 早期写的，没做成自造请求 —— 能还的账
+e2e-prose  # 早期写的，没做成自造请求 —— 能还的账
+e2e-provider  # 早期写的，没做成自造请求 —— 能还的账
+e2e-psyche  # 早期写的，没做成自造请求 —— 能还的账
+e2e-quickedit  # 早期写的，没做成自造请求 —— 能还的账
+e2e-read  # 早期写的，没做成自造请求 —— 能还的账
+e2e-realfiles  # 早期写的，没做成自造请求 —— 能还的账
+e2e-rollingsummary  # 早期写的，没做成自造请求 —— 能还的账
+e2e-scene-clock  # 早期写的，没做成自造请求 —— 能还的账
+e2e-scrollfollow  # 早期写的，没做成自造请求 —— 能还的账
+e2e-search  # 早期写的，没做成自造请求 —— 能还的账
+e2e-secret  # 早期写的，没做成自造请求 —— 能还的账
+e2e-settings-blind  # 早期写的，没做成自造请求 —— 能还的账
+e2e-settings-effect  # 早期写的，没做成自造请求 —— 能还的账
+e2e-storytime  # 早期写的，没做成自造请求 —— 能还的账
+e2e-stpreset  # 早期写的，没做成自造请求 —— 能还的账
+e2e-stworldbook  # 早期写的，没做成自造请求 —— 能还的账
+e2e-test3  # 早期写的，没做成自造请求 —— 能还的账
+e2e-textedit  # 早期写的，没做成自造请求 —— 能还的账
+e2e-theme  # 早期写的，没做成自造请求 —— 能还的账
+e2e-thinkmode  # 早期写的，没做成自造请求 —— 能还的账
+e2e-timemem  # 早期写的，没做成自造请求 —— 能还的账
+e2e-update  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v031audit  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v031fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v2  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v27fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v29fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v30fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v32fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v35fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v42fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v43fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v47fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v516  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v51fix  # 早期写的，没做成自造请求 —— 能还的账
+e2e-v56  # 早期写的，没做成自造请求 —— 能还的账
+e2e-variant  # 早期写的，没做成自造请求 —— 能还的账
+e2e-viewmode  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbalways  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbdrag  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbentryio  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbimport  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbinject  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbkey  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbmulti  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbpos  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbsearch  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbsolo  # 早期写的，没做成自造请求 —— 能还的账
+e2e-wbui  # 早期写的，没做成自造请求 —— 能还的账
+e2e-worldbook  # 早期写的，没做成自造请求 —— 能还的账
+e2e-writer  # 早期写的，没做成自造请求 —— 能还的账
+e2e-ziworldbook  # 早期写的，没做成自造请求 —— 能还的账
+
+# ---- 工具文件，不是套件 ----
+e2e-helper  # 工具文件，不是套件
+e2e-src  # 工具文件，不是套件

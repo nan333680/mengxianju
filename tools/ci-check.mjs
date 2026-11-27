@@ -257,15 +257,24 @@ console.log('== 7. 新写的 e2e 必须登记（进 CI 清单，或者进 e2e/ci
     console.log('   ✗ ci.yml 里找不到 $suites = @( ... ) 块，这一项没法校验');
     process.exit(1);
   }
-  const suites = new Set([...blockM[1].matchAll(/'(e2e-[a-z0-9-]+)'/g)].map(m => m[1]));
+  // ⚠️ 名字放宽到 [A-Za-z0-9_-]：只认小写+连字符的话，以后写个 e2e-v2_1
+  //    提取不到，会误报"三处都缺"。误报是往红的方面错，但白折腾一轮。
+  const suites = new Set([...blockM[1].matchAll(/'(e2e-[A-Za-z0-9_-]+)'/g)].map(m => m[1]));
 
   const basePath = path.join(ROOT, 'e2e', 'ci-baseline.txt');
   const baseSet = new Set();
+  const noReason = [];      // 有名字但没写理由
   if (fs.existsSync(basePath)) {
     for (const raw of fs.readFileSync(basePath, 'utf8').split(/\r?\n/)) {
       const s = raw.trim();
       if (!s || s.startsWith('#')) continue;
-      baseSet.add(s);
+      const hash = s.indexOf('#');
+      const name = (hash < 0 ? s : s.slice(0, hash)).trim().split(/\s+/)[0];
+      if (!name) continue;
+      // ⚠️ 每行必须带理由。不卡这一下，baseline 就会变成后门：
+      //    遇到红最省事的动作是往这里加一行裸文件名，校验照样通过。
+      if (hash < 0 || !s.slice(hash + 1).trim()) { noReason.push(name); continue; }
+      baseSet.add(name);
     }
   }
 
@@ -274,6 +283,13 @@ console.log('== 7. 新写的 e2e 必须登记（进 CI 清单，或者进 e2e/ci
     .filter(n => /^e2e-.*\.mjs$/.test(n))
     .map(n => n.replace(/\.mjs$/, ''))
     .sort();
+
+  if (noReason.length) {
+    console.log('   ✗ e2e/ci-baseline.txt 里这些行没写理由（行尾要带 # ...）：');
+    noReason.forEach(f => console.log('     - ' + f));
+    console.log('   为什么卡这个：不写理由，这个文件就成后门了 —— 遇到红加一行裸名字就能过。');
+    process.exit(1);
+  }
 
   const known = new Set([...suites, ...baseSet]);
   const unregistered = allFiles.filter(f => !known.has(f));

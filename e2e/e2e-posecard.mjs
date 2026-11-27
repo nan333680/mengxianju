@@ -150,14 +150,25 @@ const openInjPanel = async () => {
       if (!m) return false;
       m.click(); return true;
     });
-    if (!more) { tries.push(idx + ':没有更多'); await page.evaluate(() => document.body.click()); await sleep(150); continue; }
+    // 失败时把【菜单里到底有哪些按钮】记下来。
+    // CI #122 的 annotation 只说了"2 条都没有该项"，但没说菜单里有什么 ——
+    // 再猜一轮就是第四个二十分钟了。
+    const btnTexts = async () => page.evaluate(() =>
+      [...document.querySelectorAll('.msg-menu button')].map(x => (x.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 14)).filter(Boolean));
+    if (!more) {
+      tries.push(idx + ':无更多[' + (await btnTexts()).join('|') + ']');
+      await page.evaluate(() => document.body.click()); await sleep(150); continue;
+    }
     await waitFor(() => [...document.querySelectorAll('.msg-menu button')].some(x => x.textContent.indexOf('这一轮用了什么') >= 0));
     const clicked = await page.evaluate(() => {
       const b = [...document.querySelectorAll('.msg-menu button')].find(x => x.textContent.indexOf('这一轮用了什么') >= 0);
       if (!b) return false;
       b.click(); return true;
     });
-    if (!clicked) { tries.push(idx + ':没有该项'); await page.evaluate(() => document.body.click()); await sleep(200); continue; }
+    if (!clicked) {
+      tries.push(idx + ':' + (await btnTexts()).join('|'));
+      await page.evaluate(() => document.body.click()); await sleep(200); continue;
+    }
     await waitFor(() => { const m = document.getElementById('modal'); return m && !m.classList.contains('hidden'); });
     await sleep(300);
     const txt = await page.evaluate(() => { const b = document.getElementById('modal-text'); return b ? b.textContent : ''; });
